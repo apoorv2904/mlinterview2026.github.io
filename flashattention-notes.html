@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlashAttention — revision notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F2;
+  --card:#F8FAFB;
+  --ink:#111820;
+  --ink-2:#56626E;
+  --ink-3:#7C8894;
+  --rule:#CDD5DB;
+  --rule-2:#DFE5E9;
+  --cool:#0B6E7F;
+  --cool-bg:#E2EFF1;
+  --warm:#A4235A;
+  --warm-bg:#F7E6ED;
+  --display:"Archivo","Helvetica Neue",sans-serif;
+  --body:"Source Serif 4",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.62;
+}
+.shell{
+  display:grid;grid-template-columns:212px minmax(0,1fr);
+  gap:56px;max-width:1240px;margin:0 auto;padding:0 40px 120px;
+}
+
+/* ---------- masthead ---------- */
+.masthead{grid-column:1/-1;padding:64px 0 40px;border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--warm);margin:0 0 18px;
+}
+.masthead h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(38px,6vw,62px);
+  line-height:.98;letter-spacing:-.028em;margin:0 0 18px;max-width:16ch;
+}
+.standfirst{font-size:19px;color:var(--ink-2);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:28px;margin-top:32px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-3);
+}
+.meta b{color:var(--ink);font-weight:500}
+
+/* ---------- table of contents ---------- */
+.toc{position:sticky;top:0;align-self:start;padding-top:44px;max-height:100vh;overflow-y:auto}
+.toc h2{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 14px;font-weight:500;
+}
+.toc ol{list-style:none;margin:0;padding:0;counter-reset:toc -1}
+.toc li{counter-increment:toc;margin-bottom:2px}
+.toc a{
+  display:flex;gap:10px;text-decoration:none;color:var(--ink-2);
+  font-family:var(--display);font-size:13.5px;line-height:1.35;
+  padding:6px 8px 6px 0;border-left:2px solid transparent;padding-left:10px;
+}
+.toc a::before{content:counter(toc);font-family:var(--mono);font-size:11px;color:var(--ink-3);flex:none;padding-top:1px}
+.toc a:hover{color:var(--ink)}
+.toc a.on{color:var(--cool);border-left-color:var(--cool);font-weight:600}
+.toc a.on::before{color:var(--cool)}
+
+/* ---------- main column + margin rail ---------- */
+main{max-width:920px;padding-right:214px;padding-top:44px}
+section{padding-top:26px;margin-bottom:56px;scroll-margin-top:20px}
+section+section{border-top:1px solid var(--rule);padding-top:44px}
+h2.sec{
+  font-family:var(--display);font-weight:700;font-size:31px;letter-spacing:-.02em;
+  line-height:1.12;margin:0 0 6px;
+}
+h2.sec .num{font-family:var(--mono);font-size:14px;color:var(--warm);font-weight:500;display:block;margin-bottom:9px;letter-spacing:.08em}
+.dek{color:var(--ink-2);font-size:16px;margin:0 0 26px;max-width:62ch;font-style:italic}
+h3{
+  font-family:var(--display);font-weight:600;font-size:18px;letter-spacing:-.008em;
+  margin:34px 0 12px;
+}
+p{margin:0 0 16px;max-width:68ch}
+main a{color:var(--cool)}
+
+/* margin quantities — the spine of the document */
+.mq{
+  float:right;clear:right;width:186px;margin:6px -214px 20px 0;
+  font-family:var(--mono);border-left:2px solid var(--cool);
+  padding:2px 0 2px 12px;
+}
+.mq.cost{border-left-color:var(--warm)}
+.mq .v{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;color:var(--cool);line-height:1.25}
+.mq.cost .v{color:var(--warm)}
+.mq .k{display:block;font-size:11px;line-height:1.45;color:var(--ink-2);margin-top:5px;letter-spacing:.01em}
+
+code{font-family:var(--mono);font-size:.88em;background:#E3E8EB;padding:1px 4px;border-radius:3px}
+pre{
+  font-family:var(--mono);font-size:13.5px;line-height:1.72;background:var(--card);
+  border:1px solid var(--rule-2);border-left:2px solid var(--cool);
+  padding:16px 18px;overflow-x:auto;margin:0 0 20px;border-radius:0 4px 4px 0;
+}
+pre code{background:none;padding:0;font-size:inherit}
+strong{font-weight:600}
+
+table{border-collapse:collapse;width:100%;margin:0 0 22px;font-size:14.5px}
+th,td{text-align:left;padding:9px 14px 9px 0;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);
+}
+td:first-child{font-family:var(--mono);font-size:13px}
+table.prose td:first-child{font-family:var(--body);font-size:14.5px}
+
+.callout{
+  background:var(--card);border:1px solid var(--rule-2);border-top:2px solid var(--warm);
+  padding:18px 20px;margin:0 0 22px;
+}
+.callout .lbl{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--warm);display:block;margin-bottom:8px;
+}
+.callout p:last-child{margin-bottom:0}
+.callout.cool{border-top-color:var(--cool)}
+.callout.cool .lbl{color:var(--cool)}
+
+ul{margin:0 0 18px;padding-left:0;list-style:none;max-width:68ch}
+ul li{position:relative;padding-left:20px;margin-bottom:9px}
+ul li::before{content:"";position:absolute;left:2px;top:.62em;width:6px;height:1px;background:var(--warm)}
+ol.steps{margin:0 0 18px;padding-left:20px;max-width:68ch}
+ol.steps li{margin-bottom:10px}
+
+/* intensity bars */
+.bars{margin:0 0 24px;font-family:var(--mono);font-size:12px}
+.bar-row{display:grid;grid-template-columns:150px 1fr 62px;align-items:center;gap:12px;margin-bottom:9px}
+.bar-track{height:15px;background:#E3E8EB;position:relative}
+.bar-fill{height:100%;background:var(--cool)}
+.bar-fill.warn{background:var(--warm)}
+.bar-val{text-align:right;color:var(--ink-2)}
+.bar-lbl{color:var(--ink-2)}
+
+/* crossover calculator */
+.calc{background:var(--card);border:1px solid var(--rule-2);padding:22px 24px;margin:0 0 22px}
+.calc-top{display:flex;justify-content:space-between;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:16px}
+.calc-out{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--cool)}
+.calc-out.bad{color:var(--warm)}
+.calc-cap{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase}
+.calc input[type=range]{width:100%;accent-color:var(--cool);margin:0}
+.calc-scale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
+.calc-verdict{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-top:14px;line-height:1.6}
+
+/* self-test */
+details{border-bottom:1px solid var(--rule-2);padding:14px 0}
+details summary{
+  cursor:pointer;font-family:var(--body);font-size:16.5px;list-style:none;
+  display:flex;gap:12px;align-items:baseline;
+}
+details summary::-webkit-details-marker{display:none}
+details summary::before{
+  content:"+";font-family:var(--mono);font-size:14px;color:var(--warm);flex:none;
+}
+details[open] summary::before{content:"\2212"}
+details .ans{margin-top:12px;padding-left:24px;color:var(--ink-2);font-size:15.5px}
+details .ans p:last-child{margin-bottom:0}
+
+footer{
+  grid-column:1/-1;border-top:2px solid var(--ink);margin-top:24px;padding-top:20px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+}
+
+@media (max-width:1120px){
+  main{padding-right:0}
+  .mq{
+    float:none;width:auto;max-width:68ch;margin:0 0 20px;
+    background:var(--card);padding:12px 16px;border-left-width:3px;
+  }
+  .mq .v{display:inline;font-size:15px}
+  .mq .k{display:inline;margin-left:10px;font-size:12px}
+}
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr;gap:0;padding:0 22px 80px}
+  .toc{display:none}
+  body{font-size:16px}
+  .masthead{padding-top:40px}
+  .bar-row{grid-template-columns:104px 1fr 52px;gap:8px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .toc a{transition:color .15s,border-color .15s}
+}
+@media print{
+  body{background:#fff;font-size:11pt}
+  .shell{display:block;padding:0;max-width:none}
+  .toc,.calc input,footer{display:none}
+  main{padding-right:170px;max-width:none}
+  .mq{width:150px;margin-right:-170px}
+  section{page-break-inside:auto}
+  h2.sec,h3{page-break-after:avoid}
+  pre,table,.callout{page-break-inside:avoid}
+  details{page-break-inside:avoid}
+  details[open] .ans,details .ans{display:block}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Revision notes &middot; kernels &amp; memory hierarchy</p>
+  <h1>FlashAttention, from the bytes up</h1>
+  <p class="standfirst">Everything in these notes falls out of two hardware facts. Two memories with a 100&times; bandwidth gap between them, and two arithmetic units with a 16&times; throughput gap between them. Nothing else is needed.</p>
+  <div class="meta">
+    <span><b>Scope</b> vanilla complexity &rarr; IO derivation &rarr; backward</span>
+    <span><b>Read</b> ~25 min</span>
+    <span><b>Revise</b> ~8 min via the margin rail</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s0">The hardware, in one paragraph</a></li>
+    <li><a href="#s1">Vanilla attention: three quantities</a></li>
+    <li><a href="#s2">What Flash changes &mdash; and doesn't</a></li>
+    <li><a href="#s3">Why attention is memory-bound</a></li>
+    <li><a href="#s4">The IO derivation</a></li>
+    <li><a href="#s5">Online softmax</a></li>
+    <li><a href="#s6">Backward pass</a></li>
+    <li><a href="#s7">FA2 and the non-matmul tax</a></li>
+    <li><a href="#s8">Numbers to memorise</a></li>
+    <li><a href="#s9">Self-test</a></li>
+    <li><a href="#s10">Common traps</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 0 -->
+<section id="s0">
+  <h2 class="sec"><span class="num">00</span>The hardware, in one paragraph</h2>
+  <p class="dek">You need exactly two facts about the GPU. Every result below is a consequence of one of them.</p>
+
+  <div class="mq"><span class="v">~100&times;</span><span class="k">bandwidth gap, SRAM over HBM</span></div>
+  <p><strong>There are two memories.</strong> HBM is large and slow &mdash; 40&ndash;80&nbsp;GB at roughly 1.5&ndash;3&nbsp;TB/s. SRAM is tiny and fast &mdash; about 192&nbsp;KB per streaming multiprocessor on A100, at roughly 19&nbsp;TB/s. Anything that does not fit in SRAM lives in HBM, and every trip to HBM is expensive. Call the SRAM capacity <code>M</code>, measured in <em>elements</em>: for bf16 at 2 bytes each, 192&nbsp;KB is about 10<sup>5</sup> elements.</p>
+
+  <div class="mq cost"><span class="v">16&times;</span><span class="k">cost of a non-matmul FLOP vs a matmul FLOP</span></div>
+  <p><strong>There are two kinds of arithmetic.</strong> Matmuls run on tensor cores at 312&nbsp;TFLOP/s (A100, bf16). Everything else &mdash; exp, divide, add, compare &mdash; runs on general FP32 units at about 19.5&nbsp;TFLOP/s. A non-matmul FLOP therefore costs roughly 16&times; a matmul FLOP. This is why softmax, which is nothing in the FLOP count, is a real fraction of the runtime.</p>
+</section>
+
+<!-- 1 -->
+<section id="s1">
+  <h2 class="sec"><span class="num">01</span>Vanilla attention: three separate quantities</h2>
+  <p class="dek">FLOPs, bytes, and retained memory are three different questions. Answer them separately &mdash; most wrong answers collapse them into one &ldquo;complexity&rdquo;.</p>
+
+  <h3>Stage by stage</h3>
+  <table>
+    <thead><tr><th>Stage</th><th>FLOPs</th><th>HBM traffic</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>S = QK<sup>T</sup></td><td>2N&sup2;d</td><td>read 2Nd, <strong>write N&sup2;</strong></td><td>V not needed yet</td></tr>
+      <tr><td>P = softmax(S)</td><td>~2N&sup2;</td><td><strong>read N&sup2;, write N&sup2;</strong></td><td>cheap FLOPs, expensive bytes</td></tr>
+      <tr><td>O = PV</td><td>2N&sup2;d</td><td><strong>read N&sup2;</strong> + Nd, write Nd</td><td></td></tr>
+    </tbody>
+  </table>
+
+  <div class="mq cost"><span class="v">&Theta;(N&sup2;)</span><span class="k">activation memory retained, per head per layer</span></div>
+  <p><strong>Totals.</strong> FLOPs are <code>&Theta;(N&sup2;d)</code>, precisely <code>4N&sup2;d</code> forward. HBM traffic is <code>&Theta;(N&sup2; + Nd)</code>, dominated by the <code>N&sup2;</code> round-trips. Activation memory retained for the backward is <code>&Theta;(N&sup2;)</code> per head per layer &mdash; the <code>P</code> matrix.</p>
+
+  <div class="callout">
+    <span class="lbl">The trap</span>
+    <p>Traffic is <code>&Theta;(N&sup2; + Nd)</code>, <strong>not</strong> <code>&Theta;(Nd)</code>. The figure <code>3Nd</code> read plus <code>Nd</code> written is what an <em>ideal fused kernel</em> moves &mdash; it answers &ldquo;what does the math need&rdquo;, not &ldquo;what does the kernel actually write out&rdquo;.</p>
+    <p>The <code>N&sup2;</code> term exists purely because the stages are <strong>separate kernel launches</strong>. Each must write its result to HBM so the next can read it. Nothing about the mathematics requires this.</p>
+    <p><strong>Self-check:</strong> if traffic really were <code>&Theta;(Nd)</code>, fusion would have nothing to save. If your answer to &ldquo;what does Flash change&rdquo; contradicts your traffic estimate, the traffic estimate is wrong.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2 class="sec"><span class="num">02</span>What FlashAttention changes &mdash; and doesn't</h2>
+  <p class="dek">The second list is where marks are lost.</p>
+
+  <h3>Changes</h3>
+  <ul>
+    <li><strong>Fuses</strong> the three stages into one kernel, so <code>S</code> and <code>P</code> never touch HBM</li>
+    <li><strong>Tiles</strong> the computation so each block's working set fits in SRAM</li>
+    <li><strong>Online softmax</strong> &mdash; computes the normaliser incrementally instead of needing a full row up front</li>
+    <li><strong>Recomputes</strong> <code>S</code> in the backward instead of storing it</li>
+    <li>Traffic drops from <code>&Theta;(N&sup2;)</code> to <code>&Theta;(N&sup2;d&sup2;/M)</code></li>
+    <li>Activation memory drops from <code>&Theta;(N&sup2;)</code> to <code>&Theta;(Nd + N)</code></li>
+  </ul>
+
+  <h3>Doesn't change</h3>
+  <div class="mq cost"><span class="v">+25%</span><span class="k">backward FLOPs vs standard &mdash; it does more arithmetic, not less</span></div>
+  <ol class="steps">
+    <li><strong>It is exact.</strong> Bit-for-bit the same function, modulo floating-point reassociation. Not an approximation. This matters because it sits in a literature full of Linformer / Performer / Reformer-style approximations that trade accuracy for speed. Flash trades nothing.</li>
+    <li><strong>It does not reduce FLOPs &mdash; it increases them.</strong> Rescaling in the forward, recomputation in the backward. It does more arithmetic and wins anyway.</li>
+    <li><strong>Time complexity is still <code>&Theta;(N&sup2;d)</code>.</strong> It is a constant-factor IO win, not an asymptotic one. Next to the linear-attention family, this is the single most important distinction to state.</li>
+    <li><strong>It is not universally better.</strong> When <code>d&sup2; &gt; M</code>, it moves <em>more</em> traffic than standard attention. See section 04.</li>
+  </ol>
+
+  <div class="callout">
+    <span class="lbl">Say both halves</span>
+    <p>Saying only &ldquo;it's exact&rdquo; states the easy half &mdash; that's the part everyone knows. The pair &mdash; <em>exact, and it does more FLOPs</em> &mdash; is the answer.</p>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2 class="sec"><span class="num">03</span>Why attention is memory-bound</h2>
+  <p class="dek">Arithmetic intensity is FLOPs per byte of HBM traffic. Below the machine's own ratio you wait on memory; above it you wait on arithmetic.</p>
+
+  <div class="callout">
+    <span class="lbl">Units discipline</span>
+    <p>Intensity is FLOPs per <em>byte</em>. Everywhere else in these notes traffic is counted in <em>elements</em>, so the conversion must be done explicitly. This is the one place a factor of 2 silently changes the answer.</p>
+  </div>
+
+  <p><strong>Step 1 &mdash; count elements.</strong> The <code>N&times;N</code> matrix crosses the bus four times: write <code>S</code>, read <code>S</code>, write <code>P</code>, read <code>P</code>.</p>
+  <pre><code>4 &times; N&sup2; = 4N&sup2; elements</code></pre>
+
+  <p><strong>Step 2 &mdash; convert to bytes.</strong> bf16 is 2 bytes per number.</p>
+  <pre><code>4N&sup2; elements &times; 2 B = 8N&sup2; bytes</code></pre>
+  <p>Dropping the <code>&Theta;(Nd)</code> terms &mdash; reading <code>Q, K, V</code> and writing <code>O</code>, another <code>8Nd</code> bytes &mdash; since <code>N &gt;&gt; d</code>.</p>
+
+  <div class="mq cost"><span class="v">d/2</span><span class="k">attention intensity &mdash; about 32 FLOPs/byte at d=64</span></div>
+  <p><strong>Step 3 &mdash; divide into the FLOPs.</strong></p>
+  <pre><code>intensity &asymp; 4N&sup2;d / 8N&sup2; = d/2 &asymp; 32 FLOPs/byte at d=64</code></pre>
+  <p>In fp32 the crossings cost <code>16N&sup2;</code> bytes and intensity halves to <code>d/4</code>. The precision is part of the answer, not a detail.</p>
+
+  <div class="bars" role="img" aria-label="Attention runs at about 32 FLOPs per byte against machine balance of 150 on A100 and 300 on H100.">
+    <div class="bar-row"><span class="bar-lbl">attention, d=64</span><span class="bar-track"><span class="bar-fill warn" style="width:10.7%"></span></span><span class="bar-val">~32</span></div>
+    <div class="bar-row"><span class="bar-lbl">A100 balance</span><span class="bar-track"><span class="bar-fill" style="width:50%"></span></span><span class="bar-val">~150</span></div>
+    <div class="bar-row"><span class="bar-lbl">H100 balance</span><span class="bar-track"><span class="bar-fill" style="width:100%"></span></span><span class="bar-val">~300</span></div>
+  </div>
+  <p><strong>Five to ten times under.</strong> The tensor cores sit idle most of the time, waiting on HBM.</p>
+
+  <h3>Per-element intuition</h3>
+  <p>Divide both sides by <code>N&sup2;</code> and ask what happens to one score entry over its lifetime. It participates in <code>4d</code> FLOPs &mdash; a <code>d</code>-length dot product to produce it, then <code>d</code> multiply-adds to consume it &mdash; and costs 8 bytes to move. Ratio: <code>4d/8 = d/2</code>.</p>
+  <p>The structural reason is that <code>QK<sup>T</sup></code> is a matmul with a tiny reduction dimension and an enormous output. Each output element costs <code>2d</code> FLOPs and 2 bytes to write, so the moment you materialise it, intensity is capped near <code>d</code> no matter what else you do.</p>
+
+  <div class="callout cool">
+    <span class="lbl">The insight worth keeping</span>
+    <p>Intensity is <code>&Theta;(d)</code> &mdash; <strong>independent of <code>N</code></strong>. Both work and traffic scale as <code>N&sup2;</code>, so nothing amortises: every new score entry brings its own fixed <code>4d</code> FLOPs and its own fixed 8 bytes. Longer sequences never help. Only wider heads do, and you would need <code>d &gtrsim 300</code> to reach machine balance.</p>
+    <p>This is also the diagnostic to reach for on any kernel: compute FLOPs per byte, compare to 150&ndash;300, and you immediately know whether fusing is worth it.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2 class="sec"><span class="num">04</span>The IO derivation</h2>
+  <p class="dek">The headline result. Derive it, don't memorise it.</p>
+
+  <h3>Setup</h3>
+  <p>Split <code>K, V</code> into <code>T_c = &lceil;N/B_c&rceil;</code> blocks of shape <code>B_c &times; d</code>. Split <code>Q</code> into <code>T_r = &lceil;N/B_r&rceil;</code> blocks of shape <code>B_r &times; d</code>.</p>
+
+  <h3>Why M enters</h3>
+  <p>For one inner step to run entirely on-chip, its whole working set must be resident simultaneously.</p>
+  <table>
+    <thead><tr><th>Resident</th><th>Size</th></tr></thead>
+    <tbody>
+      <tr><td>Q_i</td><td>B_r&middot;d</td></tr>
+      <tr><td>K_j, V_j</td><td>2B_c&middot;d</td></tr>
+      <tr><td>O_i accumulator</td><td>B_r&middot;d</td></tr>
+      <tr><td>S_ij score tile</td><td>B_r&middot;B_c</td></tr>
+      <tr><td>m_i, l_i</td><td>2B_r (negligible)</td></tr>
+    </tbody>
+  </table>
+  <pre><code>(2B_r + 2B_c)&middot;d + B_r&middot;B_c &le; M</code></pre>
+  <p><strong>The <code>d</code> dimension is never tiled</strong> &mdash; it is small enough to hold whole, and it is the reduction axis for both matmuls, so splitting it would force partial-sum spills.</p>
+
+  <h3>Block sizes that fall out</h3>
+  <div class="mq"><span class="v">B_c = &Theta;(M/d)</span><span class="k">B_r = min(&Theta;(M/d), d), so B_r = &Theta;(d) in practice</span></div>
+  <p>The <code>B_c&middot;d</code> term forces <code>B_c = &Theta;(M/d)</code>. Then <code>B_r&middot;B_c &le; M</code> forces <code>B_r = min(&Theta;(M/d), d)</code>, and since <code>M &gt;&gt; d&sup2;</code> in practice, <code>B_r = &Theta;(d)</code>. Real kernels use 64 or 128, chosen for tensor-core tile shapes and register pressure &mdash; the bound gives the scaling law, not the constant.</p>
+
+  <h3>The counting argument</h3>
+  <p>FlashAttention-1 loop order, <strong>K/V outer, Q inner</strong>:</p>
+  <pre><code>for j in 1..T_c:              # K/V blocks
+    load K_j, V_j             # each loaded exactly once
+    for i in 1..T_r:          # Q blocks
+        load Q_i, O_i, m_i, l_i
+        compute S_ij, update O_i, m_i, l_i on-chip
+        store O_i, m_i, l_i</code></pre>
+  <ul>
+    <li><code>K, V</code> are loaded once each across the whole outer loop &rarr; <code>2Nd</code> total.</li>
+    <li><code>Q</code> and <code>O</code> are the cost. Every outer pass sweeps <em>all</em> query blocks, because every query row needs the contribution from <code>K_j</code>. So each of the <code>T_c</code> passes reads all of <code>Q</code> and read-modify-writes all of <code>O</code>.</li>
+  </ul>
+  <div class="mq"><span class="v">&Theta;(N&sup2;d&sup2;/M)</span><span class="k">FlashAttention HBM traffic &mdash; the headline result</span></div>
+  <pre><code>traffic = 2Nd + T_c &middot; &Theta;(Nd)
+        = &Theta;(N&sup2;d / B_c)
+        = &Theta;(N&sup2;d&sup2;/M)</code></pre>
+  <p>The <code>N&times;N</code> score matrix never touches HBM. What <em>does</em> cross the bus repeatedly is <code>Q</code> and <code>O</code> &mdash; that is the price of tiling. Bigger SRAM means bigger <code>B_c</code>, fewer passes, less re-reading. <strong>That is the entire role of <code>M</code>.</strong></p>
+
+  <h3>The win, and where it flips</h3>
+  <pre><code>standard / flash = N&sup2; / (N&sup2;d&sup2;/M) = M/d&sup2;</code></pre>
+  <div class="calc">
+    <div class="calc-top">
+      <div>
+        <span class="calc-cap">Speedup M/d&sup2; at head dim</span>
+        <span class="calc-out" id="co">23&times;</span>
+      </div>
+      <div style="text-align:right">
+        <span class="calc-cap">d</span>
+        <span class="calc-out" id="cd" style="color:var(--ink)">64</span>
+      </div>
+    </div>
+    <input type="range" id="cs" min="32" max="512" step="8" value="64" aria-label="Head dimension d">
+    <div class="calc-scale"><span>32</span><span>128</span><span>256</span><span>384</span><span>512</span></div>
+    <p class="calc-verdict" id="cv">Comfortably worth it. Traffic drops by more than an order of magnitude.</p>
+  </div>
+  <p>The win decays <strong>quadratically</strong> in head dimension, with break-even near <code>d &asymp; 310</code> for <code>M &asymp; 10<sup>5</sup></code>. Head dims stayed at 64&ndash;128 as models grew partly for this reason.</p>
+
+  <div class="callout cool">
+    <span class="lbl">Two things worth having</span>
+    <p><strong>Why M/d and not &radic;M.</strong> Classic blocked matmul is <code>&Theta;(n&sup3;/&radic;M)</code> &mdash; you tile all three loops, so each tile edge is <code>&radic;M</code>. Attention tiles only two, holding <code>d</code> whole, so the savings factor is the full <code>M/d</code>. Attention gets a <em>better</em> exponent than matmul precisely because one dimension is small enough to stay resident.</p>
+    <p><strong>It is optimal.</strong> The paper proves a matching lower bound <code>&Omega;(N&sup2;d&sup2;/M)</code> for <code>M</code> in <code>[d, Nd]</code>. No exact attention algorithm does asymptotically better in this memory model. Everything since is constant-factor.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2 class="sec"><span class="num">05</span>Online softmax</h2>
+  <p class="dek">Three running values per query row: max, normaliser, output accumulator.</p>
+
+  <p>On arrival of block <code>j</code> with scores <code>S_cur</code>:</p>
+  <pre><code>m_i = max(m_{i-1}, rowmax(S_cur))
+
+l_i = e^(m_{i-1} - m_i) &middot; l_{i-1}  +  &Sigma; e^(S_cur - m_i)
+
+O_i = e^(m_{i-1} - m_i) &middot; O_{i-1}  +  e^(S_cur - m_i) &middot; V_j
+
+finally:  O &larr; O / l</code></pre>
+
+  <div class="mq cost"><span class="v">logit &gt; 11</span><span class="k">fp16 overflow threshold, ln(65504) &mdash; well inside normal range</span></div>
+  <h3>Where the max enters, and what breaks without it</h3>
+  <p>Every exponential is taken relative to the <em>current</em> max <code>m_i</code> &mdash; never the raw score, never the old max.</p>
+  <ul>
+    <li><strong>Both</strong> the carried term and the new term rebase to <code>m_i</code>. Rebasing the new block's term to <code>m_{i-1}</code> is a real bug: the accumulators go inconsistent, and <code>e^(S - m_{i-1})</code> overflows whenever the new block holds a larger score.</li>
+    <li>It is a nasty bug class &mdash; silent, and invisible on any test where blocks happen to have similar maxima.</li>
+  </ul>
+
+  <div class="callout cool">
+    <span class="lbl">FA1 vs FA2 form</span>
+    <p>FA1 applies <code>diag(l)<sup>-1</sup></code> at every inner step. FA2 carries <code>O</code> <em>unnormalised</em> and divides once at the end &mdash; fewer non-matmul FLOPs, see section 07. This is the better formulation.</p>
+  </div>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+  <h2 class="sec"><span class="num">06</span>Backward pass</h2>
+  <p class="dek">Spend matmul FLOPs, save HBM bytes. The trade is quantifiable on both sides.</p>
+
+  <h3>FLOP accounting</h3>
+  <p>Each <code>N&times;N&times;d</code> contraction is <code>2N&sup2;d</code>.</p>
+  <table class="prose">
+    <thead><tr><th>Pass</th><th>Matmuls</th><th>FLOPs</th></tr></thead>
+    <tbody>
+      <tr><td>Forward</td><td><code>QK<sup>T</sup></code>, <code>PV</code></td><td><code>4N&sup2;d</code></td></tr>
+      <tr><td>Standard backward</td><td><code>dV = P<sup>T</sup>dO</code>, <code>dP = dO V<sup>T</sup></code>, <code>dQ = dS K</code>, <code>dK = dS<sup>T</sup>Q</code></td><td><code>8N&sup2;d</code></td></tr>
+      <tr><td>Recompute S</td><td>one extra <code>QK<sup>T</sup></code></td><td><code>+2N&sup2;d</code></td></tr>
+    </tbody>
+  </table>
+  <p><code>10N&sup2;d</code> against <code>8N&sup2;d</code> &mdash; <strong>+25% backward FLOPs, about +17% per training step</strong> (<code>14N&sup2;d</code> vs <code>12N&sup2;d</code>). The backward is naturally twice the forward; that ratio holds for essentially every matmul-heavy layer.</p>
+
+  <h3>Why it is still faster</h3>
+  <p>For <code>N=8192</code>, <code>d=64</code>, one head, bf16, A100:</p>
+  <ul>
+    <li>recompute cost: <code>2N&sup2;d</code> = 8.6 GFLOP &divide; 312 TFLOP/s &rarr; <strong>~28&nbsp;&micro;s</strong></li>
+    <li>bytes avoided: reading <code>P</code> alone = 134 MB &divide; ~2 TB/s &rarr; <strong>~67&nbsp;&micro;s</strong></li>
+  </ul>
+  <p>About 2.4&times; in favour of recomputing, counting only <em>one</em> read of <code>P</code>. The standard backward also writes <code>dP</code> and reads it back for <code>dS</code>, so the real win is larger. The general rule: recomputation pays whenever the recompute's arithmetic intensity exceeds machine balance, and a tile of <code>QK<sup>T</sup></code> regenerated in SRAM has effectively infinite intensity because it never crosses the bus.</p>
+
+  <h3>The reason that actually matters</h3>
+  <div class="mq cost"><span class="v">137 GB &rarr; 17 MB</span><span class="k">activations for a 32-layer, 32-head model at N=8192, bf16</span></div>
+  <p>Speed is the smaller half. Storing <code>P</code> is <code>&Theta;(N&sup2;)</code> per head per layer:</p>
+  <pre><code>8192&sup2; &times; 2 B &times; 32 layers &times; 32 heads &asymp; 137 GB</code></pre>
+  <p>That fits on nothing. Flash stores <code>&Theta;(Nd + N)</code> instead &mdash; about 17&nbsp;MB, a roughly 8000&times; reduction. Long-context training is not slower without this; it is <em>impossible</em>. When people say FlashAttention enabled long context, this is the mechanism, not the kernel fusion.</p>
+
+  <h3>What is saved from forward</h3>
+  <p>Only two things beyond <code>Q, K, V</code>, which are retained anyway as layer inputs.</p>
+  <p><strong><code>L = m + log l</code></strong>, the merged logsumexp:</p>
+  <pre><code>P_ij = e^(S_ij - m_i) / l_i = e^(S_ij - m_i - log l_i) = e^(S_ij - L_i)</code></pre>
+  <p>Softmax normally needs two passes &mdash; find the max, then normalise. With <code>L_i</code> in hand it is a single fused exp. One vector of <code>N</code> floats replaces an <code>N&sup2;</code> matrix. FA1 stored <code>m</code> and <code>l</code> separately; merging them is an FA2 refinement.</p>
+  <p><strong><code>O</code></strong>, the forward output, retained for the softmax backward.</p>
+
+  <h3>The identity that makes it tile</h3>
+  <p>From the softmax Jacobian, <code>dS_ij = P_ij (dP_ij - &Sigma;_k P_ik dP_ik)</code>. That row-sum couples every column, which is fatal for a tiled kernel. But <code>dP_ik = dO_i &middot; V_k</code>, so:</p>
+  <pre><code>&Sigma;_k P_ik dP_ik = &Sigma;_k P_ik (dO_i &middot; V_k)
+                  = dO_i &middot; (&Sigma;_k P_ik V_k)
+                  = dO_i &middot; O_i
+
+D_i = rowsum(dO &compfn; O)      dS = P &compfn; (dP - D)</code></pre>
+  <p>Global coupling collapses to <strong>one scalar per row</strong>, computable in a <code>&Theta;(Nd)</code> pass <em>before</em> the main loop. Without this, no tiling scheme works at all &mdash; recompute or not &mdash; because every tile would need its row's full normaliser.</p>
+
+  <h3>The loop</h3>
+  <pre><code>S_ij  = Q_i K_j^T
+P_ij  = e^(S_ij - L_i)
+dV_j += P_ij^T dO_i
+dP_ij = dO_i V_j^T
+dS_ij = P_ij &compfn; (dP_ij - D_i)
+dQ_i += dS_ij K_j
+dK_j += dS_ij^T Q_i</code></pre>
+  <p><strong>Loop order: K/V outer, Q inner</strong> &mdash; flipped relative to FA2's forward. Two of the three outputs, <code>dK_j</code> and <code>dV_j</code>, accumulate over query blocks, so K/V outer keeps them in registers. <code>dQ</code> is the one that loses: it accumulates over <code>j</code>, needing atomic adds or a split-and-reduce. You cannot win on all three; the kernel picks the two worth more.</p>
+
+  <div class="callout">
+    <span class="lbl">Not the same as gradient checkpointing</span>
+    <p>Generic checkpointing recomputes a whole block and still materialises <code>N&sup2;</code> transiently during the recompute. Flash's is <strong>selective</strong>: it targets the one tensor that is cheap to regenerate and ruinous to store, and regenerates it tile-local, so the <code>N&times;N</code> matrix never exists in HBM in either direction.</p>
+  </div>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2 class="sec"><span class="num">07</span>FA2 and the non-matmul tax</h2>
+  <p class="dek">Once the N&sup2; traffic is gone, the remaining inefficiency is cheap FLOPs running on slow units.</p>
+
+  <h3>The loop swap</h3>
+  <pre><code>FA1:  for j in 1..T_c:          FA2:  for i in 1..T_r:
+        load K_j, V_j                 load Q_i; O_i in registers
+        for i in 1..T_r:              for j in 1..T_c:
+          load Q_i, O_i  &larr; HBM         load K_j, V_j
+          update                        update O_i  &larr; registers
+          store O_i      &larr; HBM     O_i &larr; O_i/l_i; store once</code></pre>
+  <p>Recount: <code>Q</code> and <code>O</code> are now touched once each, and <code>K, V</code> become the re-read tensors &rarr; <code>T_r &middot; 2Nd = 2N&sup2;d/B_r</code>. The constraint mirrors too, with <code>B_r = &Theta;(M/d)</code> and <code>B_c &le; d</code>. <strong>Same <code>&Theta;(N&sup2;d&sup2;/M)</code></strong> &mdash; the derivation is symmetric under the swap, only the identity of the victim changes.</p>
+
+  <h3>So why swap</h3>
+  <div class="mq"><span class="v">~2&times;</span><span class="k">FA2 over FA1 &mdash; 50 to 73% of peak matmul throughput</span></div>
+  <ol class="steps">
+    <li><strong>The accumulator stops round-tripping.</strong> In FA1, updates to a given <code>O_i</code> land in different outer iterations, so it must be evicted and reloaded between them. In FA2 they are consecutive and <code>O_i</code> never leaves registers &mdash; the worst kind of traffic, read-modify-write, is eliminated.</li>
+    <li><strong>Parallelism over query blocks.</strong> The big one. FA1 parallelises over batch &times; heads only, which at long context with small batch is too few thread blocks to fill 108 SMs. <em>Why query and not key:</em> query blocks partition the output, key blocks do not. Two query blocks write disjoint rows of <code>O</code> with zero communication; two key blocks both contribute to every row, needing atomics or a reduction pass.</li>
+    <li><strong>Fewer non-matmul FLOPs.</strong> The unnormalised accumulator &mdash; divide once per query block, not once per inner step.</li>
+    <li><strong>Warp-level split-Q.</strong> Same partition-the-output logic one level down: warps own whole rows, share <code>K/V</code> tiles, no cross-warp reduction.</li>
+  </ol>
+  <p><strong>Bonus:</strong> causal masking gets clean. With <code>Q</code> outer, block <code>i</code> only needs <code>j &le; i</code>, so you skip half the inner iterations outright instead of computing and masking.</p>
+
+  <h3>The non-matmul tax</h3>
+  <div class="mq cost"><span class="v">0.4% / 6%</span><span class="k">share of backward FLOPs vs share of backward runtime, for dS</span></div>
+  <p><code>dS = P &compfn; (dP - D)</code> is <code>2N&sup2;</code> elementwise FLOPs &mdash; about <code>1/(4d) &asymp; 0.4%</code> of the backward's matmul work. Negligible arithmetically. Now apply the 16&times; rate penalty:</p>
+  <pre><code>time fraction = (2N&sup2;/19.5) / (8N&sup2;d/312) = 4/d &asymp; 6% at d=64</code></pre>
+  <p><strong>0.4% of the FLOPs, about 6% of the time.</strong> Never call FLOPs negligible without checking which units they execute on.</p>
+  <table>
+    <thead><tr><th>Op</th><th>FLOPs</th><th>Unit</th></tr></thead>
+    <tbody>
+      <tr><td>D = rowsum(dO &compfn; O)</td><td>2Nd</td><td>FP32 &mdash; truly negligible, &Theta;(Nd)</td></tr>
+      <tr><td>P = exp(S - L)</td><td>~2N&sup2;</td><td>subtract FP32, <strong>exp on SFU</strong></td></tr>
+      <tr><td>dS = P &compfn; (dP - D)</td><td>2N&sup2;</td><td>FP32</td></tr>
+    </tbody>
+  </table>
+  <p><code>&Theta;(N&sup2;)</code> non-matmul against <code>&Theta;(N&sup2;d)</code> matmul &mdash; the same <code>1/d</code> structure, amplified 16&times; or worse. <code>MUFU.EX2</code> issues at roughly a quarter of FP32 rate, stacking penalties. Realistically, <strong>softmax work is 10&ndash;20% of a tuned kernel's runtime at <code>d=64</code>, despite being under 1% of its FLOPs.</strong></p>
+  <p>Traffic cost of <code>dS</code>: <strong>zero</strong>. <code>dP_ij</code> is a <code>B_r &times; B_c</code> register tile and <code>dS_ij</code> overwrites it in place. Subtracting <code>D_i</code> broadcasts along the row, register-local under split-Q. Second payoff of the <code>rowsum(dO &compfn; O)</code> identity: the correction is not just tileable but free in memory terms.</p>
+
+  <div class="callout cool">
+    <span class="lbl">The arc</span>
+    <p><strong>FA1</strong> fixed memory traffic. <strong>FA2</strong> fixed non-matmul FLOPs and parallelism. <strong>FA3</strong> on Hopper hides the remainder &mdash; warp specialisation with async TMA copies, and pingpong scheduling that overlaps one block's softmax with the next block's matmul. Same FLOPs, better occupancy. Still <code>&Theta;(N&sup2;d&sup2;/M)</code>.</p>
+    <p>Each attacked whatever became the bottleneck after the previous fix. That is how kernel optimisation usually goes &mdash; you do not pick the bottleneck, you inherit it.</p>
+  </div>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+  <h2 class="sec"><span class="num">08</span>Numbers to memorise</h2>
+  <p class="dek">If only one section survives the night before, make it this one.</p>
+  <table class="prose">
+    <thead><tr><th>Quantity</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Machine balance, A100 / H100</td><td><code>~150 / ~300</code> FLOPs per byte</td></tr>
+      <tr><td>Attention arithmetic intensity</td><td><code>d/2</code> &asymp; 32 at d=64 &mdash; <strong>independent of N</strong></td></tr>
+      <tr><td>Matmul vs non-matmul rate, A100 bf16</td><td>312 vs 19.5 TFLOP/s &rarr; <strong>16&times;</strong></td></tr>
+      <tr><td>SRAM per SM, A100</td><td>192 KB &asymp; 10<sup>5</sup> bf16 elements</td></tr>
+      <tr><td>Flash traffic</td><td><code>&Theta;(N&sup2;d&sup2;/M)</code></td></tr>
+      <tr><td>Speedup vs standard</td><td><code>M/d&sup2;</code> &mdash; ~23&times; at d=64, break-even ~d=310</td></tr>
+      <tr><td>Forward FLOPs</td><td><code>4N&sup2;d</code></td></tr>
+      <tr><td>Backward FLOPs, standard / Flash</td><td><code>8N&sup2;d</code> / <code>10N&sup2;d</code> (+25%)</td></tr>
+      <tr><td>Activation memory, standard / Flash</td><td><code>&Theta;(N&sup2;)</code> / <code>&Theta;(Nd + N)</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 9 -->
+<section id="s9">
+  <h2 class="sec"><span class="num">09</span>Self-test</h2>
+  <p class="dek">Cold, no notes. Answer aloud before opening each one.</p>
+
+  <details>
+    <summary>State the three L1 quantities separately. Where does the <code>N&sup2;</code> in traffic come from, and why is it not <code>&Theta;(Nd)</code>?</summary>
+    <div class="ans"><p>FLOPs <code>4N&sup2;d</code>; traffic <code>&Theta;(N&sup2; + Nd)</code>; retained activation <code>&Theta;(N&sup2;)</code>. The <code>N&sup2;</code> comes from four bus crossings of the score matrix across three separate kernel launches. <code>&Theta;(Nd)</code> is what an ideal fused kernel would move, not what the standard implementation actually writes.</p></div>
+  </details>
+
+  <details>
+    <summary>Derive <code>&Theta;(N&sup2;d&sup2;/M)</code> from the SRAM constraint. Then plug in d = 64, 128, 256 and find the crossover.</summary>
+    <div class="ans"><p>Working set <code>(2B_r + 2B_c)d + B_r B_c &le; M</code> gives <code>B_c = &Theta;(M/d)</code>. Each of the <code>T_c = N/B_c</code> outer passes re-reads all of <code>Q</code> and <code>O</code>, so traffic is <code>N&sup2;d/B_c = N&sup2;d&sup2;/M</code>. Speedup <code>M/d&sup2;</code>: ~23&times;, ~6&times;, ~1.5&times;, break-even near d = 310.</p></div>
+  </details>
+
+  <details>
+    <summary>Write the online-softmax recurrence. Which term overflows if you rebase the new block to <code>m_{i-1}</code>, and at what logit value in fp16?</summary>
+    <div class="ans"><p>The new block's own term, <code>e^(S_cur - m_{i-1})</code>, whenever that block contains a larger score than any seen so far. fp16 overflows above <code>ln(65504) &asymp; 11</code>.</p></div>
+  </details>
+
+  <details>
+    <summary>Compute attention's arithmetic intensity and say why it does not improve with longer sequences.</summary>
+    <div class="ans"><p><code>4N&sup2;d / 8N&sup2; = d/2</code>. Both work and traffic scale as <code>N&sup2;</code>, so <code>N</code> cancels &mdash; every extra score entry brings its own fixed <code>4d</code> FLOPs and its own fixed 8 bytes. Nothing amortises.</p></div>
+  </details>
+
+  <details>
+    <summary>Show <code>&Sigma;_k P_ik dP_ik = dO_i &middot; O_i</code>, and say what breaks in the backward without it.</summary>
+    <div class="ans"><p>Substitute <code>dP_ik = dO_i &middot; V_k</code> and pull <code>dO_i</code> out of the sum; what remains is <code>&Sigma;_k P_ik V_k = O_i</code>. Without it the softmax backward needs a full-row reduction over <code>dP</code>, so no tile can compute its own <code>dS</code> and the whole tiling scheme fails &mdash; independently of recomputation.</p></div>
+  </details>
+
+  <details>
+    <summary>Name two things FlashAttention does <em>not</em> do, and one regime where it is worse than standard attention.</summary>
+    <div class="ans"><p>It does not reduce FLOPs (it increases them) and it does not change the <code>&Theta;(N&sup2;d)</code> time complexity. It is worse when <code>d&sup2; &gt; M</code>, i.e. head dims beyond roughly 310 for A100-class SRAM.</p></div>
+  </details>
+
+  <p style="margin-top:22px">If question 2 and the <code>M/d&sup2;</code> ratio fall out without reaching back to these notes, the material is yours.</p>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2 class="sec"><span class="num">10</span>Common traps</h2>
+  <ul>
+    <li>Quoting <code>&Theta;(Nd)</code> traffic &mdash; that is the <em>ideal fused</em> number, not what the kernel writes</li>
+    <li>Collapsing FLOPs, bytes and retained memory into one &ldquo;complexity&rdquo;</li>
+    <li><code>AV</code> is <code>N&sup2;d</code>, not <code>Nd&sup2;</code></li>
+    <li>Saying &ldquo;it's exact&rdquo; without adding &ldquo;and it does <em>more</em> FLOPs&rdquo;</li>
+    <li>Forgetting that time complexity stays quadratic &mdash; it is an IO win, not an asymptotic one</li>
+    <li>Assuming it is universally better; it fails at <code>d&sup2; &gt; M</code></li>
+    <li>Rebasing the new block's exponential to the old max</li>
+    <li>Calling <code>&Theta;(N&sup2;)</code> non-matmul work negligible because it is under 1% of FLOPs</li>
+    <li>Counting elements where the question asks for bytes</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <span>FlashAttention revision notes</span>
+  <span>Covers FA1, FA2, FA3 &middot; A100/H100 figures</span>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var s=document.getElementById('cs'),o=document.getElementById('co'),
+      dd=document.getElementById('cd'),v=document.getElementById('cv'),M=1e5;
+  function upd(){
+    var d=+s.value,r=M/(d*d);
+    dd.textContent=d;
+    o.textContent=r>=10?Math.round(r)+'\u00d7':r.toFixed(1)+'\u00d7';
+    var bad=r<1;
+    o.classList.toggle('bad',bad);
+    v.textContent = bad
+      ? 'Below break-even. At this head dim the tiled kernel moves more bytes than standard attention \u2014 the SRAM can no longer hold a useful block.'
+      : r<2 ? 'Marginal. Traffic is barely better than standard; the win from fusion is nearly spent.'
+      : r<10 ? 'Worth it, but the margin is shrinking quadratically in d.'
+      : 'Comfortably worth it. Traffic drops by more than an order of magnitude.';
+  }
+  s.addEventListener('input',upd); upd();
+
+  var secs=[].slice.call(document.querySelectorAll('main section')),
+      links=[].slice.call(document.querySelectorAll('.toc a'));
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if(!e.isIntersecting) return;
+        var i=secs.indexOf(e.target);
+        links.forEach(function(l,j){l.classList.toggle('on',j===i);});
+      });
+    },{rootMargin:'-10% 0px -70% 0px'});
+    secs.forEach(function(x){io.observe(x);});
+  }
+})();
+</script>
+</body>
+</html>
