@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview notes</title>
+<meta name="description" content="Working notes on ML systems and research topics, written for recall under time pressure.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F2;
+  --card:#F8FAFB;
+  --ink:#111820;
+  --ink-2:#56626E;
+  --ink-3:#7C8894;
+  --rule:#CDD5DB;
+  --rule-2:#DFE5E9;
+  --cool:#0B6E7F;
+  --warm:#A4235A;
+  --display:"Archivo","Helvetica Neue",sans-serif;
+  --body:"Source Serif 4",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.62;
+}
+.shell{max-width:860px;margin:0 auto;padding:0 40px 120px}
+
+/* ---------- masthead ---------- */
+.masthead{padding:72px 0 40px;border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--warm);margin:0 0 18px;
+}
+.masthead h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(40px,7vw,68px);
+  line-height:.96;letter-spacing:-.03em;margin:0 0 20px;
+}
+.standfirst{font-size:19px;color:var(--ink-2);margin:0;max-width:56ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:28px;margin-top:34px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-3);
+}
+.meta b{color:var(--ink);font-weight:500}
+
+/* ---------- entry list ---------- */
+.group-label{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:52px 0 4px;font-weight:500;
+}
+.entry{
+  display:grid;grid-template-columns:52px minmax(0,1fr) 22px;align-items:start;
+  gap:0 20px;padding:26px 0;border-bottom:1px solid var(--rule);
+  text-decoration:none;color:inherit;
+}
+.entry:hover{background:var(--card)}
+.entry:focus-visible{outline:2px solid var(--cool);outline-offset:3px}
+.entry .idx{
+  font-family:var(--mono);font-size:12px;color:var(--warm);
+  padding-top:7px;letter-spacing:.06em;
+}
+.entry h2{
+  font-family:var(--display);font-weight:600;font-size:25px;letter-spacing:-.018em;
+  line-height:1.18;margin:0 0 7px;
+}
+.entry .dek{color:var(--ink-2);font-size:16px;margin:0 0 12px;max-width:56ch}
+.entry .dek code{font-family:var(--mono);font-size:.86em;background:#E3E8EB;padding:1px 4px;border-radius:3px}
+.entry .arrow{
+  font-family:var(--mono);font-size:17px;color:var(--ink-3);
+  padding-top:6px;text-align:right;
+}
+.entry:hover .arrow{color:var(--cool)}
+.entry:hover h2{color:var(--cool)}
+
+.tags{display:flex;flex-wrap:wrap;gap:7px;font-family:var(--mono);font-size:10.5px}
+.tag{
+  border:1px solid var(--rule);padding:2px 8px;color:var(--ink-2);
+  letter-spacing:.05em;background:var(--card);
+}
+.tag.key{border-color:var(--cool);color:var(--cool)}
+
+/* planned entries — same shape, no link */
+.entry.planned{cursor:default;opacity:.5}
+.entry.planned:hover{background:none}
+.entry.planned:hover h2,.entry.planned:hover .arrow{color:inherit}
+.entry.planned .arrow{font-size:10.5px;letter-spacing:.08em;padding-top:11px}
+
+footer{
+  border-top:2px solid var(--ink);margin-top:56px;padding-top:20px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+}
+footer a{color:var(--ink-2)}
+
+@media (max-width:700px){
+  .shell{padding:0 22px 80px}
+  body{font-size:16px}
+  .masthead{padding-top:46px}
+  .entry{grid-template-columns:34px minmax(0,1fr);gap:0 14px}
+  .entry .arrow{display:none}
+  .entry h2{font-size:21px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .entry,.entry h2,.entry .arrow{transition:background .14s,color .14s}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Working notes</p>
+  <h1>Interview notes</h1>
+  <p class="standfirst">Notes on ML systems and research topics, written for recall under time pressure rather than for completeness. Every claim that can be a number is a number.</p>
+  <div class="meta">
+    <span><b>1</b> published</span>
+    <span><b>3</b> planned</span>
+    <span>Updated <b>July 2026</b></span>
+  </div>
+</header>
+
+<p class="group-label">Kernels and systems</p>
+
+<a class="entry" href="flashattention-notes.html">
+  <span class="idx">01</span>
+  <div>
+    <h2>FlashAttention, from the bytes up</h2>
+    <p class="dek">Vanilla attention's three complexities kept separate, the <code>N&sup2;d&sup2;/M</code> IO derivation, online softmax, and what the backward actually saves. Includes a crossover calculator and a self-test.</p>
+    <div class="tags">
+      <span class="tag key">memory hierarchy</span>
+      <span class="tag">attention</span>
+      <span class="tag">CUDA</span>
+      <span class="tag">~25 min</span>
+    </div>
+  </div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+</a>
+
+<!--
+  ADD A NEW ENTRY
+  Copy the <a class="entry"> block above; change href, idx, title, dek and tags.
+
+  For a topic not written yet, use the "planned" form below: swap
+  <a class="entry" href="..."> for <div class="entry planned"> and close
+  with </div> instead of </a>.
+
+  Group headings are just <p class="group-label">Your heading</p>.
+  Remember to bump the published/planned counts in the masthead.
+-->
+
+<div class="entry planned">
+  <span class="idx">02</span>
+  <div>
+    <h2>Paged attention and the KV cache</h2>
+    <p class="dek">Why inference memory is a fragmentation problem rather than a bandwidth one, and what vLLM's block table actually buys.</p>
+    <div class="tags">
+      <span class="tag">inference</span>
+      <span class="tag">serving</span>
+    </div>
+  </div>
+  <span class="arrow">Planned</span>
+</div>
+
+<p class="group-label">Training and optimisation</p>
+
+<div class="entry planned">
+  <span class="idx">03</span>
+  <div>
+    <h2>Mixed precision, and what actually overflows</h2>
+    <p class="dek">fp16 against bf16 against fp8, where the dynamic range runs out, and which accumulations have to stay in fp32.</p>
+    <div class="tags">
+      <span class="tag">numerics</span>
+      <span class="tag">training</span>
+    </div>
+  </div>
+  <span class="arrow">Planned</span>
+</div>
+
+<div class="entry planned">
+  <span class="idx">04</span>
+  <div>
+    <h2>Parallelism: data, tensor, pipeline, sequence</h2>
+    <p class="dek">What each one shards, what each one costs in communication, and how they compose in a real training run.</p>
+    <div class="tags">
+      <span class="tag">distributed</span>
+      <span class="tag">training</span>
+    </div>
+  </div>
+  <span class="arrow">Planned</span>
+</div>
+
+<footer>
+  <span>Interview notes</span>
+  <span><a href="https://github.com/mlinterview2026/interview-notes">github.com/mlinterview2026/interview-notes</a></span>
+</footer>
+
+</div>
+</body>
+</html>
