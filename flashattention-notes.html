@@ -167,6 +167,42 @@ details[open] summary::before{content:"\2212"}
 details .ans{margin-top:12px;padding-left:24px;color:var(--ink-2);font-size:15.5px}
 details .ans p:last-child{margin-bottom:0}
 
+/* graded practice questions */
+.q{border-left:2px solid var(--rule);padding:2px 0 2px 20px;margin:0 0 32px}
+.q-num{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--warm);display:block;margin-bottom:7px;
+}
+.q h4{
+  font-family:var(--display);font-weight:600;font-size:17.5px;line-height:1.34;
+  margin:0 0 12px;letter-spacing:-.01em;max-width:62ch;
+}
+.deliv{counter-reset:dv;margin:0 0 14px;padding-left:0;list-style:none;max-width:64ch}
+.deliv li{
+  position:relative;padding-left:28px;margin-bottom:7px;
+  color:var(--ink-2);font-size:15.5px;line-height:1.55;
+}
+.deliv li::before{
+  counter-increment:dv;content:counter(dv,lower-alpha) ")";
+  position:absolute;left:0;top:1px;font-family:var(--mono);font-size:12px;color:var(--ink-3);
+}
+.q .flag{
+  display:block;font-family:var(--mono);font-size:11.5px;line-height:1.5;
+  color:var(--warm);margin:0 0 14px;max-width:62ch;
+}
+.q details{border-bottom:none;padding:0}
+.q details summary{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--cool);
+}
+.q details summary::before{content:"+";color:var(--cool);font-size:13px}
+.q details[open] summary::before{content:"\2212"}
+.q details .ans{padding-left:23px;font-size:15.5px}
+.level-note{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  margin:-4px 0 22px;letter-spacing:.02em;
+}
+
 footer{
   grid-column:1/-1;border-top:2px solid var(--ink);margin-top:24px;padding-top:20px;
   font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
@@ -232,7 +268,7 @@ footer{
     <li><a href="#s6">Backward pass</a></li>
     <li><a href="#s7">FA2 and the non-matmul tax</a></li>
     <li><a href="#s8">Numbers to memorise</a></li>
-    <li><a href="#s9">Self-test</a></li>
+    <li><a href="#s9">Practice</a></li>
     <li><a href="#s10">Common traps</a></li>
   </ol>
 </nav>
@@ -578,8 +614,160 @@ dK_j += dS_ij^T Q_i</code></pre>
 
 <!-- 9 -->
 <section id="s9">
-  <h2 class="sec"><span class="num">09</span>Self-test</h2>
-  <p class="dek">Cold, no notes. Answer aloud before opening each one.</p>
+  <h2 class="sec"><span class="num">09</span>Practice</h2>
+  <p class="dek">The graded questions, with the deliverables spelled out so nothing can be answered halfway. Each question lists exactly what a complete answer contains; write all of them down before opening the answer.</p>
+
+  <h3>Level 1 &mdash; foundations</h3>
+  <p class="level-note">One attention head. Sequence length N, head dimension d, bf16. Roughly 4 minutes.</p>
+
+  <div class="q">
+    <span class="q-num">L1 &middot; 1</span>
+    <h4>Give the three cost quantities of standard attention, kept separate.</h4>
+    <ul class="deliv">
+      <li>Forward FLOPs, <strong>with the constant</strong> &mdash; not just <code>&Theta;(&middot;)</code></li>
+      <li>HBM traffic for a standard unfused implementation, said stage by stage: what does each kernel read, and what does it write?</li>
+      <li>Activation memory retained for the backward &mdash; <strong>name the tensor</strong> and give its size per head per layer</li>
+    </ul>
+    <span class="flag">These are three different questions with three different answers. A single &ldquo;complexity&rdquo; covering all three is wrong by construction.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p><strong>FLOPs: <code>4N&sup2;d</code>.</strong> <code>QK<sup>T</sup></code> contributes <code>2N&sup2;d</code> and <code>PV</code> contributes <code>2N&sup2;d</code>. Softmax adds about <code>2N&sup2;</code> elementwise, negligible in the count but not in the runtime.</p>
+        <p><strong>Traffic: <code>&Theta;(N&sup2; + Nd)</code>, dominated by <code>N&sup2;</code>.</strong> Stage by stage: <code>QK<sup>T</sup></code> reads <code>2Nd</code> and writes <code>N&sup2;</code>; softmax reads <code>N&sup2;</code> and writes <code>N&sup2;</code>; <code>PV</code> reads <code>N&sup2; + Nd</code> and writes <code>Nd</code>. That is four crossings of the score matrix, <code>4N&sup2;</code> elements, or <code>8N&sup2;</code> bytes in bf16. The <code>N&sup2;</code> exists only because the three stages are separate kernel launches.</p>
+        <p><strong>Retained activation: <code>P</code> (or <code>S</code>), <code>&Theta;(N&sup2;)</code> per head per layer.</strong> This is the term that makes long context impossible, not merely slow.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="q">
+    <span class="q-num">L1 &middot; 2</span>
+    <h4>What does FlashAttention change, and what does it leave untouched?</h4>
+    <ul class="deliv">
+      <li>Two or three sentences on the mechanism it changes, and what happens to each quantity from question 1</li>
+      <li><strong>At least three</strong> things it does <em>not</em> change &mdash; one of which must be about asymptotic complexity, and one about a regime where it loses</li>
+    </ul>
+    <span class="flag">The second half carries most of the marks. Stating only that it is exact is the half everyone knows.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p><strong>Changes.</strong> It fuses the three stages into one kernel, so <code>S</code> and <code>P</code> are born in SRAM and never reach HBM. Tiling plus an online softmax lets the normaliser be computed incrementally, so no full row is ever needed at once. Traffic falls from <code>&Theta;(N&sup2;)</code> to <code>&Theta;(N&sup2;d&sup2;/M)</code> and retained activation from <code>&Theta;(N&sup2;)</code> to <code>&Theta;(Nd + N)</code>.</p>
+        <p><strong>Doesn't change.</strong> It is <em>exact</em>, bit-for-bit modulo floating-point reassociation, unlike the Linformer / Performer family. It does <em>not</em> reduce FLOPs &mdash; it does about 25% more in the backward and wins anyway. Time complexity stays <code>&Theta;(N&sup2;d)</code>, so this is a constant-factor IO win rather than an asymptotic one. And it is not universally better: once <code>d&sup2; &gt; M</code>, it moves more traffic than the standard kernel.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="q">
+    <span class="q-num">L1 &middot; 3</span>
+    <h4>In one line: why does that change buy a speedup, given your own answer to question 1?</h4>
+    <ul class="deliv">
+      <li>One sentence, referring back to which of the three quantities was the bottleneck</li>
+    </ul>
+    <span class="flag">Consistency check: if you answered 1(b) as <code>&Theta;(Nd)</code>, this question has no answer &mdash; there would be nothing for fusion to save. Contradiction there means 1(b) was wrong.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p>Because the <code>&Theta;(N&sup2;)</code> term was <em>traffic</em>, not arithmetic, and attention is memory-bound &mdash; so removing bytes from the bottleneck resource buys wall-clock time even while the FLOP count goes up.</p>
+      </div>
+    </details>
+  </div>
+
+  <h3>Level 2 &mdash; derivations</h3>
+  <p class="level-note">Numbers where numbers are asked for. Roughly 5 minutes.</p>
+
+  <div class="q">
+    <span class="q-num">L2 &middot; 1</span>
+    <h4>Derive FlashAttention's HBM traffic in terms of N, d and on-chip SRAM size M.</h4>
+    <ul class="deliv">
+      <li>Why does <code>M</code> appear at all? Name the constraint it imposes.</li>
+      <li>Write the working-set inequality that every resident tile must satisfy</li>
+      <li>What block sizes <code>B_r</code> and <code>B_c</code> fall out of it?</li>
+      <li><strong>The closed-form asymptotic traffic.</strong> This is the deliverable &mdash; a single expression in <code>N</code>, <code>d</code>, <code>M</code></li>
+      <li>Compare against standard attention: what is the ratio, and at what head dimension does Flash stop winning?</li>
+    </ul>
+    <span class="flag">Deliverable (d) is the one people skip. Getting the constraint right and stopping there is an incomplete answer &mdash; carry the counting argument through to the expression.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p><code>M</code> appears because a tile can only be computed without touching HBM if its entire working set is resident on-chip simultaneously. That bounds the tile size, which bounds how many passes over the data are needed.</p>
+        <p>Working set: <code>(2B_r + 2B_c)d + B_r B_c &le; M</code> &mdash; the <code>Q</code>, <code>K</code>, <code>V</code> and <code>O</code> tiles plus the <code>B_r &times; B_c</code> score tile. The <code>d</code> dimension is never tiled, since it is the reduction axis for both matmuls.</p>
+        <p>The <code>B_c d</code> term forces <code>B_c = &Theta;(M/d)</code>; then <code>B_r B_c &le; M</code> forces <code>B_r = min(&Theta;(M/d), d)</code>, which is <code>&Theta;(d)</code> in practice.</p>
+        <p>Counting: <code>K</code> and <code>V</code> are read once each, but every one of the <code>T_c = N/B_c</code> outer passes re-reads all of <code>Q</code> and <code>O</code>. So traffic is <code>&Theta;(N&sup2;d/B_c) = <strong>&Theta;(N&sup2;d&sup2;/M)</strong></code>.</p>
+        <p>Ratio against standard: <code>M/d&sup2;</code> &mdash; about 23&times; at <code>d=64</code>, 6&times; at 128, 1.5&times; at 256, break-even near <code>d = 310</code>. Beyond that Flash is worse.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="q">
+    <span class="q-num">L2 &middot; 2</span>
+    <h4>Show that standard attention is memory-bound.</h4>
+    <ul class="deliv">
+      <li>Arithmetic intensity as an expression in <code>d</code>, <strong>and the number</strong> at <code>d = 64</code>. Show the element-to-byte conversion explicitly.</li>
+      <li>Machine balance for a modern accelerator &mdash; <strong>an actual figure</strong> for A100 and H100</li>
+      <li>The resulting ratio: how far under balance is attention?</li>
+      <li>The regime where attention would stop being memory-bound &mdash; give the <code>d</code> value, and say whether it ever occurs in practice</li>
+      <li>How does intensity behave as <code>N</code> grows? Explain why.</li>
+    </ul>
+    <span class="flag">Every part here wants a number. &ldquo;It's low because the score matrix dominates traffic&rdquo; is the reasoning, not the answer.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p>Four crossings of the score matrix is <code>4N&sup2;</code> elements; at 2 bytes each in bf16 that is <code>8N&sup2;</code> bytes. Against <code>4N&sup2;d</code> FLOPs: <strong><code>intensity = d/2 &asymp; 32</code> FLOPs per byte at <code>d = 64</code></strong>.</p>
+        <p>Machine balance is roughly <strong>150</strong> FLOPs per byte on A100 and <strong>300</strong> on H100. Attention is therefore 5&ndash;10&times; under &mdash; the tensor cores idle, waiting on HBM.</p>
+        <p>It would stop being memory-bound at <code>d &gtrsim 300</code>. Real head dimensions are 64&ndash;128, so this never happens in practice.</p>
+        <p>Intensity is <code>&Theta;(d)</code> and <strong>independent of <code>N</code></strong>: work and traffic both scale as <code>N&sup2;</code>, so <code>N</code> cancels. Every extra score entry brings its own fixed <code>4d</code> FLOPs and its own fixed 8 bytes, so nothing amortises with longer sequences. Only wider heads help.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="q">
+    <span class="q-num">L2 &middot; 3</span>
+    <h4>Write the online-softmax recurrence for a single query row.</h4>
+    <ul class="deliv">
+      <li>What running state is carried between blocks? Name every piece.</li>
+      <li>The update to each piece when a new <code>K/V</code> block arrives &mdash; <strong>written out</strong>, with the rescaling factor as an explicit expression, not described in words</li>
+      <li>Where exactly does the max-subtraction enter, and which term does it protect?</li>
+      <li>What breaks numerically without it &mdash; give the fp16 logit threshold</li>
+      <li>The final step after the last block</li>
+    </ul>
+    <span class="flag">Watch the rebasing: check which max each of the two terms is expressed relative to. Getting one of them wrong is a silent bug that passes any test where blocks have similar maxima.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p>State carried per row: running max <code>m</code>, running normaliser <code>l</code>, running output accumulator <code>O</code>.</p>
+        <p><code>m_i = max(m_{i-1}, rowmax(S_cur))</code></p>
+        <p><code>l_i = e^(m_{i-1} - m_i)&middot;l_{i-1} + &Sigma; e^(S_cur - m_i)</code></p>
+        <p><code>O_i = e^(m_{i-1} - m_i)&middot;O_{i-1} + e^(S_cur - m_i)&middot;V_j</code></p>
+        <p>Finally <code>O &larr; O / l</code>.</p>
+        <p>The rescaling factor is <code>e^(m_{i-1} - m_i)</code>, applied to the carried terms to re-express them relative to the new max. <strong>Both</strong> terms end up relative to <code>m_i</code> &mdash; the carried one by rescaling, the new one by construction. Writing the new term as <code>e^(S_cur - m_{i-1})</code> is the classic bug: it overflows whenever the arriving block holds a larger score, which in fp16 means any logit above <code>ln(65504) &asymp; 11</code>.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="q">
+    <span class="q-num">L2 &middot; 4</span>
+    <h4>The backward pass does more FLOPs than a standard backward. Account for it.</h4>
+    <ul class="deliv">
+      <li>FLOPs for the forward, the standard backward, and the Flash backward &mdash; <strong>constants</strong>, plus the resulting percentage overhead per step</li>
+      <li>Why it is still faster: quantify <em>both</em> sides of the trade for <code>N = 8192</code>, <code>d = 64</code> on an A100</li>
+      <li>Exactly what is saved from forward to backward. Name the tensors and give their sizes.</li>
+      <li>The identity that makes the softmax backward tile at all, and what fails without it</li>
+      <li>The memory argument &mdash; the reason that matters more than speed</li>
+    </ul>
+    <span class="flag">&ldquo;More FLOPs but still faster&rdquo; is an assertion until both sides carry numbers. The percentage is the argument.</span>
+    <details>
+      <summary>Show answer</summary>
+      <div class="ans">
+        <p>Forward <code>4N&sup2;d</code>; standard backward <code>8N&sup2;d</code> across four matmuls; Flash adds one recomputed <code>QK<sup>T</sup></code> for <code>10N&sup2;d</code>. That is <strong>+25% on the backward, about +17% per training step</strong>.</p>
+        <p>At <code>N = 8192</code>, <code>d = 64</code>: recompute costs 8.6 GFLOP &divide; 312 TFLOP/s &asymp; <strong>28 &micro;s</strong>, while the read of <code>P</code> it avoids is 134 MB &divide; 2 TB/s &asymp; <strong>67 &micro;s</strong> &mdash; and that counts only one of several avoided crossings.</p>
+        <p>Saved from forward: <code>L = m + log l</code>, one vector of <code>N</code> floats, which collapses the two-pass softmax into a single fused exp; and <code>O</code>, the forward output, needed for the row-sum identity. Nothing of size <code>N&sup2;</code>.</p>
+        <p>That identity is <code>D_i = rowsum(dO &compfn; O)</code>, giving <code>dS = P &compfn; (dP - D)</code>. Without it the softmax Jacobian's row-sum couples every column, so no tile could compute its own <code>dS</code> and tiling would fail regardless of recomputation.</p>
+        <p>The memory argument: storing <code>P</code> is <code>&Theta;(N&sup2;)</code> per head per layer, about 137 GB for a 32-layer, 32-head model at <code>N = 8192</code>. Flash stores roughly 17 MB. Long-context training is not slower without this &mdash; it is impossible.</p>
+      </div>
+    </details>
+  </div>
+
+  <h3>Quick recall</h3>
+  <p class="level-note">Cold, no notes. Answer aloud before opening each one.</p>
 
   <details>
     <summary>State the three L1 quantities separately. Where does the <code>N&sup2;</code> in traffic come from, and why is it not <code>&Theta;(Nd)</code>?</summary>
