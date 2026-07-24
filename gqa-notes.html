@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MHA vs MQA vs GQA &mdash; revision notes</title>
+<meta name="description" content="KV cache arithmetic for multi-head, multi-query and grouped-query attention: derivations, crossover point, and the latency/throughput split.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F2;
+  --card:#F8FAFB;
+  --ink:#111820;
+  --ink-2:#56626E;
+  --ink-3:#7C8894;
+  --rule:#CDD5DB;
+  --rule-2:#DFE5E9;
+  --cool:#0B6E7F;
+  --cool-bg:#E2EFF1;
+  --warm:#A4235A;
+  --warm-bg:#F7E6ED;
+  --display:"Archivo","Helvetica Neue",sans-serif;
+  --body:"Source Serif 4",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.62;
+}
+.shell{
+  display:grid;grid-template-columns:212px minmax(0,1fr);
+  gap:56px;max-width:1240px;margin:0 auto;padding:0 40px 120px;
+}
+
+/* ---------- masthead ---------- */
+.masthead{grid-column:1/-1;padding:64px 0 40px;border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--warm);margin:0 0 18px;
+}
+.masthead h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(38px,6vw,62px);
+  line-height:.98;letter-spacing:-.028em;margin:0 0 18px;max-width:16ch;
+}
+.standfirst{font-size:19px;color:var(--ink-2);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:28px;margin-top:32px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-3);
+}
+.meta b{color:var(--ink);font-weight:500}
+
+/* ---------- table of contents ---------- */
+.toc{position:sticky;top:0;align-self:start;padding-top:44px;max-height:100vh;overflow-y:auto}
+.toc h2{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 14px;font-weight:500;
+}
+.toc ol{list-style:none;margin:0;padding:0;counter-reset:toc -1}
+.toc li{counter-increment:toc;margin-bottom:2px}
+.toc a{
+  display:flex;gap:10px;text-decoration:none;color:var(--ink-2);
+  font-family:var(--display);font-size:13.5px;line-height:1.35;
+  padding:6px 8px 6px 0;border-left:2px solid transparent;padding-left:10px;
+}
+.toc a::before{content:counter(toc);font-family:var(--mono);font-size:11px;color:var(--ink-3);flex:none;padding-top:1px}
+.toc a:hover{color:var(--ink)}
+.toc a.on{color:var(--cool);border-left-color:var(--cool);font-weight:600}
+.toc a.on::before{color:var(--cool)}
+
+/* ---------- main column + margin rail ---------- */
+main{max-width:920px;padding-right:214px;padding-top:44px}
+section{padding-top:26px;margin-bottom:56px;scroll-margin-top:20px}
+section+section{border-top:1px solid var(--rule);padding-top:44px}
+h2.sec{
+  font-family:var(--display);font-weight:700;font-size:31px;letter-spacing:-.02em;
+  line-height:1.12;margin:0 0 6px;
+}
+h2.sec .num{font-family:var(--mono);font-size:14px;color:var(--warm);font-weight:500;display:block;margin-bottom:9px;letter-spacing:.08em}
+.dek{color:var(--ink-2);font-size:16px;margin:0 0 26px;max-width:62ch;font-style:italic}
+h3{
+  font-family:var(--display);font-weight:600;font-size:18px;letter-spacing:-.008em;
+  margin:34px 0 12px;
+}
+p{margin:0 0 16px;max-width:68ch}
+main a{color:var(--cool)}
+
+/* margin quantities — the spine of the document */
+.mq{
+  float:right;clear:right;width:186px;margin:6px -214px 20px 0;
+  font-family:var(--mono);border-left:2px solid var(--cool);
+  padding:2px 0 2px 12px;
+}
+.mq.cost{border-left-color:var(--warm)}
+.mq .v{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;color:var(--cool);line-height:1.25}
+.mq.cost .v{color:var(--warm)}
+.mq .k{display:block;font-size:11px;line-height:1.45;color:var(--ink-2);margin-top:5px;letter-spacing:.01em}
+
+code{font-family:var(--mono);font-size:.88em;background:#E3E8EB;padding:1px 4px;border-radius:3px}
+pre{
+  font-family:var(--mono);font-size:13.5px;line-height:1.72;background:var(--card);
+  border:1px solid var(--rule-2);border-left:2px solid var(--cool);
+  padding:16px 18px;overflow-x:auto;margin:0 0 20px;border-radius:0 4px 4px 0;
+}
+pre code{background:none;padding:0;font-size:inherit}
+pre.result{border-left-color:var(--warm)}
+strong{font-weight:600}
+
+table{border-collapse:collapse;width:100%;margin:0 0 22px;font-size:14.5px}
+th,td{text-align:left;padding:9px 14px 9px 0;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);
+}
+td:first-child{font-family:var(--mono);font-size:13px}
+table.prose td:first-child{font-family:var(--body);font-size:14.5px}
+td.hi{color:var(--warm);font-weight:600}
+
+.callout{
+  background:var(--card);border:1px solid var(--rule-2);border-top:2px solid var(--warm);
+  padding:18px 20px;margin:0 0 22px;
+}
+.callout .lbl{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--warm);display:block;margin-bottom:8px;
+}
+.callout p:last-child{margin-bottom:0}
+.callout.cool{border-top-color:var(--cool)}
+.callout.cool .lbl{color:var(--cool)}
+
+ul{margin:0 0 18px;padding-left:0;list-style:none;max-width:68ch}
+ul li{position:relative;padding-left:20px;margin-bottom:9px}
+ul li::before{content:"";position:absolute;left:2px;top:.62em;width:6px;height:1px;background:var(--warm)}
+ol.steps{margin:0 0 18px;padding-left:20px;max-width:68ch}
+ol.steps li{margin-bottom:10px}
+
+/* intensity bars */
+.bars{margin:0 0 24px;font-family:var(--mono);font-size:12px}
+.bar-row{display:grid;grid-template-columns:180px 1fr 62px;align-items:center;gap:12px;margin-bottom:9px}
+.bar-track{height:15px;background:#E3E8EB;position:relative}
+.bar-fill{height:100%;background:var(--cool)}
+.bar-fill.warn{background:var(--warm)}
+.bar-val{text-align:right;color:var(--ink-2)}
+.bar-lbl{color:var(--ink-2)}
+.bar-note{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;margin-top:2px}
+
+/* crossover calculator */
+.calc{background:var(--card);border:1px solid var(--rule-2);padding:22px 24px;margin:0 0 22px}
+.calc-top{display:flex;justify-content:space-between;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:16px}
+.calc-out{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--cool)}
+.calc-out.bad{color:var(--warm)}
+.calc-cap{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase}
+.calc input[type=range]{width:100%;accent-color:var(--cool);margin:0}
+.calc-scale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
+.calc-verdict{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-top:14px;line-height:1.6}
+.calc-split{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-top:10px;letter-spacing:.02em}
+
+/* self-test */
+details{border-bottom:1px solid var(--rule-2);padding:14px 0}
+details summary{
+  cursor:pointer;font-family:var(--body);font-size:16.5px;list-style:none;
+  display:flex;gap:12px;align-items:baseline;
+}
+details summary::-webkit-details-marker{display:none}
+details summary::before{
+  content:"+";font-family:var(--mono);font-size:14px;color:var(--warm);flex:none;
+}
+details[open] summary::before{content:"\2212"}
+details .ans{margin-top:12px;padding-left:24px;color:var(--ink-2);font-size:15.5px}
+details .ans p:last-child{margin-bottom:0}
+.level-note{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  margin:-4px 0 22px;letter-spacing:.02em;
+}
+
+footer{
+  grid-column:1/-1;border-top:2px solid var(--ink);margin-top:24px;padding-top:20px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+}
+
+@media (max-width:1120px){
+  main{padding-right:0}
+  .mq{
+    float:none;width:auto;max-width:68ch;margin:0 0 20px;
+    background:var(--card);padding:12px 16px;border-left-width:3px;
+  }
+  .mq .v{display:inline;font-size:15px}
+  .mq .k{display:inline;margin-left:10px;font-size:12px}
+}
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr;gap:0;padding:0 22px 80px}
+  .toc{display:none}
+  body{font-size:16px}
+  .masthead{padding-top:40px}
+  .bar-row{grid-template-columns:120px 1fr 52px;gap:8px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .toc a{transition:color .15s,border-color .15s}
+}
+@media print{
+  body{background:#fff;font-size:11pt}
+  .shell{display:block;padding:0;max-width:none}
+  .toc,.calc input,footer{display:none}
+  main{padding-right:170px;max-width:none}
+  .mq{width:150px;margin-right:-170px}
+  section{page-break-inside:auto}
+  h2.sec,h3{page-break-after:avoid}
+  pre,table,.callout{page-break-inside:avoid}
+  details{page-break-inside:avoid}
+  details[open] .ans,details .ans{display:block}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Revision notes &middot; inference &amp; serving economics</p>
+  <h1>MHA, MQA, GQA from the bytes up</h1>
+  <p class="standfirst">These three architectures differ in exactly one integer. Everything else &mdash; the quality gap, the throughput win, the reason 8 is the number everybody picked &mdash; falls out of what that integer does to the byte count during decode.</p>
+  <div class="meta">
+    <span><b>Scope</b> derivations &rarr; crossover &rarr; latency vs throughput</span>
+    <span><b>Read</b> ~25 min</span>
+    <span><b>Revise</b> ~8 min via the margin rail</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s0">Notation, fixed once</a></li>
+    <li><a href="#s1">One integer, three names</a></li>
+    <li><a href="#s2">Weight bytes W(G)</a></li>
+    <li><a href="#s3">KV bytes k(G)</a></li>
+    <li><a href="#s4">The crossover</a></li>
+    <li><a href="#s5">Prefill vs decode intensity</a></li>
+    <li><a href="#s6">Fixed batch: latency saturates</a></li>
+    <li><a href="#s7">At capacity: throughput is linear</a></li>
+    <li><a href="#stp">Tensor parallelism erodes it</a></li>
+    <li><a href="#ssd">Speculative decoding interaction</a></li>
+    <li><a href="#s8">Provenance and limits</a></li>
+    <li><a href="#sl3">Is GQA the right shape?</a></li>
+    <li><a href="#s9">Numbers to memorise</a></li>
+    <li><a href="#s10">Cold self-test</a></li>
+    <li><a href="#s11">Traps I fell into</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 0 -->
+<section id="s0">
+  <h2 class="sec"><span class="num">00</span>Notation, fixed once</h2>
+  <p class="dek">Half the errors in this topic are notation errors, not physics errors. Fix the symbols before touching a formula, and never let two of them mean &ldquo;group&rdquo;.</p>
+
+  <table class="prose">
+    <thead><tr><th>Symbol</th><th>Means</th><th>Working value</th></tr></thead>
+    <tbody>
+      <tr><td><code>d</code></td><td>model width, <code>d_model</code></td><td>4096</td></tr>
+      <tr><td><code>H</code></td><td>query heads</td><td>32</td></tr>
+      <tr><td><code>d<sub>h</sub></code></td><td>head dim, with <code>H&middot;d<sub>h</sub> = d</code></td><td>128</td></tr>
+      <tr><td><code>n<sub>kv</sub></code></td><td><strong>KV heads</strong> &mdash; the one integer that changes</td><td>32 / 8 / 1</td></tr>
+      <tr><td><code>G</code></td><td><strong>group size</strong> = <code>H / n<sub>kv</sub></code>, query heads per KV head</td><td>1 / 4 / 32</td></tr>
+      <tr><td><code>n<sub>l</sub></code></td><td>layers</td><td>32</td></tr>
+      <tr><td><code>d<sub>ff</sub></code></td><td>FFN hidden width (SwiGLU)</td><td>11008</td></tr>
+      <tr><td><code>b</code></td><td>bytes per element</td><td>2 (fp16)</td></tr>
+      <tr><td><code>B, L</code></td><td>batch size, context length</td><td>varies</td></tr>
+      <tr><td><code>P</code></td><td>parameter count, in <em>elements</em></td><td>&mdash;</td></tr>
+      <tr><td><code>W</code></td><td>weight <em>bytes</em> = <code>b&middot;P</code></td><td>&mdash;</td></tr>
+      <tr><td><code>k</code></td><td>KV bytes per token, <strong>whole model</strong></td><td>&mdash;</td></tr>
+      <tr><td><code>M</code></td><td>HBM capacity</td><td>80 GB</td></tr>
+      <tr><td><code>BW</code></td><td>HBM bandwidth</td><td>3.35 TB/s</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <span class="lbl">The notation clash to pre-empt</span>
+    <p><code>G</code> and <code>n<sub>kv</sub></code> are reciprocals, and both get called &ldquo;groups&rdquo; in conversation. Config files expose <code>n<sub>kv</sub></code> (<code>num_key_value_heads</code>), so <strong>&ldquo;GQA-8&rdquo; always means <code>n<sub>kv</sub> = 8</code></strong>, which for <code>H = 32</code> is <code>G = 4</code>. Savings scale as <code>G</code>, not <code>n<sub>kv</sub></code>. Say which one you mean out loud before you write the first line.</p>
+  </div>
+
+  <div class="mq"><span class="v">~300</span><span class="k">FLOPs per byte &mdash; H100 ridge point, 990 TFLOP/s over 3.35 TB/s</span></div>
+  <p><strong>The one hardware fact.</strong> An H100 does ~990 TFLOP/s dense BF16 against 3.35 TB/s of HBM. Divide: a kernel doing fewer than <strong>~300 FLOPs per byte</strong> it touches is memory-bound, and its runtime is set entirely by byte count. Everything below is byte counting; the roofline check at the end is what licenses that.</p>
+</section>
+
+<!-- 1 -->
+<section id="s1">
+  <h2 class="sec"><span class="num">01</span>One integer, three names</h2>
+  <p class="dek">MHA, MQA and GQA are the same architecture at three settings of <code>n<sub>kv</sub></code>. Nothing else differs.</p>
+
+  <table class="prose">
+    <thead><tr><th>Name</th><th><code>n<sub>kv</sub></code></th><th><code>G</code></th><th>Query heads</th></tr></thead>
+    <tbody>
+      <tr><td>MHA</td><td><code>H</code></td><td>1</td><td><code>H</code></td></tr>
+      <tr><td>GQA</td><td>between</td><td><code>H/n<sub>kv</sub></code></td><td><code>H</code></td></tr>
+      <tr><td>MQA</td><td>1</td><td><code>H</code></td><td><code>H</code></td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>The sharing operation.</strong> Each KV head is broadcast to the <code>G</code> query heads in its group &mdash; a <code>repeat_interleave</code> along the head axis in naive implementations, or a stride-0 read in a fused kernel. Query heads are <em>never</em> shared. The output projection stays <code>d &times; d</code>, because after broadcast you still concatenate <code>H&middot;d<sub>h</sub></code> values.</p>
+
+  <h3>What stays invariant</h3>
+  <ul>
+    <li><strong>Query heads:</strong> <code>H</code> in all three. GQA does not reduce the number of attention patterns computed.</li>
+    <li><strong>Score and AV FLOPs:</strong> identical. Every query head still attends over the full context.</li>
+    <li><strong>Attention output dimensionality:</strong> identical, hence <code>W<sub>O</sub></code> unchanged.</li>
+  </ul>
+  <p>What does shrink: the K and V <em>projection</em> matrices, and therefore their GEMM FLOPs and their gradients. That is a side effect, not the point.</p>
+
+  <h3>What the sharing costs</h3>
+  <p>A KV head is a retrieval system: <strong>K is the index</strong> (what makes a token findable), <strong>V is the payload</strong> (what gets copied forward), <strong>Q is the query</strong>. Sharing collapses the first two and leaves the third alone.</p>
+  <ul>
+    <li><strong>K: a shared basis, not a shared pattern.</strong> Each query head keeps its own <code>W<sub>Q</sub></code>, so heads in a group can still attend to completely different tokens. What is lost is that they must all search <em>the same key space</em> &mdash; one <code>W<sub>K</sub></code> is a compromise projection serving G different notions of what to index by.</li>
+    <li><strong>V: the larger loss.</strong> Even two heads attending to the identical token with identical weights now receive the <em>same vector</em>. MHA would read different features from it. Per layer you go from <code>H</code> independent read channels to <code>n<sub>kv</sub></code>; only the fixed <code>W<sub>O</sub></code> mixing differs afterwards.</li>
+  </ul>
+  <p><strong>Degradation ordering</strong>, predictable from that: precise retrieval and verbatim copying first (rare tokens, proper nouns, numbers, code identifiers &mdash; induction behaviour needs an exact index and a faithful payload), then multiple simultaneous retrievals (multi-hop, multi-needle), then long inputs generally. Barely affected: short-form fluency &mdash; and <strong>perplexity</strong>, which is dominated by easy high-frequency tokens while the loss lives in the tail. A model can look near-identical on validation loss and be measurably worse at retrieval.</p>
+
+  <h3>Which term in the KV formula each technique attacks</h3>
+  <div class="mq cost"><span class="v">5 axes</span><span class="k">independent and multiplicative &mdash; GQA owns exactly one of them</span></div>
+  <p>KV bytes per token <code>= 2 &middot; n<sub>l</sub> &middot; n<sub>kv</sub> &middot; d<sub>h</sub> &middot; b</code>. Each published technique reduces a different factor, which is precisely why they compose:</p>
+  <table class="prose">
+    <thead><tr><th>Term</th><th>Attacked by</th></tr></thead>
+    <tbody>
+      <tr><td class="hi"><code>n<sub>kv</sub></code></td><td class="hi"><strong>MQA / GQA &mdash; the only term they touch</strong></td></tr>
+      <tr><td><code>d<sub>h</sub></code></td><td>MLA (DeepSeek): compress K/V to a shared low-rank latent</td></tr>
+      <tr><td><code>n<sub>l</sub></code></td><td>cross-layer KV sharing &mdash; CLA, YOCO, Character.AI</td></tr>
+      <tr><td><code>L</code> (implicit)</td><td>sliding window, StreamingLLM / H2O eviction, prefix sharing</td></tr>
+      <tr><td><code>b</code></td><td>KV quantization to fp8 / int4</td></tr>
+      <tr><td>the factor 2</td><td>nothing &mdash; K and V are both genuinely needed</td></tr>
+    </tbody>
+  </table>
+  <p>GQA-8 (4&times;) with fp8 (2&times;) with a sliding window is 8&times;+ compounding. Knowing which row a technique occupies tells you instantly whether it stacks with another.</p>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2 class="sec"><span class="num">02</span>Weight bytes, W(G)</h2>
+  <p class="dek">Derived per layer, in elements, then converted once at the end. The conversion happening exactly once is the discipline that prevents the factor-of-two error.</p>
+
+  <h3>Per layer, in elements</h3>
+  <table>
+    <thead><tr><th>Matrix</th><th>Shape</th><th>Params</th></tr></thead>
+    <tbody>
+      <tr><td>Q</td><td><code>d &times; H&middot;d<sub>h</sub></code></td><td><code>d&sup2;</code></td></tr>
+      <tr><td>K</td><td><code>d &times; n<sub>kv</sub>&middot;d<sub>h</sub> = d &times; d/G</code></td><td><code>d&sup2;/G</code></td></tr>
+      <tr><td>V</td><td><code>d &times; d/G</code></td><td><code>d&sup2;/G</code></td></tr>
+      <tr><td>O</td><td><code>H&middot;d<sub>h</sub> &times; d</code></td><td><code>d&sup2;</code></td></tr>
+      <tr><td>FFN</td><td>3 &times; (<code>d &times; d<sub>ff</sub></code>), SwiGLU</td><td><code>3d&middot;d<sub>ff</sub> &asymp; 8d&sup2;</code></td></tr>
+    </tbody>
+  </table>
+  <p>The <code>/G</code> appears on K and V and nowhere else, because they are the only matrices whose <em>output</em> width is <code>n<sub>kv</sub>&middot;d<sub>h</sub></code> rather than <code>H&middot;d<sub>h</sub></code>. SwiGLU has three matrices at <code>d<sub>ff</sub> &asymp; (8/3)d</code>, giving the same <code>8d&sup2;</code> as a classic 2-matrix FFN at <code>d<sub>ff</sub> = 4d</code>.</p>
+
+  <pre><code>P_layer = d&sup2; + d&sup2;/G + d&sup2;/G + d&sup2; + 8d&sup2;
+        = d&sup2;(10 + 2/G)</code></pre>
+
+  <div class="mq"><span class="v">10d&sup2;</span><span class="k">the floor &mdash; attention params can only ever shed 2/12 = 17% of the model</span></div>
+  <pre class="result"><code>P = n_l &middot; d&sup2; &middot; (10 + 2/G)
+W = b&middot;P = 2 n_l d&sup2; (10 + 2/G)</code></pre>
+
+  <p><strong>Sanity check at G = 1:</strong> <code>d&sup2;(10+2) = 12d&sup2;</code> per layer. <code>12 &times; 4096&sup2; &times; 32 = 6.44B</code> params &mdash; correct for a 7B-class model once embeddings are added back.</p>
+
+  <table>
+    <thead><tr><th>G</th><th>n<sub>kv</sub></th><th>P</th><th>W</th></tr></thead>
+    <tbody>
+      <tr><td>1 (MHA)</td><td>32</td><td>6.44B</td><td>12.9 GB</td></tr>
+      <tr><td>4 (GQA-8)</td><td>8</td><td>5.64B</td><td>11.3 GB</td></tr>
+      <tr><td>32 (MQA)</td><td>1</td><td>5.40B</td><td>10.8 GB</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout cool">
+    <span class="lbl">Read the floor</span>
+    <p><code>W</code> moves by 17% across the entire range while <code>k</code> moves by 32&times;. <strong>GQA is not a parameter-efficiency technique</strong>, and papers usually spend the saved params back on a wider FFN to keep the comparison iso-parameter. When you quote a speedup, say whether you shrank the model or spent the savings &mdash; it changes the crossover by ~15%.</p>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2 class="sec"><span class="num">03</span>KV bytes per token, k(G)</h2>
+  <p class="dek">Same discipline: elements first, one conversion, and state the scope &mdash; per layer or whole model &mdash; before quoting a number.</p>
+
+  <p>One token, one layer, caches a K vector and a V vector, each of width <code>n<sub>kv</sub>&middot;d<sub>h</sub> = d/G</code>:</p>
+
+  <pre><code>k_layer = 2 &middot; (d/G) elements
+        = 2b &middot; (d/G) bytes</code></pre>
+
+  <div class="mq cost"><span class="v">0.524 MB</span><span class="k">MHA KV per token, whole model &mdash; 4.3 GB for one 8k sequence</span></div>
+  <pre class="result"><code>k = 2 b n_l d / G = 4 n_l d / G   bytes/token   (fp16)</code></pre>
+
+  <table>
+    <thead><tr><th>G</th><th>n<sub>kv</sub></th><th>k</th><th>One 8k sequence</th></tr></thead>
+    <tbody>
+      <tr><td>1 (MHA)</td><td>32</td><td>0.524 MB</td><td>4.29 GB</td></tr>
+      <tr><td>4 (GQA-8)</td><td>8</td><td>0.131 MB</td><td>1.07 GB</td></tr>
+      <tr><td>32 (MQA)</td><td>1</td><td>0.0164 MB</td><td>0.13 GB</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Feel the MHA number.</strong> 4.29 GB for a single 8k conversation. Sixteen users fill an 80 GB H100 before the weights are even loaded. That is the entire commercial motivation for this line of work.</p>
+
+  <div class="callout">
+    <span class="lbl">Scope discipline</span>
+    <p><code>k</code> as written includes <code>n<sub>l</sub></code>: it is <strong>whole-model</strong> bytes per token. When analysing a single attention op (section 05) drop <code>n<sub>l</sub></code>. Mixing the two scopes mid-derivation gives an answer off by 32&times; and it will look plausible.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2 class="sec"><span class="num">04</span>The crossover</h2>
+  <p class="dek">One number decides whether GQA is worth anything for a given workload. It is a property of the <em>workload</em>, not the architecture.</p>
+
+  <p>Per decode step the GPU reads weights <strong>once</strong> (shared across the batch) and each sequence's KV cache <strong>separately</strong>:</p>
+  <pre><code>bytes/step = W + B&middot;L&middot;k</code></pre>
+
+  <p>Set the two terms equal and solve. The <code>n<sub>l</sub></code> cancels, which is why the answer is layer-independent:</p>
+  <pre><code>      B L &middot; k  =  W
+B L &middot; 4n_l d/G  =  2 n_l d&sup2; (10 + 2/G)      &divide; 4n_l d
+        B L / G  =  d(10 + 2/G) / 2 = 5d + d/G   &times; G
+            B L  =  5dG + d</code></pre>
+
+  <div class="mq"><span class="v">24.6k</span><span class="k">tokens on the GPU at which KV traffic overtakes weight traffic, MHA</span></div>
+  <pre class="result"><code>B L = d(5G + 1)</code></pre>
+
+  <table>
+    <thead><tr><th>G</th><th>Crossover B&middot;L</th><th>Reached by</th></tr></thead>
+    <tbody>
+      <tr><td>1 (MHA)</td><td>24,576</td><td>one 24k-context chat, or batch 12 at 2k</td></tr>
+      <tr><td>4 (GQA-8)</td><td>86,016</td><td>batch 21 at 4k</td></tr>
+      <tr><td>32 (MQA)</td><td>659,456</td><td>batch 80 at 8k</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>The crossover scales with <code>G</code>.</strong> Every 4&times; cut to the cache moves the goalpost 4&times; further out &mdash; you have to work 4&times; harder to become KV-bound again. That is the diminishing-returns mechanism in one line.</p>
+
+  <div class="calc">
+    <div class="calc-top">
+      <div>
+        <div class="calc-cap">Fixed-batch speedup, MHA &rarr; GQA-8</div>
+        <div class="calc-out" id="co">1.0&times;</div>
+      </div>
+      <div style="text-align:right">
+        <div class="calc-cap">B &middot; L</div>
+        <div style="font-family:var(--mono);font-size:17px" id="cd">32k</div>
+      </div>
+    </div>
+    <input type="range" id="cs" min="30" max="70" step="1" value="45" aria-label="total cached tokens, log scale">
+    <div class="calc-scale"><span>1k</span><span>10k</span><span>100k</span><span>1M</span><span>10M</span></div>
+    <div class="calc-split" id="cx"></div>
+    <div class="calc-verdict" id="cv"></div>
+  </div>
+
+  <p><strong>Plainly.</strong> Below ~25k cached tokens you are weight-bound and GQA is a rounding error &mdash; batch-1 short-context on-device inference, where you paid quality for nothing. Above ~100k, KV is 80&ndash;95% of all traffic and you collect nearly the full <code>G&times;</code>. Same model, same kernel; the workload decides.</p>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2 class="sec"><span class="num">05</span>Prefill vs decode intensity</h2>
+  <p class="dek">The asymmetry that makes this whole subject exist. Prefill's intensity carries <code>L</code>; decode's carries only <code>B</code> and <code>G</code>.</p>
+
+  <h3>Prefill &mdash; one sequence, L tokens at once</h3>
+  <p><strong>Weight GEMMs.</strong> Each of <code>P</code> weights does one multiply-accumulate (2 FLOPs) per token, for <code>L</code> tokens. The weights are read once:</p>
+  <pre><code>I_W = 2PL / bP = 2PL / 2P = L</code></pre>
+
+  <p><strong>Attention</strong>, per layer, flash-style so the score matrix never reaches HBM, causal masking halving the work:</p>
+  <pre><code>FLOPs = 2L&sup2;d (QK&#7488;) + 2L&sup2;d (AV) = 4L&sup2;d  &rarr; causal: 2L&sup2;d
+bytes = b(Ld [Q] + 2Ld/G [K,V] + Ld [O]) &le; 8Ld
+I_A   = 2L&sup2;d / 8Ld = L/4</code></pre>
+  <p>At <code>L = 4096</code>: <code>I_W = 4096</code>, <code>I_A = 1024</code>. Both an order of magnitude above the 300 ridge &mdash; <strong>prefill is compute-bound</strong>, and the reuse of each weight across <code>L</code> tokens is literally the intensity.</p>
+
+  <h3>Decode &mdash; B sequences, 1 new token each</h3>
+  <p><strong>Weight GEMMs.</strong> Same weights, but now only <code>B</code> tokens amortise the read:</p>
+  <pre><code>I_W = 2PB / bP = B</code></pre>
+
+  <p><strong>Attention</strong>, per layer per sequence: one query row against <code>L</code> cached keys.</p>
+  <pre><code>FLOPs = 2Ld (QK&#7488;) + 2Ld (AV) = 4Ld    &rarr; total 4Ld&middot;n_l&middot;B
+bytes = B L k = B L &middot; 4n_l d / G
+I_A   = 4Ld n_l B / (4 B L n_l d / G) = G</code></pre>
+
+  <div class="mq cost"><span class="v">I<sub>A</sub> = G</span><span class="k">decode attention intensity &mdash; independent of both B and L</span></div>
+  <p><strong>Everything cancels but <code>G</code>.</strong> Not <code>B</code>, not <code>L</code>. The reason is structural: every sequence owns a private KV cache, so batching buys <em>no reuse whatsoever</em> in attention. You read <code>B</code> separate caches to do <code>B</code> separate GEMVs. Decode attention is permanently batch-1-shaped, and <code>G</code> is the only lever on it.</p>
+
+  <h3>Aggregate</h3>
+  <p>With <code>x = BLk</code>, and using <code>2PB = B&middot;W</code> and <code>4Ldn_lB = G&middot;x</code>:</p>
+  <pre class="result"><code>I = (B&middot;W + G&middot;x) / (W + x)</code></pre>
+  <p>A byte-weighted average of <code>B</code> and <code>G</code>, which reads off directly: <strong>raising <code>L</code> drags <code>I</code> toward <code>G</code></strong> (long context makes you <em>more</em> memory-bound), <strong>raising <code>B</code> pulls it toward <code>B</code></strong> but simultaneously inflates <code>x</code>, which fights back.</p>
+
+  <div class="bars" role="img" aria-label="Prefill intensity is far above the H100 ridge of 300; decode intensity is far below it.">
+    <div class="bar-row"><span class="bar-lbl">prefill, weights (L=4096)</span><span class="bar-track"><span class="bar-fill" style="width:100%"></span></span><span class="bar-val">4096</span></div>
+    <div class="bar-row"><span class="bar-lbl">prefill, attention</span><span class="bar-track"><span class="bar-fill" style="width:83.4%"></span></span><span class="bar-val">1024</span></div>
+    <div class="bar-row"><span class="bar-lbl">H100 ridge</span><span class="bar-track"><span class="bar-fill" style="width:68.6%"></span></span><span class="bar-val">300</span></div>
+    <div class="bar-row"><span class="bar-lbl">decode, B=15 G=4</span><span class="bar-track"><span class="bar-fill warn" style="width:25.8%"></span></span><span class="bar-val">8.5</span></div>
+    <div class="bar-row"><span class="bar-lbl">decode attention alone</span><span class="bar-track"><span class="bar-fill warn" style="width:16.7%"></span></span><span class="bar-val">4</span></div>
+    <p class="bar-note">log scale</p>
+  </div>
+
+  <div class="callout cool">
+    <span class="lbl">The consequence worth stating</span>
+    <p>Even MQA reaches only <code>I<sub>A</sub> = 32</code> against a ridge of 300. <strong>GQA never makes decode compute-bound</strong> &mdash; it makes it less memory-bound. Anywhere GQA matters you are memory-bound by construction, because the thing that makes it matter (KV dominating traffic) is the same thing that pins <code>I</code> near <code>G</code>.</p>
+    <p>Compute only binds at large <code>B</code> <em>and</em> small <code>L</code> together: B=512, L=128 gives <code>I &asymp; 310</code>. Short prompts at huge batch &mdash; reranking, classification, embedding &mdash; which is exactly the regime where GQA is worth ~1.1&times;. The regimes are complementary.</p>
+  </div>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+  <h2 class="sec"><span class="num">06</span>Fixed batch: latency saturates</h2>
+  <p class="dek">Memory-bound, so time is bytes over bandwidth. Nothing more sophisticated is needed &mdash; but check the roofline before believing it.</p>
+
+  <pre><code>T_step = (W + B L k) / BW</code></pre>
+
+  <table>
+    <thead><tr><th>Workload</th><th>B&middot;L</th><th>MHA</th><th>GQA-8</th><th>Speedup</th></tr></thead>
+    <tbody>
+      <tr><td>B=1, L=2k</td><td>2k</td><td>13.96 GB &rarr; 4.17 ms</td><td>11.54 GB &rarr; 3.45 ms</td><td class="hi">1.21&times;</td></tr>
+      <tr><td>B=1, L=32k</td><td>33k</td><td>30.07 GB &rarr; 8.98 ms</td><td>15.57 GB &rarr; 4.65 ms</td><td>1.93&times;</td></tr>
+      <tr><td>B=15, L=8k</td><td>123k</td><td>77.31 GB &rarr; 23.1 ms</td><td>27.38 GB &rarr; 8.17 ms</td><td class="hi">2.82&times;</td></tr>
+      <tr><td>B=15, L=8k, MQA</td><td>123k</td><td>&mdash;</td><td>12.81 GB &rarr; 3.82 ms</td><td>6.03&times;</td></tr>
+    </tbody>
+  </table>
+
+  <div class="mq cost"><span class="v">6.0&times;</span><span class="k">hard ceiling on fixed-batch speedup at B=15, L=8k &mdash; Amdahl on the weight read</span></div>
+  <p><strong>Why it saturates.</strong> The weight read is an irreducible serial cost that GQA barely touches (17% floor, section 02). The ceiling as <code>k &rarr; 0</code> is:</p>
+  <pre><code>S_max = (W + B L k&#8321;) / W</code></pre>
+  <p>= 6.0&times; here. MQA is 8&times; more aggressive than GQA-8 and delivers only 2.1&times; more speed. <strong>Diminishing returns are real at fixed batch</strong> &mdash; and this is the number single-user latency benchmarks report, which is why they make GQA look unimpressive.</p>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2 class="sec"><span class="num">07</span>At capacity: throughput is linear</h2>
+  <p class="dek">Same equations, opposite behaviour. This is the result to lead with, because it is the one the serving economics actually turn on.</p>
+
+  <p>Refill the memory GQA frees, instead of holding batch fixed:</p>
+  <pre><code>B_max = (M - W) / (L k)</code></pre>
+
+  <p><strong>The trick that makes this clean.</strong> At <code>B_max</code>, by construction:</p>
+  <pre><code>bytes/step = W + B_max&middot;L&middot;k = M</code></pre>
+  <p>You read the entire HBM once per decode step &mdash; so <strong>step time is identical for every <code>G</code></strong>:</p>
+  <pre><code>T_step = M / BW = 80 GB / 3.35 TB/s = 23.9 ms</code></pre>
+
+  <div class="mq"><span class="v">&Theta; &prop; G</span><span class="k">throughput is linear in group size &mdash; no saturation</span></div>
+  <pre class="result"><code>&Theta; = B_max / T_step = (M - W)&middot;BW / (M &middot; L &middot; k)</code></pre>
+
+  <table>
+    <thead><tr><th>G</th><th>B<sub>max</sub> at L=8k</th><th>T<sub>step</sub></th><th>Throughput</th><th>vs MHA</th></tr></thead>
+    <tbody>
+      <tr><td>1 (MHA)</td><td>15</td><td>23.9 ms</td><td>628 tok/s</td><td>&mdash;</td></tr>
+      <tr><td>4 (GQA-8)</td><td>64</td><td>23.9 ms</td><td>2,680 tok/s</td><td class="hi">4.27&times;</td></tr>
+      <tr><td>32 (MQA)</td><td>515</td><td>23.9 ms</td><td>21,550 tok/s</td><td class="hi">34.3&times;</td></tr>
+    </tbody>
+  </table>
+
+  <p>Since <code>k &prop; 1/G</code> and <code>W</code> is nearly constant, <code>&Theta; &prop; G</code> exactly &mdash; in fact slightly super-linear (34.3&times; at 32&times;) because <code>W</code> shrinks a little too, freeing extra room for cache.</p>
+
+  <p><strong>Roofline check.</strong> At <code>G=32, B=515</code>: <code>I = (515&times;10.8 + 32&times;69.1)/79.9 &asymp; 97</code>. Under 300, so the bytes-over-bandwidth model still holds. It stops holding near <code>B &asymp; 300</code> at short context, where the FFN GEMMs go compute-bound and none of this arithmetic applies.</p>
+
+  <div class="callout">
+    <span class="lbl">The contrast to have ready</span>
+    <p><strong>Fixed batch &rarr; saturates</strong> (6&times; ceiling). <code>W</code> is a fixed serial cost you cannot amortise further.</p>
+    <p><strong>At capacity &rarr; linear in G</strong> (4.3&times;, 34&times;). You move exactly <code>M</code> bytes per step either way; <code>G</code> only decides how many tokens you harvest from that fixed traffic. Weight bytes per generated token fall from 12.9/15 = 0.86 GB to 12.9/64 = 0.20 GB &mdash; GQA converts a fixed overhead into a shared one.</p>
+    <p><strong>Run the capacity calculation before the latency one.</strong> If you can refill freed memory with work, you are in the linear regime. If you are pinned by a latency SLA at fixed batch, you are in the saturating one.</p>
+  </div>
+
+  <p class="level-note">Caveats to volunteer unprompted: this assumes every sequence sits at full 8k simultaneously, which continuous batching and PagedAttention avoid &mdash; real occupancy is lower, so effective batch is higher. Activation and workspace memory take ~10% off both columns.</p>
+</section>
+
+<!-- TP -->
+<section id="stp">
+  <h2 class="sec"><span class="num">08</span>Tensor parallelism erodes it</h2>
+  <p class="dek">Every number above assumed one GPU. Sharding is in direct tension with sharing &mdash; both want the same heads &mdash; and TP caps the saving before you have even chosen <code>n<sub>kv</sub></code>.</p>
+
+  <p><strong>How TP shards attention.</strong> By head. Each GPU computes <code>H/T</code> query heads end-to-end, then one all-reduce over the output projection. GPU <em>i</em> must therefore hold, in its own HBM, whichever KV heads its query heads attend to &mdash; a GPU cannot attend to a tensor living on another device.</p>
+
+  <h3>The sharding rule</h3>
+  <pre><code>KV heads per GPU  =  max(n_kv / T, 1)
+replication factor R  =  max(T / n_kv, 1)</code></pre>
+  <p>When <code>n<sub>kv</sub> &lt; T</code> there are not enough KV heads to go round, so the surviving ones are <strong>replicated</strong> &mdash; every GPU keeps its own copy.</p>
+
+  <pre class="result"><code>per GPU, per token  =  4 n_l d_h &middot; max(n_kv/T, 1)
+aggregate over T    =  4 n_l d_h &middot; max(n_kv, T)</code></pre>
+  <p><code>T</code> cancels in the aggregate when <code>n<sub>kv</sub> &ge; T</code>, and <strong>floors at <code>T</code></strong> below that. The floor is the whole result. Handy unit: one KV head costs <code>4 &times; 32 &times; 128</code> = <strong>16 KiB per token</strong>.</p>
+
+  <div class="mq cost"><span class="v">4&times;, not 32&times;</span><span class="k">MQA's real saving at TP=8 &mdash; identical to GQA-8</span></div>
+  <table>
+    <thead><tr><th>n<sub>kv</sub></th><th>heads/GPU</th><th>per GPU</th><th>aggregate</th><th>nominal</th><th>actual</th><th>R</th></tr></thead>
+    <tbody>
+      <tr><td>32 (MHA)</td><td>4</td><td>64 KiB</td><td>512 KiB</td><td>1&times;</td><td>1&times;</td><td>1</td></tr>
+      <tr><td>8</td><td>1</td><td>16 KiB</td><td>128 KiB</td><td>4&times;</td><td class="hi">4&times;</td><td>1</td></tr>
+      <tr><td>4</td><td>1</td><td>16 KiB</td><td>128 KiB</td><td>8&times;</td><td class="hi">4&times;</td><td>2</td></tr>
+      <tr><td>1 (MQA)</td><td>1</td><td>16 KiB</td><td>128 KiB</td><td>32&times;</td><td class="hi">4&times;</td><td>8</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Nominal</strong> is <code>32/n<sub>kv</sub></code>, what the single-GPU formula promises and what papers report. <strong>Actual</strong> is <code>max(32,T)/max(n<sub>kv</sub>,T)</code>, what the machine delivers. The gap between them is exactly <code>R</code> &mdash; a pure systems artifact that appears nowhere in the architecture.</p>
+
+  <p>Read the per-GPU column: <strong>16 KiB/token for <code>n<sub>kv</sub></code> = 8, 4 and 1 alike.</strong> Same capacity, same bytes per decode step, same latency, same batch ceiling. At TP=8, GQA-8 and MQA are the same model from the systems side &mdash; and GQA-8 has better quality. Nobody would ship MQA on an 8-way node.</p>
+
+  <div class="callout cool">
+    <span class="lbl">The design rule</span>
+    <p><code>n<sub>kv</sub> &gt; T</code> &rarr; no waste, but savings left on the table. <code>n<sub>kv</sub> = T</code> &rarr; <strong>the knee</strong>: smallest cache with zero replication. <code>n<sub>kv</sub> &lt; T</code> &rarr; strictly dominated &mdash; identical memory, strictly worse quality.</p>
+    <p>And the ceiling: each GPU goes from <code>H/T</code> KV heads under MHA to exactly 1 at the knee, so <strong>the most GQA can ever deliver is <code>H/T</code></strong>. 4&times; at TP=8, 2&times; at TP=16, and <strong>1&times; &mdash; nothing at all &mdash; at TP=32</strong>. TP divides your saving before you get to use it.</p>
+    <p>Llama-3 ships <code>n<sub>kv</sub> = 8</code> at every size because TP=8 is one NVLink node. The architecture has a deployment topology baked into it.</p>
+  </div>
+
+  <h3>Why replicate rather than route?</h3>
+  <ul>
+    <li><strong>Route the KV to the GPU that needs it</strong> &mdash; fatal. You would move the cache over NVLink (~450 GB/s) instead of reading it from local HBM (3.35 TB/s), every layer, every step. Shipping precisely the bytes the technique exists to avoid, over the slowest available path. Sharding KV along <code>d<sub>h</sub></code> is the same mistake wearing a different hat: it forces an all-gather of the full cache each layer.</li>
+    <li><strong>Route the queries instead</strong> &mdash; viable. At decode <code>Q</code> is one token, ~1 KB per GPU per layer. But it strands bandwidth (with <code>n<sub>kv</sub></code>=4 only half the GPUs do attention work), and it breaks TP's symmetry, adding a scatter and gather per layer &mdash; 64 extra latency-bound collectives per step at 32 layers.</li>
+    <li><strong>Replication is bounded and cheap.</strong> Replicating an MQA cache 8&times; just returns you to GQA-8-equivalent, still 4&times; better than MHA, for a far simpler system.</li>
+  </ul>
+
+  <h3>Getting past TP=8</h3>
+  <ol class="steps">
+    <li><strong>Data-parallel attention.</strong> Decouple attention's parallelism from the FFN's: each GPU owns different <em>sequences</em> and holds their full KV locally, so <code>R</code>=1 at any TP. Costs an all-to-all at the attention boundary. This is the modern answer &mdash; DeepSeek's MLA deployments do exactly this.</li>
+    <li><strong>Change the axis.</strong> <code>n<sub>kv</sub></code> is exhausted, so attack a different row of the table in section 01 &mdash; <code>d<sub>h</sub></code> via MLA (a ~512-dim latent, which shards cleanly), or <code>n<sub>l</sub></code> via cross-layer sharing.</li>
+    <li><strong>Do not scale TP.</strong> Spend extra devices on pipeline or expert parallelism and pin TP at 8. Past 8 you leave NVLink for InfiniBand (~50 GB/s) on a latency-critical all-reduce twice per layer, and <code>H/T</code> heads per GPU gets too small for efficient GEMMs.</li>
+  </ol>
+</section>
+
+<!-- SD -->
+<section id="ssd">
+  <h2 class="sec"><span class="num">09</span>Speculative decoding interaction</h2>
+  <p class="dek">Orthogonal in the algebra, competing in practice. Both techniques spend the same finite resource &mdash; the headroom between current intensity and the ridge.</p>
+
+  <p>Verification runs <code>s</code> draft tokens through one forward pass, of which <code>&alpha;s</code> are accepted. The query becomes <code>s</code> rows rather than 1, so decode attention is a skinny GEMM rather than a GEMV. Extra Q/O bytes are <code>O(sd)</code> against <code>O(Ld/G)</code> of KV &mdash; negligible at long context.</p>
+
+  <pre><code>I_W = 2PBs / 2P     = B&middot;s        (weights still read ONCE per step)
+I_A = 4sLD n_l B / (BLk) = s&middot;G</code></pre>
+
+  <div class="mq cost"><span class="v">I<sub>A</sub> = sG</span><span class="k">s=5, G=4 &rarr; 20, still 15&times; under the ridge</span></div>
+  <table>
+    <thead><tr><th>B=32, s=5, L=4096, G=4</th><th>FLOPs</th><th>Bytes</th><th>I</th></tr></thead>
+    <tbody>
+      <tr><td>Weight GEMMs</td><td>1.80 TF</td><td>11.3 GB</td><td>160</td></tr>
+      <tr><td>Attention</td><td>0.34 TF</td><td>17.2 GB</td><td class="hi">20</td></tr>
+      <tr><td>Total</td><td>2.15 TF</td><td>28.5 GB</td><td>75</td></tr>
+    </tbody>
+  </table>
+  <p>Attention would need <code>s = 75</code> to reach the ridge. In this regime it never goes compute-bound.</p>
+
+  <h3>Why they are orthogonal on paper</h3>
+  <p><strong>Bytes per step do not depend on <code>s</code>.</strong> The same weights and the same cache are read whether you verify 1 token or 5 &mdash; verification is one forward pass. Only the numerator changes:</p>
+  <pre><code>bytes per generated token = (W + BLk) / (B &middot; &alpha;s)</code></pre>
+  <p>GQA shrinks <code>k</code>; speculation divides by <code>&alpha;s</code>. The ratio <code>W : KV</code> is untouched by <code>s</code>, so GQA's speedup factor is identical with or without speculation. They multiply: <code>S &asymp; S<sub>GQA</sub> &times; &alpha;s</code>.</p>
+
+  <div class="callout">
+    <span class="lbl">Where they actually collide</span>
+    <p>Both techniques do the same thing &mdash; raise arithmetic intensity toward the ridge &mdash; and there is only 300 of headroom to spend. <code>I<sub>W</sub> = Bs</code>: at B=32, s=5 that is 160, comfortably memory-bound. At <strong>B=64, s=5 it is 320 &gt; 300</strong> and the verify pass has gone compute-bound &mdash; those <code>s&minus;1</code> extra tokens now cost real FLOP time instead of riding free on a memory-bound step.</p>
+    <p>And running B=64 instead of B=15 is precisely what GQA is <em>for</em>. So <strong>GQA erodes speculative decoding, not the reverse.</strong> Speculation is a low-batch latency technique: it converts idle tensor cores into tokens and only pays while they are idle. Serving stacks shorten or disable it under high load, and it shines in single-user local inference &mdash; exactly the regime where GQA is worth 1.2&times;.</p>
+  </div>
+
+  <p><strong>The residual asymmetry.</strong> <code>I<sub>W</sub> = Bs</code> scales with both knobs; <code>I<sub>A</sub> = sG</code> does not scale with <code>B</code> at all. As batch grows the weight GEMMs approach the roofline while attention stays pinned near <code>sG</code>, so attention's <em>share of runtime</em> rises monotonically with batch and context. <strong>GQA gets more valuable exactly where speculation gets less.</strong></p>
+</section>
+
+<!-- 10 -->
+<section id="s8">
+  <h2 class="sec"><span class="num">10</span>Provenance and limits</h2>
+  <p class="dek">The parts that are recall, not derivation. These are the ones an interviewer treats as free.</p>
+
+  <h3>Where GQA models come from</h3>
+  <div class="mq"><span class="v">5%</span><span class="k">of original pre-training compute to uptrain MHA &rarr; GQA</span></div>
+  <p>Ainslie et al., 2023: <em>Training Generalized Multi-Query Transformer Models from Multi-Query Checkpoints</em>. The contribution is <strong>uptraining</strong>, not the architecture:</p>
+  <ol class="steps">
+    <li>Take an already-trained MHA checkpoint.</li>
+    <li><strong>Mean-pool</strong> the K and V projection matrices within each group to initialise the shared head. Beats both &ldquo;select one head&rdquo; and random init.</li>
+    <li>Continue pre-training for <strong>&alpha; &asymp; 5%</strong> of the original compute.</li>
+  </ol>
+  <p>Result: MQA degrades noticeably; GQA-8 lands close to MHA quality at close to MQA speed. Mean-pooling works because the grouped heads are already correlated &mdash; the pooled head is a reasonable centroid, and 5% of compute is enough for the query heads to re-specialise around it.</p>
+
+  <h3>Models in the wild</h3>
+  <table class="prose">
+    <thead><tr><th>Model</th><th>H / n<sub>kv</sub></th></tr></thead>
+    <tbody>
+      <tr><td>Llama-2 7B / 13B</td><td>32 / 32 &mdash; MHA</td></tr>
+      <tr><td>Llama-2 70B</td><td>64 / 8</td></tr>
+      <tr><td>Llama-3, all sizes</td><td>&mdash; / 8</td></tr>
+      <tr><td>Mistral 7B</td><td>32 / 8</td></tr>
+      <tr><td>Falcon 40B/180B, PaLM</td><td>&mdash; / 1 &mdash; MQA</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout cool">
+    <span class="lbl">Why 8, specifically</span>
+    <p>Half the reason is quality. The other half is <strong>tensor parallelism</strong>: with TP=8 on an 8-GPU node, <code>n<sub>kv</sub> = 8</code> gives each GPU exactly one KV head &mdash; no replication, no cross-device KV traffic. Below <code>n<sub>kv</sub> = TP</code> you must replicate the cache across devices and the saving stops. <strong>8 is a systems constant as much as a quality one.</strong></p>
+  </div>
+
+  <h3>Where it stops paying</h3>
+  <ul>
+    <li><strong>Weights dominate</strong> &mdash; small <code>B&middot;L</code>, below crossover (section 04)</li>
+    <li><strong><code>n<sub>kv</sub></code> hits the TP degree</strong> &mdash; below that you replicate rather than shard</li>
+    <li><strong><code>n<sub>kv</sub> = 1</code></strong> &mdash; the axis is exhausted; switch to a different row of the table in section 01</li>
+    <li><strong>Compute-bound regimes</strong> &mdash; prefill, and very high batch at short context</li>
+  </ul>
+
+  <h3>What it costs</h3>
+  <p>Effects on the stages, stated separately &mdash; conflating them is the classic error:</p>
+  <table class="prose">
+    <thead><tr><th>Quantity</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Prefill latency / TTFT</td><td><strong>nothing</strong> &mdash; compute-bound, no cache to read</td></tr>
+      <tr><td>Inter-token latency (TPOT)</td><td>improves, saturating (section 06)</td></tr>
+      <tr><td>Throughput at capacity</td><td>improves linearly in <code>G</code> (section 07)</td></tr>
+      <tr><td>Attention FLOPs</td><td>unchanged</td></tr>
+      <tr><td>Max batch at fixed HBM</td><td><code>G&times;</code> &mdash; the headline win</td></tr>
+      <tr><td>Training memory</td><td>modest; and naive <code>repeat_interleave</code> materialises the full MHA-sized tensor, saving nearly nothing on activations unless fused</td></tr>
+      <tr><td>Quality</td><td>MQA noticeably worse; GQA-8 near-parity after uptraining</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- L3 -->
+<section id="sl3">
+  <h2 class="sec"><span class="num">11</span>Is GQA the right shape?</h2>
+  <p class="dek">Everything above answers &ldquo;given GQA, what does it do?&rdquo; This section answers the harder question: is it the right point in the design space, and how would you find out?</p>
+
+  <h3>MLA &mdash; the actual competitor</h3>
+  <p>DeepSeek's MLA projects K and V into a shared low-rank latent (~512 dims) and caches only that, decompressing per head at compute time. It reports a <em>smaller</em> cache than GQA-8 <em>and</em> better quality than MHA.</p>
+
+  <div class="mq"><span class="v">rank, not count</span><span class="k">the reason harder compression costs less quality</span></div>
+  <p><strong>Why compressing harder costs less.</strong> GQA constrains <strong>count</strong>: G query heads receive literally one index and one payload, so independent read channels fall from <code>H</code> to <code>n<sub>kv</sub></code>. MLA constrains <strong>rank</strong>: each head keeps its own up-projections <code>W<sub>UK</sub><sup>(i)</sup>, W<sub>UV</sub><sup>(i)</sup>, so at compute time there are still <code>H</code> distinct keys and values &mdash; heads specialise <em>within</em> a shared subspace rather than stopping. A rank constraint is far softer than a head-count constraint, and low-rank KV is a good inductive bias: these matrices are empirically near-low-rank already, so the bottleneck removes mostly noise. Beating MHA is not paradoxical &mdash; the up/down projections add parameters, so it is not iso-param, and the bottleneck regularises.</p>
+
+  <p><strong>Why MLA's extra decode FLOPs are free.</strong> Decode sits at <code>I &asymp; 4&ndash;30</code> against a ridge of 300 &mdash; tensor cores idle 90&ndash;99% of the time. <strong>Trading bytes for FLOPs is the correct direction of trade in a memory-bound regime</strong>, and the intensity gap is the number that says so. MLA spends idle FLOPs to buy bytes, moving you <em>toward</em> the ridge. (<code>W<sub>UK</sub></code> also absorbs into <code>W<sub>Q</sub></code> at inference, so per-head K is never materialised.)</p>
+
+  <div class="callout">
+    <span class="lbl">So why did Llama-3 ship GQA?</span>
+    <p><strong>Timing</strong> &mdash; DeepSeek-V2 landed mid-2024, Llama-3 in April. <strong>No conversion path</strong> &mdash; GQA uptrains from an MHA checkpoint for 5%; MLA must be pretrained from scratch. <strong>Kernel cost</strong> &mdash; MLA needs custom kernels and a decoupled-RoPE scheme, since RoPE does not commute with the low-rank absorption; GQA is a config integer every serving stack already supported. <strong>Risk</strong> &mdash; GQA was proven at 70B.</p>
+    <p>The honest lesson: <strong>GQA won on deployability, not on being the best point in the design space.</strong> It is a local optimum reached because it was cheap to adopt.</p>
+  </div>
+
+  <h3>The ablation nobody runs</h3>
+  <p>GQA is always benchmarked iso-parameter or iso-compute. Hold <strong>inference throughput</strong> fixed instead and spend the KV savings on capacity.</p>
+  <p><strong>Design.</strong> Fix a target <code>&Theta;*</code> at a stated operating point (B, L, TP). For each <code>G</code>, grow depth or <code>d<sub>ff</sub></code> until <code>&Theta;(G, model) = &Theta;*</code>. Train each arm on the same token budget. Evaluate on retrieval and long-context, not perplexity.</p>
+  <p><strong>Confounds that invalidate the naive version:</strong></p>
+  <ol class="steps">
+    <li><strong>Training compute is not equal across arms.</strong> Bigger arms cost more to train &mdash; report both iso-token and iso-train-FLOP, and say which you mean.</li>
+    <li><strong>The answer is a function of (B, L).</strong> Below crossover the throughput edge is 1.06&times; and buys almost nothing. A single operating point proves nothing; sweep it.</li>
+    <li><strong>Perplexity hides the effect</strong> (section 01). Without multi-needle, multi-hop and verbatim-copy evals the ablation reports &ldquo;no difference&rdquo;.</li>
+    <li><strong>Uptraining asymmetry.</strong> GQA arms cost 5% to obtain; MHA arms cannot be converted at all. Cost-per-quality differs from FLOP-per-quality.</li>
+  </ol>
+  <p><strong>What it almost certainly shows.</strong> <code>&Theta; &prop; G</code> is linear; quality is roughly logarithmic in parameters. Trading a 4&times; linear throughput gain against a 17% parameter gain worth a fraction of a loss-point means <strong>GQA wins decisively in the KV-dominated regime &mdash; the standard benchmark understates it.</strong> Below crossover the edge collapses and MHA's quality wins. The workload decides, again.</p>
+
+  <h3>A deployment where it is a mistake</h3>
+  <p><strong>On-device code completion.</strong> 7B model, single user, batch 1, 2&ndash;4k context, hard TTFT SLA under 200 ms, 16 GB unified memory.</p>
+  <ul>
+    <li>TTFT is prefill &mdash; compute-bound, GQA contributes <strong>nothing</strong>.</li>
+    <li><code>B&middot;L &asymp; 4k</code>, far below the 24.6k crossover &mdash; decode is weight-bound, GQA gives <strong>~1.1&times;</strong>.</li>
+    <li>The behaviour that degrades first is verbatim identifier copying and precise retrieval &mdash; <strong>which is what code completion is</strong>.</li>
+  </ul>
+  <p>You pay the quality cost precisely where you collect no speed.</p>
+
+  <div class="mq cost"><span class="v">7% slower</span><span class="k">GQA model grown to fill the memory it freed, at batch 1</span></div>
+  <p><strong>And the version that is strictly worse.</strong> Designers spend the savings back &mdash; the GQA model ships at 8B rather than 7B, filling the freed memory. At B=1, L=2k:</p>
+  <table>
+    <thead><tr><th>Model</th><th>Weights</th><th>KV</th><th>Total</th><th>Step</th></tr></thead>
+    <tbody>
+      <tr><td>MHA 7B</td><td>12.9 GB</td><td>1.07 GB</td><td>13.97 GB</td><td>4.17 ms</td></tr>
+      <tr><td>GQA-8, grown to 8B</td><td>14.7 GB</td><td>0.27 GB</td><td class="hi">14.97 GB</td><td class="hi">4.47 ms</td></tr>
+    </tbody>
+  </table>
+  <p>In the weight-bound regime, spending KV savings on parameters is a net <em>loss</em> on latency. Not hypothetical: Llama-2 7B and 13B shipped MHA, and only the 70B got GQA.</p>
+</section>
+
+<!-- 12 -->
+<section id="s9">
+  <h2 class="sec"><span class="num">12</span>Numbers to memorise</h2>
+  <p class="dek">Config throughout: d=4096, H=32, d<sub>h</sub>=128, n<sub>l</sub>=32, fp16, H100 80 GB / 3.35 TB/s.</p>
+
+  <table class="prose">
+    <thead><tr><th>Quantity</th><th>Value</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>H100 ridge</td><td><strong>~300</strong> FLOP/byte</td><td>the line everything is compared against</td></tr>
+      <tr><td>Decode attention intensity</td><td><strong>G</strong></td><td>independent of B and L</td></tr>
+      <tr><td>Decode weight intensity</td><td><strong>B</strong></td><td>prefill's is <code>L</code> &mdash; that is the asymmetry</td></tr>
+      <tr><td>KV per token, MHA</td><td><strong>0.524 MB</strong></td><td>4.3 GB per 8k sequence</td></tr>
+      <tr><td>KV per token, GQA-8</td><td><strong>0.131 MB</strong></td><td>1.07 GB per 8k sequence</td></tr>
+      <tr><td>Weight floor</td><td><strong>10d&sup2;</strong> per layer</td><td>attention is only 17% of params</td></tr>
+      <tr><td>Crossover</td><td><strong>B&middot;L = d(5G+1)</strong></td><td>24.6k tokens for MHA</td></tr>
+      <tr><td>Half-benefit point</td><td><strong>~37k</strong> tokens</td><td>below this you get under half of GQA's potential</td></tr>
+      <tr><td>B<sub>max</sub> at 8k, MHA</td><td><strong>15</strong></td><td>the commercial motivation, in one integer</td></tr>
+      <tr><td>B<sub>max</sub> at 8k, GQA-8</td><td><strong>64</strong></td><td>4.3&times; throughput</td></tr>
+      <tr><td>Step time at capacity</td><td><strong>23.9 ms</strong></td><td>same for every G &mdash; you always read all of M</td></tr>
+      <tr><td>Uptraining cost</td><td><strong>5%</strong> of pre-training</td><td>with mean-pooled init</td></tr>
+      <tr><td>The de facto <code>n<sub>kv</sub></code></td><td><strong>8</strong></td><td>one KV head per GPU at TP=8</td></tr>
+      <tr><td>One KV head</td><td><strong>16 KiB</strong>/token</td><td>the unit to count TP shards in</td></tr>
+      <tr><td>GQA knee</td><td><strong>n<sub>kv</sub> = T</strong></td><td>below it, memory identical and quality worse</td></tr>
+      <tr><td>GQA ceiling under TP</td><td><strong>H/T</strong></td><td>4&times; at TP=8, 1&times; at TP=32</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2 class="sec"><span class="num">13</span>Cold self-test</h2>
+  <p class="level-note">No notes. Answer aloud, with a number, before opening each one.</p>
+
+  <details>
+    <summary>Derive <code>k(G)</code> from scratch, state its scope, and give MHA's value in MB/token.</summary>
+    <div class="ans"><p>Per token per layer, K and V each hold <code>n<sub>kv</sub>&middot;d<sub>h</sub> = d/G</code> elements &rarr; <code>2bd/G</code> bytes &rarr; <code>k = 2b n_l d/G = 4n_l d/G</code>, <strong>whole model</strong>. G=1: <code>4&times;32&times;4096 = 524 KB = 0.524 MB</code>.</p></div>
+  </details>
+
+  <details>
+    <summary>Why is decode attention intensity independent of batch size, when weight-GEMM intensity equals batch size?</summary>
+    <div class="ans"><p>Weights are shared across the batch, so B tokens amortise one read &rarr; <code>I = B</code>. KV caches are <em>private per sequence</em>, so batching adds proportional FLOPs and proportional bytes &mdash; nothing amortises, and both B and L cancel to leave <code>I = G</code>. Decode attention is permanently batch-1-shaped.</p></div>
+  </details>
+
+  <details>
+    <summary>Solve for the crossover <code>B&middot;L</code> and evaluate at G=1 and G=4. What does the scaling in G mean?</summary>
+    <div class="ans"><p><code>BLk = W</code> with <code>k = 4n_l d/G</code> and <code>W = 2n_l d&sup2;(10+2/G)</code> &rarr; <code>BL = d(5G+1)</code>. G=1: 24,576. G=4: 86,016. Crossover <code>&prop; G</code>: each cut to the cache pushes the KV-dominated regime 4&times; further out, so the next cut is worth proportionally less at fixed workload.</p></div>
+  </details>
+
+  <details>
+    <summary>Same model, same GPU: give a workload where GQA-8 buys 1.2&times; and one where it buys 4&times;. Why the difference?</summary>
+    <div class="ans"><p>B=1, L=2k &rarr; 1.21&times; (weight-bound, well below crossover). At capacity, L=8k &rarr; 4.27&times; throughput. The difference is not the architecture but whether you hold batch fixed (Amdahl on the weight read, saturating) or refill freed memory (you always move M bytes per step, so throughput <code>&prop; G</code>).</p></div>
+  </details>
+
+  <details>
+    <summary>Does GQA improve time-to-first-token? Justify from the intensity numbers.</summary>
+    <div class="ans"><p>No. TTFT is prefill, which has <code>I_W = L</code> and <code>I_A = L/4</code> &mdash; both far above the 300 ridge, so it is compute-bound and there is no cache to read yet. GQA improves TPOT, the inter-token latency. Saying &ldquo;decode is memory-bound so TTFT drops&rdquo; attaches the right mechanism to the wrong stage.</p></div>
+  </details>
+
+  <details>
+    <summary>Why <code>n<sub>kv</sub> = 8</code> rather than 4 or 16? Give both halves.</summary>
+    <div class="ans"><p>Quality: GQA-8 sits near MHA after 5% uptraining while MQA degrades. Systems: at TP=8 it gives exactly one KV head per GPU, so no replication and no cross-device KV traffic. Below <code>n<sub>kv</sub> = TP</code> you must replicate and the saving stops accruing.</p></div>
+  </details>
+
+  <details>
+    <summary>How were GQA models actually obtained, and with what initialisation?</summary>
+    <div class="ans"><p>Uptrained from existing MHA checkpoints (Ainslie et al. 2023) &mdash; mean-pool K and V projections within each group, then continue pre-training for ~5% of original compute. Mean-pooling beat both selecting a single head and random init.</p></div>
+  </details>
+
+  <details>
+    <summary>What capacity does MHA have that MQA lacks? Name the K loss and the V loss separately.</summary>
+    <div class="ans"><p>K: heads keep their own <code>W<sub>Q</sub></code> so patterns can still differ &mdash; what is lost is that all G heads must index into <em>one shared key space</em>. V: even on identical attention weights, all G heads now receive the same vector, so independent read channels drop from <code>H</code> to <code>n<sub>kv</sub></code>. Retrieval and verbatim copying degrade first; perplexity barely moves, which is why it is the wrong metric here.</p></div>
+  </details>
+
+  <details>
+    <summary>At TP=8, how much does MQA actually save over MHA &mdash; and why isn't it 32&times;?</summary>
+    <div class="ans"><p><strong>4&times;.</strong> One KV head cannot be split across 8 GPUs, so it is replicated: 8 copies in HBM for 1 head of data. Aggregate floors at <code>max(n<sub>kv</sub>, T)</code>, so <code>n<sub>kv</sub></code> = 8, 4 and 1 all land at 16 KiB/token per GPU &mdash; same capacity, same latency, same batch ceiling. Below the knee you lose quality for nothing.</p></div>
+  </details>
+
+  <details>
+    <summary>Give the maximum saving GQA can deliver at TP=8, TP=16 and TP=32.</summary>
+    <div class="ans"><p><code>H/T</code>: 4&times;, 2&times;, <strong>1&times;</strong>. Each GPU holds <code>H/T</code> KV heads under MHA and exactly 1 at the knee. At TP=32 with H=32, MHA already gives one head per GPU &mdash; GQA has nothing left to remove. Sharding and sharing compete for the same heads.</p></div>
+  </details>
+
+  <details>
+    <summary>Why replicate the KV cache below the knee rather than routing to whichever GPU owns it?</summary>
+    <div class="ans"><p>Routing the <em>KV</em> moves the cache over NVLink (~450 GB/s) instead of local HBM (3.35 TB/s) &mdash; shipping exactly the bytes the technique exists to avoid, over a 7&times; slower path. Routing the <em>queries</em> is viable (Q is ~1 KB/GPU/layer at decode) but strands bandwidth on idle GPUs and adds a scatter/gather per layer. Replication is bounded: it only puts you back at knee-equivalent.</p></div>
+  </details>
+
+  <details>
+    <summary>Does GQA compound with speculative decoding, or compete with it?</summary>
+    <div class="ans"><p>Algebraically orthogonal: bytes per step are independent of <code>s</code>, so the <code>W : KV</code> ratio is unchanged and the speedups multiply. In practice they compete for headroom below the ridge &mdash; <code>I<sub>W</sub> = Bs</code>, so at B=64, s=5 the verify pass goes compute-bound and the extra draft tokens stop being free. GQA raises batch, so <strong>GQA erodes speculation</strong>. Meanwhile <code>I<sub>A</sub> = sG</code> has no <code>B</code> in it, so attention's share of runtime only grows.</p></div>
+  </details>
+
+  <details>
+    <summary>MLA caches less than GQA-8 and scores better than MHA. How, mechanistically &mdash; and why are its extra decode FLOPs free?</summary>
+    <div class="ans"><p>GQA constrains head <em>count</em>; MLA constrains <em>rank</em>. Each head keeps its own up-projection, so H distinct keys and values still exist at compute time &mdash; heads specialise within a shared subspace instead of stopping. The FLOPs are free because decode runs at <code>I &asymp; 4&ndash;30</code> against a ridge of 300: trading bytes for FLOPs is the correct direction in a memory-bound regime. Llama-3 shipped GQA anyway &mdash; no uptraining path from MHA, custom kernels, decoupled RoPE, and timing.</p></div>
+  </details>
+
+  <details>
+    <summary>Give a deployment where MHA &rarr; n<sub>kv</sub>=8 is a mistake.</summary>
+    <div class="ans"><p>On-device code completion: batch 1, 2&ndash;4k context, TTFT SLA. Prefill is compute-bound so TTFT is unchanged; <code>B&middot;L</code> is far below crossover so decode gains ~1.1&times;; and verbatim identifier copying is exactly the behaviour that degrades first. If the savings are spent on a larger model it is <em>strictly worse</em> &mdash; 14.97 GB/step against 13.97 GB, 7% slower.</p></div>
+  </details>
+
+  <details>
+    <summary>Name the five terms in the KV formula and what attacks each. Which does GQA touch?</summary>
+    <div class="ans"><p><code>2 &middot; n_l &middot; n<sub>kv</sub> &middot; d<sub>h</sub> &middot; b</code>. GQA touches <code>n<sub>kv</sub></code> only. <code>d<sub>h</sub></code> &rarr; MLA; <code>n_l</code> &rarr; cross-layer sharing; sequence length &rarr; windowing/eviction; <code>b</code> &rarr; quantization. They are multiplicative and compose.</p></div>
+  </details>
+
+  <p style="margin-top:22px">If <code>I<sub>A</sub> = G</code> and <code>BL = d(5G+1)</code> both fall out without reaching back to these notes, the material is yours.</p>
+</section>
+
+<!-- 11 -->
+<section id="s11">
+  <h2 class="sec"><span class="num">14</span>Traps I fell into</h2>
+  <p class="dek">Recorded from a live run at this material. These are personal, not generic.</p>
+
+  <ul>
+    <li><strong>Notation collision.</strong> Using one symbol for both group size and KV-head count, then dividing by the wrong one. Fix <code>G</code> and <code>n<sub>kv</sub></code> explicitly at the top of the page and never write &ldquo;groups&rdquo; unqualified.</li>
+    <li><strong>Elements vs bytes, inverted.</strong> Counting traffic in elements, then <em>multiplying</em> intensity by 2 to &ldquo;convert&rdquo;. Bytes are in the denominator &mdash; converting elements to bytes <em>divides</em> intensity. Convert once, at the end, deliberately.</li>
+    <li><strong>Stopping at the shape.</strong> Answering &ldquo;GQA stops helping when the FFN dominates&rdquo; instead of setting <code>W = BLk</code> and solving. The condition was right but attached to architecture, when the swing factor is the workload <code>B&middot;L</code> &mdash; the same model varies from 1.06&times; to 4&times;. <strong>When you can name the two competing terms, you are two lines from the crossover. Go and get it.</strong></li>
+    <li><strong>TTFT vs TPOT.</strong> Correctly saying prefill is compute-bound, then claiming GQA improves time-to-first-token. Right mechanism, wrong stage. Name the stage before naming the effect.</li>
+    <li><strong>FFN arithmetic.</strong> Writing <code>6d&sup2;</code> per layer instead of <code>12d&sup2;</code>. Check against a known model size: <code>12 &times; 4096&sup2; &times; 32 = 6.4B</code>.</li>
+    <li><strong>Conclusion without mechanism.</strong> Knowing &ldquo;MQA hurts, GQA-8 is the sweet spot&rdquo; but not uptraining, mean-pooled init, or the 5%. The pattern to break: carrying the field's conclusions without the field's numbers.</li>
+    <li><strong>Assuming compute catches up.</strong> Suspecting that large <code>B</code> and <code>L</code> would eventually make decode compute-bound. It does not &mdash; <code>I<sub>A</sub> = G</code> has neither variable in it. Long context makes you <em>more</em> memory-bound.</li>
+    <li><strong>Treating GQA as settled.</strong> It won on deployability &mdash; uptrainable, one config integer, existing kernels &mdash; not on being the best point in the design space. MLA compresses harder for less quality cost by constraining rank rather than head count.</li>
+    <li><strong>Writing weight bytes as <code>2PB</code>.</strong> Weights are read <em>once</em> per step regardless of batch &mdash; that is the entire reason batching works. It cancels out of an intensity ratio, so the final answer can survive while the reasoning does not.</li>
+    <li><strong>Judging the quality cost by perplexity.</strong> The loss is concentrated in tail behaviour &mdash; retrieval, rare tokens, long context. Val loss can look unchanged while multi-needle accuracy has moved.</li>
+    <li><strong>Quoting single-GPU savings for a sharded deployment.</strong> MQA's 32&times; is nominal; at TP=8 it is 4&times;, the same as GQA-8. Always ask what <code>T</code> is before quoting a KV saving &mdash; the ceiling is <code>H/T</code>, fixed before <code>n<sub>kv</sub></code> is even chosen.</li>
+    <li><strong>Reaching for <code>d<sub>h</sub></code>-sharding to get past TP=8.</strong> It looks like the natural next axis, but it forces an all-gather of the whole cache every layer &mdash; an HBM read converted into a network read. The real answers are data-parallel attention, a different KV term (MLA, cross-layer), or simply not scaling TP.</li>
+    <li><strong>Scope drift.</strong> Mixing per-layer and whole-model quantities inside one derivation. Off by <code>n<sub>l</sub></code> = 32&times;, and it looks plausible.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <span>MHA / MQA / GQA revision notes</span>
+  <span>7B-class config &middot; H100 figures</span>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var s=document.getElementById('cs'),o=document.getElementById('co'),
+      dd=document.getElementById('cd'),v=document.getElementById('cv'),x=document.getElementById('cx');
+  var W1=12.885e9,k1=524288,W4=11.274e9,k4=131072;
+  function fmt(n){
+    return n>=1e6 ? (n/1e6).toFixed(n>=1e7?0:1)+'M' : Math.round(n/1e3)+'k';
+  }
+  function upd(){
+    var bl=Math.pow(10,s.value/10);
+    var a=W1+bl*k1, b=W4+bl*k4, r=a/b;
+    dd.textContent=fmt(bl);
+    o.textContent=r.toFixed(2)+'\u00d7';
+    o.classList.toggle('bad',r<1.5);
+    var kvShare=Math.round(100*bl*k1/a);
+    x.textContent='MHA traffic: '+(a/1e9).toFixed(1)+' GB/step, '+kvShare+'% of it KV \u2014 GQA-8: '+(b/1e9).toFixed(1)+' GB/step';
+    v.textContent = r<1.3
+      ? 'Weight-bound. The cache is a minor share of traffic; GQA is close to free but also close to worthless. You paid quality for nothing.'
+      : r<2 ? 'Below the half-benefit point (~37k tokens). Real but under half of what the 4\u00d7 asymptote allows.'
+      : r<3 ? 'Past crossover. KV now dominates traffic and the saving is compounding.'
+      : 'KV-dominated. Approaching the asymptotic 4\u00d7 \u2014 and at capacity, throughput would gain more still.';
+  }
+  s.addEventListener('input',upd); upd();
+
+  var secs=[].slice.call(document.querySelectorAll('main section')),
+      links=[].slice.call(document.querySelectorAll('.toc a'));
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if(!e.isIntersecting) return;
+        var i=secs.indexOf(e.target);
+        links.forEach(function(l,j){l.classList.toggle('on',j===i);});
+      });
+    },{rootMargin:'-10% 0px -70% 0px'});
+    secs.forEach(function(y){io.observe(y);});
+  }
+})();
+</script>
+</body>
+</html>
