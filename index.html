@@ -118,7 +118,7 @@ footer a{color:var(--ink-2)}
   <h1>Interview notes</h1>
   <p class="standfirst">Notes on ML systems and research topics, written for recall under time pressure rather than for completeness. Every claim that can be a number is a number.</p>
   <div class="meta">
-    <span><b>1</b> published</span>
+    <span><b>2</b> published</span>
     <span><b>3</b> planned</span>
     <span>Updated <b>July 2026</b></span>
   </div>
@@ -153,8 +153,24 @@ footer a{color:var(--ink-2)}
   Remember to bump the published/planned counts in the masthead.
 -->
 
-<div class="entry planned">
+<a class="entry" href="gqa-notes.html">
   <span class="idx">02</span>
+  <div>
+    <h2>MHA, MQA, GQA from the bytes up</h2>
+    <p class="dek">Three architectures separated by one integer. <code>W(G)</code> and <code>k(G)</code> derived, the <code>BL&nbsp;=&nbsp;d(5G+1)</code> crossover, why latency saturates while throughput stays linear in G, and what tensor parallelism takes back.</p>
+    <div class="tags">
+      <span class="tag key">KV cache</span>
+      <span class="tag">inference</span>
+      <span class="tag">roofline</span>
+      <span class="tag">tensor parallel</span>
+      <span class="tag">~30 min</span>
+    </div>
+  </div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+</a>
+
+<div class="entry planned">
+  <span class="idx">03</span>
   <div>
     <h2>Paged attention and the KV cache</h2>
     <p class="dek">Why inference memory is a fragmentation problem rather than a bandwidth one, and what vLLM's block table actually buys.</p>
@@ -169,7 +185,7 @@ footer a{color:var(--ink-2)}
 <p class="group-label">Training and optimisation</p>
 
 <div class="entry planned">
-  <span class="idx">03</span>
+  <span class="idx">04</span>
   <div>
     <h2>Mixed precision, and what actually overflows</h2>
     <p class="dek">fp16 against bf16 against fp8, where the dynamic range runs out, and which accumulations have to stay in fp32.</p>
@@ -182,7 +198,7 @@ footer a{color:var(--ink-2)}
 </div>
 
 <div class="entry planned">
-  <span class="idx">04</span>
+  <span class="idx">05</span>
   <div>
     <h2>Parallelism: data, tensor, pipeline, sequence</h2>
     <p class="dek">What each one shards, what each one costs in communication, and how they compose in a real training run.</p>
