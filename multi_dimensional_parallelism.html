@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-dimensional Parallelism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Chapter 09</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <h1>Multi-dimensional Parallelism</h1>
+  <div class="ring-wrap">
+    <div class="pipe" aria-hidden="true">
+      <div class="pipe-row"><span class="pipe-lbl">ranks</span><div class="pipe-cells"><div class="pc on" style="--d:0.00s"><span>rank 0</span></div><div class="pc on" style="--d:0.55s"><span>rank 1</span></div><div class="pc on" style="--d:1.10s"><span>rank 2</span></div><div class="pc on" style="--d:1.65s"><span>rank 3</span></div><div class="pc on" style="--d:2.20s"><span>rank 4</span></div><div class="pc on" style="--d:2.75s"><span>rank 5</span></div><div class="pc on" style="--d:3.30s"><span>rank 6</span></div><div class="pc on" style="--d:3.85s"><span>rank 7</span></div></div></div>
+    </div>
+    <p class="ring-cap"><span>3-D parallelism &middot; one process group per axis &middot; TP innermost, PP outermost</span><span>world = DP &times; TP &times; PP</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>Blocks marked <strong>📝 Note</strong> expand on something the main text assumes — the reasoning behind a design, a derivation, or a number worth internalizing.</li>
+<li>Blocks marked <strong>⚠️</strong> are traps: things that produce silently wrong results, silently slow results, or hangs. They are the parts most worth reading twice.</li>
+<li>Diagrams are ASCII so they survive copy-paste into a terminal, a code review, or a text editor.</li>
+<li>All code targets <strong>PyTorch 2.13</strong> (July 2026). See the <em>Version check</em> tab for exactly what was verified and when.
+<strong>Prerequisites:</strong> Chapters 05 (DP), 06 (PP), 07 (TP), and 08 (ZeRO/FSDP). This is where all four run together.</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-1-multi-dimensional-parallelism" aria-controls="pan-1-multi-dimensional-parallelism" aria-selected="false" tabindex="-1"><span class="num">02</span>1 · Multi-dimensional</button><button class="tab" role="tab" id="t-2-mpu-model-parallel-unit" aria-controls="pan-2-mpu-model-parallel-unit" aria-selected="false" tabindex="-1"><span class="num">03</span>2 · MPU</button><button class="tab" role="tab" id="t-3-large-scale-project-survey" aria-controls="pan-3-large-scale-project-survey" aria-selected="false" tabindex="-1"><span class="num">04</span>3 · Projects</button><button class="tab" role="tab" id="t-4-devicemesh-the-modern-mpu" aria-controls="pan-4-devicemesh-the-modern-mpu" aria-selected="false" tabindex="-1"><span class="num">05</span>4 · DeviceMesh</button><button class="tab" role="tab" id="t-5-choosing-the-degrees" aria-controls="pan-5-choosing-the-degrees" aria-selected="false" tabindex="-1"><span class="num">06</span>5 · Choosing degrees</button><button class="tab" role="tab" id="t-6-the-axes-that-came-later" aria-controls="pan-6-the-axes-that-came-later" aria-selected="false" tabindex="-1"><span class="num">07</span>6 · Newer axes</button><button class="tab" role="tab" id="t-7-gotchas" aria-controls="pan-7-gotchas" aria-selected="false" tabindex="-1"><span class="num">08</span>7 · Gotchas</button><button class="tab" role="tab" id="t-8-quick-reference" aria-controls="pan-8-quick-reference" aria-selected="false" tabindex="-1"><span class="num">09</span>8 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">10</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">11</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">12</span>Exercises</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 12</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<li><a href="#1-multi-dimensional-parallelism">Multi-dimensional Parallelism</a></li>
+<li><a href="#2-mpu-model-parallel-unit">MPU (Model Parallel Unit)</a></li>
+<li><a href="#3-large-scale-project-survey">Large-scale project survey</a></li>
+<li><a href="#4-devicemesh-the-modern-mpu">DeviceMesh, the modern MPU</a></li>
+<li><a href="#5-choosing-the-degrees">Choosing the degrees</a></li>
+<li><a href="#6-the-axes-that-came-later">The axes that came later</a></li>
+<li><a href="#7-gotchas">Gotchas</a></li>
+<li><a href="#8-quick-reference">Quick reference</a></li>
+</ol></div></section><section class="panel" id="pan-1-multi-dimensional-parallelism" role="tabpanel" aria-labelledby="t-1-multi-dimensional-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 12</p><h2 id="1-multi-dimensional-parallelism">1. Multi-dimensional Parallelism</h2></div><div class="body"><p>Multi-dimensional parallelism means using together the various parallelization techniques we've studied so far. For example, if you have 8 GPUs numbered 0 through 7, you could apply data parallelism with 2, pipeline parallelism with 2, and tensor parallelism with 2. It's called N-dimensional parallelism according to how many dimensions of parallelization are applied — the example just given would be (2×2×2), i.e. 3-dimensional parallelism.</p>
+<div class="ascii-card"><pre>   world_size  =  DP × TP × PP           8 = 2 × 2 × 2</pre></div>
+<p>Combining them is where most of the operational difficulty of large-scale training lives.</p>
+<div class="note"><span class="tag">Note — the one sentence that makes this chapter easy</span>
+<p>Every axis is just <em>a set of process groups</em>, and a rank belongs to exactly one group per axis:</p>
+<div class="ascii-card"><pre>   rank 5 belongs to:
+        one TP group   ← the ranks it all_reduces activations with, every layer
+        one PP group   ← the ranks it send/recvs activations with, at stage edges
+        one DP group   ← the ranks it all_reduces gradients with, once per step</pre></div>
+<p>Nothing else is going on. The whole difficulty of "3-D parallelism" is bookkeeping: deciding <em>which</em> ranks land in which group. That's precisely what the MPU below exists to do.</p>
+</div></div></section><section class="panel" id="pan-2-mpu-model-parallel-unit" role="tabpanel" aria-labelledby="t-2-mpu-model-parallel-unit" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 12</p><h2 id="2-mpu-model-parallel-unit">2. MPU (Model Parallel Unit)</h2></div><div class="body"><p>https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/mpu/initialize.py#L57</p>
+<p>MPU is a concept proposed in Megatron-LM that provides various modules related to model parallel processing. In particular, <strong>MPU has the ability to automatically create and manage process groups so that multi-dimensional parallelization can be performed very easily.</strong></p>
+<p>Let's look at an example of process groups for multi-dimensional parallelization.</p>
+<p>Suppose we have 16 GPUs, and suppose we parallelize the model with dimensions (Data:2 × Tensor:2 × Pipeline:4). Then 8 tensor-parallelism groups, 8 data-parallelism groups, and 4 pipeline-parallelism groups are created. That is, as many process groups are created as the total number of GPUs divided by the number of dimensions allocated to that parallelization.</p>
+<ul>
+<li>The tensor-parallelism groups can be created as follows:</li>
+<li><code>[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11], [12, 13], [14, 15]</code></li>
+<li>That is, GPU 0 can perform tensor-parallel communication with GPU 1, and GPU 2 can communicate with GPU 3.</li>
+</ul>
+<ul>
+<li>The data-parallelism groups can be created as follows:</li>
+<li><code>[0, 2], [1, 3], [4, 6], [5, 7], [8, 10], [9, 11], [12, 14], [13, 15]</code></li>
+<li>That is, GPU 0 can perform data-parallel communication with GPU 2, and GPU 1 can communicate with GPU 3.</li>
+</ul>
+<ul>
+<li>The pipeline-parallelism groups can be created as follows:</li>
+<li><code>[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15]</code></li>
+<li>During forward, communication proceeds in the direction 0 → 4 → 8 → 12; during backward, 12 → 8 → 4 → 0.</li>
+</ul>
+<p>It's fairly complex, but there's no need to memorize the order in which processes are created. The MPU object handles it for you. Drawn as a figure it looks like this:</p>
+<div class="ascii-card"><pre>              +---------+  +---------+  +---------+  +---------+
+      tensor  |   g00   |  |   g04   |  |   g08   |  |   g12   |
+data          +---------+  +---------+  +---------+  +---------+ ===&gt; forward
+      tensor  |   g01   |  |   g05   |  |   g09   |  |   g13   |
+              +---------+  +---------+  +---------+  +---------+
+               pipeline     pipeline     pipeline     pipeline
+
+              +---------+  +---------+  +---------+  +---------+
+      tensor  |   g02   |  |   g06   |  |   g10   |  |   g14   |
+data          +---------+  +---------+  +---------+  +---------+ ===&gt; forward
+      tensor  |   g03   |  |   g07   |  |   g11   |  |   g15   |
+              +---------+  +---------+  +---------+  +---------+
+                pipeline     pipeline     pipeline     pipeline</pre></div>
+<p>Since it's split into 3 dimensions, you can also form a 3-D cube like the following:</p>
+<div class="ascii-card"><pre>                        [g02, g06, g10, g14]
+                      /  |              /  |
+                     [g00, g04, g08, g12]  |
+                     |   |             |   |
+        3D parallel  |  [g03, g07, g11, g15]
+                     |  /              |  /
+                     [g01, g05, g09, g13]</pre></div>
+<div class="note"><span class="tag">Note — where those group lists actually come from. It&#x27;s one formula</span>
+<p>The rank layout is a mixed-radix number with <strong>TP as the fastest-varying digit</strong>:</p>
+<div class="ascii-card"><pre>   global_rank  =  tp_rank  +  TP × ( dp_rank  +  DP × pp_rank )
+
+   with TP=2, DP=2, PP=4:
+   ┌──────┬────────┬────────┬────────┐
+   │ rank │ tp     │ dp     │ pp     │
+   ├──────┼────────┼────────┼────────┤
+   │  0   │   0    │   0    │   0    │
+   │  1   │   1    │   0    │   0    │
+   │  2   │   0    │   1    │   0    │
+   │  3   │   1    │   1    │   0    │
+   │  4   │   0    │   0    │   1    │
+   │ ...  │        │        │        │
+   │ 15   │   1    │   1    │   3    │
+   └──────┴────────┴────────┴────────┘</pre></div>
+<p>A group along one axis = <strong>hold the other two digits fixed, vary this one</strong>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Vary</th>
+<th>Fix</th>
+<th>Stride</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TP</td>
+<td><code>tp_rank</code></td>
+<td>dp, pp</td>
+<td><strong>1</strong></td>
+<td><code>[0,1] [2,3] …</code> — adjacent ranks</td>
+</tr>
+<tr>
+<td>DP</td>
+<td><code>dp_rank</code></td>
+<td>tp, pp</td>
+<td><strong>TP = 2</strong></td>
+<td><code>[0,2] [1,3] …</code></td>
+</tr>
+<tr>
+<td>PP</td>
+<td><code>pp_rank</code></td>
+<td>tp, dp</td>
+<td><strong>TP×DP = 4</strong></td>
+<td><code>[0,4,8,12] …</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>That's the whole algorithm, and it produces the group lists above exactly.</p>
+<p><strong>Why TP is the fastest-varying digit is the important part</strong>: consecutive global ranks are, by convention, consecutive GPUs on the same node. Making TP the innermost digit puts every TP group <strong>inside one node, on NVLink</strong> — which chapters 04 and 07 argued is close to mandatory. PP gets the largest stride, so its groups span nodes, which is fine because pipelining sends one activation per boundary.</p>
+<div class="ascii-card"><pre>   node 0: [0 1 2 3 4 5 6 7]        ← would hold TP groups {0,1}{2,3}{4,5}{6,7}
+   node 1: [8 9 10 ... 15]
+
+   TP stride 1   → never crosses a node   ✓ NVLink
+   DP stride 2   → may cross              ~ one collective per step
+   PP stride 4   → crosses                ✓ cheapest traffic</pre></div>
+<p>Let's implement and use MPU directly. This implementation is based on Megatron-LM's code with my modifications.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import os
+import torch
+import torch.distributed as dist
+from torch import Tensor
+from torch.autograd.function import Function
+
+class MPU(object):
+    &quot;&quot;&quot;
+    MPU: Model Parallel Unit
+
+    Notes:
+        Let&#x27;s say we have a total of 16 GPUs denoted g0 ... g15 and we use 2 GPUs
+        to parallelize the model tensor, and 4 GPUs to parallelize the model
+        pipeline. The present method will create 8 tensor model-parallel groups,
+        4 pipeline model parallel groups and 8 data parallel groups as:
+
+        - width: 4 pipeline parallel group
+            [g0, g4, g8, g12], [g1, g5, g9, g13],
+            [g2, g6, g10, g14], [g3, g7, g11, g15]
+        - height: 8 tensor parallel group
+            [g0, g1], [g2, g3], [g4, g5], [g6, g7],
+            [g8, g9], [g10, g11], [g12, g13], [g14, g15]
+        - depth: 8 data parallel group
+            [g0, g2], [g1, g3], [g4, g6], [g5, g7],
+            [g8, g10], [g9, g11], [g12, g14], [g13, g15]
+
+    References:
+        Original MPU implementation of Megatron-LM.
+        https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/mpu/initialize.py
+    &quot;&quot;&quot;
+
+    _tensor_model_parallel_group = None
+    _pipeline_model_parallel_group = None
+    _data_parallel_group = None
+
+    _tensor_model_parallel_world_size = None
+    _pipeline_model_parallel_world_size = None
+    _data_parallel_world_size = None
+
+    _tensor_model_parallel_rank = None
+    _pipeline_model_parallel_rank = None
+    _pipeline_global_ranks = None
+
+    def __init__(
+        self,
+        tensor_model_parallel_size: int,
+        pipeline_model_parallel_size: int,
+        backend: str,
+        master_port: int,
+    ) -&gt; None:
+        if not dist.is_initialized():
+            self.initialize_distributed(backend, master_port)
+
+        current_rank = dist.get_rank()
+        global_world_size = dist.get_world_size()
+
+        assert (
+            global_world_size &gt;= tensor_model_parallel_size
+        ), &quot;param `tensor_model_parallel_size` must be smaller than global world size.&quot;
+
+        assert (
+            global_world_size &gt;= pipeline_model_parallel_size
+        ), &quot;param `pipeline_model_parallel_size` must be smaller than global world size.&quot;
+
+        total_model_parallel_size = (
+            tensor_model_parallel_size * pipeline_model_parallel_size
+        )
+
+        assert (
+            global_world_size % total_model_parallel_size == 0
+        ), &quot;global world sizes must be divisible by model parallel world sizes (tp * pp)&quot;
+
+        num_tensor_model_parallel_groups = (
+            global_world_size // tensor_model_parallel_size
+        )
+
+        num_pipeline_model_parallel_groups = (
+            global_world_size // pipeline_model_parallel_size
+        )
+
+        # 1. initialize data parallel group
+        self._initialize_data_parallel_group(...)
+
+        # 2. initialize tensor model parallel group
+        self._initialize_tensor_model_parallel_group(...)
+
+        # 3. initialize pipeline model parallel group
+        self._initialize_pipeline_model_parallel_group(...)
+
+        # 4. create distributed functions
+        functions = self._initialize_functions()
+        self._broadcast_fn = functions[&quot;broadcast&quot;]
+        self._reduce_fn = functions[&quot;reduce&quot;]
+        self._scatter_fn = functions[&quot;scatter&quot;]
+        self._gather_fn = functions[&quot;gather&quot;]</pre></div>
+<p>The heart of it is the three group-construction methods. Here is the data-parallel one verbatim:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>    def _initialize_data_parallel_group(
+        self,
+        current_rank: int,
+        tensor_model_parallel_size: int,
+        pipeline_model_parallel_size: int,
+        num_pipeline_model_parallel_groups: int,
+    ) -&gt; None:
+        assert (
+            self._data_parallel_group is None
+        ), &quot;data parallel group is already initialized.&quot;
+
+        for i in range(pipeline_model_parallel_size):
+            start_rank = i * num_pipeline_model_parallel_groups
+            end_rank = (i + 1) * num_pipeline_model_parallel_groups
+
+            for j in range(tensor_model_parallel_size):
+                ranks = list(
+                    range(start_rank + j, end_rank, tensor_model_parallel_size)
+                )
+
+                group = dist.new_group(ranks)
+                if current_rank in ranks:
+                    self._data_parallel_group = group</pre></div>
+</div>
+<div class="note"><span class="tag">Note — read the loop once and the whole MPU is demystified</span>
+<p>The outer loop walks pipeline stages; the inner loop walks tensor-parallel slots; and <code>range(start + j, end, tp_size)</code> is the <strong>stride-<code>TP</code></strong> enumeration from the table above. For <code>i=0, j=0</code> with TP=2, PP=4, world=16: <code>range(0, 4, 2)</code> → <code>[0, 2]</code> — the first DP group from the table above.</p>
+<p>Now note the two lines that matter most, and that are easy to get wrong when writing this by hand:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>group = dist.new_group(ranks)            # ← called by EVERY rank, every iteration
+if current_rank in ranks:                # ← but each rank keeps only ITS group
+    self._data_parallel_group = group</pre></div>
+<p><code>new_group</code> is a <strong>collective</strong>. Every rank in the job must call it, in the same order, with the same arguments — <em>including ranks that will not be members</em>. That's why the loop runs to completion on every process and the membership test happens afterwards. Skipping the call on non-members is the classic silent hang, and it's the single most likely bug when hand-rolling multi-dimensional groups. (Notebook 03's cardinal rule, in its most consequential setting.)</p>
+<p>The class also exposes the derived quantities a training loop needs:</p>
+<div class="ascii-card"><pre>   get_{tensor,pipeline,data}_model_parallel_group()
+   get_{tensor,pipeline,data}_model_parallel_world_size()
+   get_{tensor,pipeline,data}_model_parallel_rank()
+
+   is_pipeline_first_stage()  / is_pipeline_last_stage()
+   get_pipeline_model_parallel_next_rank()  / _prev_rank()
+   get_tensor_model_parallel_src_rank()</pre></div>
+<p>plus autograd-aware <code>broadcast</code> / <code>reduce</code> / <code>scatter</code> / <code>gather</code> wrappers.</p>
+</div>
+<div class="note"><span class="tag">Note — the last four are the f/g operators from chapter 07</span>
+<p><code>_initialize_functions()</code> builds <code>torch.autograd.Function</code> subclasses whose <code>backward</code> is the adjoint of their <code>forward</code> (broadcast↔reduce, scatter↔gather). The MPU defaults them to the <strong>tensor-parallel</strong> group, because that's where they're used — which is why the test script below can call <code>mpu.reduce(a)</code> with no group argument.</p>
+</div>
+<div class="note"><span class="tag">Note — is_pipeline_first_stage / next_rank / prev_rank are the pipeline&#x27;s P2P addressing</span>
+<p>From chapter 06: stage <code>k</code> sends activations to stage <code>k+1</code> and gradients to <code>k−1</code>. Those helpers answer "who is next in <em>my</em> pipeline group," which under the stride-4 layout means rank+4, not rank+1. Getting this wrong sends activations to the wrong node and produces a hang or garbage.</p>
+<p>(Watch for the long-standing typos in Megatron's own method names — <code>is_pipeline_fist_stage</code>, <code>get_pipeline_model_parallel_fist_rank</code>. Harmless, but they'll bite if you copy call sites.)</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/test_mpu.py
+&quot;&quot;&quot;
+import torch
+import torch.distributed as dist
+from mpu import MPU
+
+mpu = MPU(
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=2,
+    backend=&quot;nccl&quot;,
+    master_port=5678,
+)
+
+# 1. MPU automatically creates process groups like this and provides
+#    methods to access them.
+print(f&quot;TP group: {mpu.get_tensor_model_parallel_group()}&quot;)
+print(f&quot;TP wsz: {mpu.get_tensor_model_parallel_world_size()}&quot;)
+print(f&quot;TP rank: {mpu.get_tensor_model_parallel_rank()}&quot;)
+dist.barrier()
+
+print(f&quot;PP group: {mpu.get_pipeline_model_parallel_group()}&quot;)
+print(f&quot;PP wsz: {mpu.get_pipeline_model_parallel_world_size()}&quot;)
+print(f&quot;PP rank: {mpu.get_pipeline_model_parallel_rank()}&quot;)
+dist.barrier()
+
+# 2. The data-parallel size is set automatically to match TP and PP.
+#    If you set TP=4, PP=1 on 16 GPUs, DP size automatically becomes
+#    16 / (4 * 1) = 4.
+print(f&quot;DP group: {mpu.get_data_parallel_group()}&quot;)
+print(f&quot;DP wsz: {mpu.get_data_parallel_world_size()}&quot;)
+print(f&quot;DP rank: {mpu.get_data_parallel_rank()}&quot;)
+dist.barrier()
+
+# 3. MPU supports reduce, scatter, gather, broadcast, etc.
+#    These are mostly used only in the tensor-parallel group, so the
+#    tensor-parallel group is set as the default.
+a = torch.tensor([2, 3, 4, 5]).cuda() * dist.get_rank()
+a = mpu.reduce(a)
+print(a)</pre></div>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ deepspeed --num_gpus=4 ../src/test_mpu.py</pre></div>
+</div>
+<div class="note"><span class="tag">Note — work through what this run actually does, because it&#x27;s a good self-test</span>
+<p>4 GPUs, TP=2, PP=2 ⟹ DP = 4/(2×2) = <strong>1</strong>.</p>
+<div class="ascii-card"><pre>   rank:      0      1      2      3
+   tp_rank:   0      1      0      1
+   pp_rank:   0      0      1      1
+
+   TP groups: {0,1}  {2,3}         ← mpu.reduce() operates here
+   PP groups: {0,2}  {1,3}
+   DP groups: {0} {1} {2} {3}      ← degree 1: no data parallelism at all</pre></div>
+<p>So <code>mpu.reduce(a)</code> sums within <code>{0,1}</code> and within <code>{2,3}</code> — <strong>not</strong> across all four:</p>
+<div class="ascii-card"><pre>   rank 0: [0,0,0,0]     rank 2: [4,6,8,10]
+   rank 1: [2,3,4,5]     rank 3: [6,9,12,15]
+           ─────────             ──────────
+   TP {0,1} → [2,3,4,5]  TP {2,3} → [10,15,20,25]</pre></div>
+<p>Two different answers on the two TP groups. That is correct behaviour, and confirming it is the point of the exercise: a collective on a <em>group</em> touches only that group.</p>
+</div></div></section><section class="panel" id="pan-3-large-scale-project-survey" role="tabpanel" aria-labelledby="t-3-large-scale-project-survey" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 12</p><h2 id="3-large-scale-project-survey">3. Large-scale project survey</h2></div><div class="body"><div class="subnav"><a href="#1-megatron-deepspeed">1) Megatron-DeepSpeed</a><a href="#2-gpt-neox">2) GPT-NeoX</a><a href="#3-big-science">3) Big-Science</a></div><p>Currently almost every big-model project is based on Megatron-LM. Since we already did the Megatron-LM exercise in the Tensor Parallelism session, we won't do a separate exercise here. All three projects introduced below are fork repositories of Megatron-LM, so usage is nearly identical and mostly only the arguments have changed. Please read each project's introduction and clone whichever repo seems suitable.</p>
+<h3 id="1-megatron-deepspeed">1) Megatron-DeepSpeed</h3>
+<ul>
+<li>Maintainer: Shaden, Jeff, … DeepSpeed Team</li>
+<li><a href="https://github.com/microsoft/Megatron-DeepSpeed">Latest Megatron + DeepSpeed</a>: upstream maintained</li>
+<li>3D parallelism (Megatron 1.1.5) + ZeRO-1, in DeepSpeedExamples: upstream not maintained</li>
+<li>2D parallelism (Megatron 1.1.5) + ZeRO-3, in DeepSpeedExamples: upstream not maintained</li>
+</ul>
+<p>A project that adds DeepSpeed ZeRO to Megatron-LM. It is presumed to be the code base for the 530B Megatron-Turing, reportedly developed jointly by NVIDIA and Microsoft. DeepSpeed <strong>ZeRO is also a target of multi-dimensional parallelization, and ZeRO-DP can be applied instead of DP.</strong> However, ZeRO 2 and 3 are not compatible with pipeline parallelization. So <strong>to use ZeRO 2 or 3 you must not apply pipeline parallelization.</strong></p>
+<p>So you have to choose one of (ZeRO-2,3 + TP) or (ZeRO-1 + TP + PP). If the model is extremely large you might consider ZeRO-3, but so far 3-D parallelism + ZeRO-1 is known to be the more efficient. The reason is that tensor parallelism is fast when communicating within a node but becomes drastically slower once it goes to inter-node communication.</p>
+<div class="ascii-card"><pre>   the standard layout
+
+   ┌─── node 0 ────┐  ┌─── node 1 ────┐  ┌─── node 2 ────┐  ┌─── node 3 ────┐
+   │ 8 GPUs = TP=8 │→ │ 8 GPUs = TP=8 │→ │ 8 GPUs = TP=8 │→ │ 8 GPUs = TP=8 │
+   │  (NVLink)     │  │  (NVLink)     │  │  (NVLink)     │  │  (NVLink)     │
+   └───────────────┘  └───────────────┘  └───────────────┘  └───────────────┘
+        stage 0            stage 1            stage 2            stage 3
+        └────────────── PP over InfiniBand ──────────────────────────┘
+
+   ... and this whole pipeline is replicated for DP, with ZeRO-1 sharding
+       the optimizer state across the DP replicas.</pre></div>
+<p>In most cases, as in the figure above, TP is used for parallelization within a node and PP for inter-node communication, with ZeRO-1 applied on top. However, as mentioned in the ZeRO paper, for the same resources the maximum trainable model size is far larger with ZeRO — so please choose your parallelization strategy carefully according to your resources, target model size, and server configuration.</p>
+<div class="note"><span class="tag">Note — why ZeRO-2/3 and pipeline parallelism conflict</span>
+<p>Older material states the restriction without explaining it, and the reason is instructive.</p>
+<p>Pipeline parallelism relies on <strong>gradient accumulation across micro-batches</strong>: <code>m</code> micro-batches flow through, each contributing gradients, and only then does the optimizer step. ZeRO stage 2 shards gradients and reduces them <em>as they're produced</em>; stage 3 additionally frees parameters after each layer's use.</p>
+<div class="ascii-card"><pre>   PP wants:     hold gradients locally for m micro-batches, then reduce once
+   ZeRO-2 wants: reduce_scatter each gradient as soon as it exists
+                 └── these are directly at odds
+
+   ZeRO-3 wants: free each layer&#x27;s params right after use
+   PP wants:     re-use the same stage&#x27;s params for every micro-batch
+                 └── re-gathering m times per step would be ruinous</pre></div>
+<p>ZeRO-1 has no conflict: it only shards <em>optimizer state</em>, which is touched once per step, after all accumulation is done. That's exactly why "3-D + ZeRO-1" became the standard recipe.</p>
+</div>
+<div class="warn"><span class="tag">the restriction is DeepSpeed&#x27;s, not fundamental</span><p>PyTorch's FSDP2 composes with pipeline parallelism through <code>DeviceMesh</code>, and <code>torchtitan</code> demonstrates FSDP + TP + PP + CP running together. The trick is applying the sharding on a mesh dimension that excludes the pipeline dimension, plus <code>reshard_after_forward</code> control so parameters aren't re-gathered per micro-batch.</p>
+<p>That said, the <em>reasoning</em> above still holds as guidance: aggressive parameter sharding and deep pipelines pull against each other, and "TP inside a node, PP across nodes, ZeRO-1 on the DP axis" remains a very strong default.</p></div>
+<h3 id="2-gpt-neox">2) GPT-NeoX</h3>
+<ul>
+<li>Maintainer: Stella, … EleutherAI Team</li>
+<li>https://github.com/EleutherAI/gpt-neox</li>
+<li>https://github.com/EleutherAI/deeperspeed</li>
+</ul>
+<p>GPT-NeoX is the GPU-version code base being built by the EleutherAI team, famous for GPT-Neo. GPT-NeoX is <strong>a project that adds various modelling components to the "3D parallelism (Megatron 1.1.5) + ZeRO-1" code in DeepSpeed Examples.</strong> For example, ScaleNorm, RMSNorm, Rotary Embedding, Alibi Embedding, Shampoo Optimizer, SM3 Optimizer, and so on have been added, and it supports DeepSpeed Sparse Attention. They are developing English models, and GPT-NeoX <strong>implements only the GPT model</strong> — other architectures (BERT, T5, …) have been removed.</p>
+<p>One thing to watch: the upstream with Megatron-LM is currently not maintained and the two have diverged quite a bit. Megatron-LM is also continuously updated, so <strong>whether upstream is maintained or not is something to consider.</strong> Also, GPT-NeoX develops and uses a DeepSpeed fork called DeeperSpeed, which likewise does not maintain upstream.</p>
+<div class="note"><span class="tag">Note — the &quot;is upstream maintained?&quot; question is the single most useful piece of advice in this section, and it aged perfectly</span>
+<p>A fork that diverges from Megatron-LM stops receiving: new fused kernels, FlashAttention integration, bf16 and fp8 support, new pipeline schedules, and the entire Megatron Core reorganization. That's the difference between a repo you can run on current hardware and an archaeology project.</p>
+<p>Rotary embeddings and RMSNorm, listed here as GPT-NeoX novelties, are now standard in essentially every open model — a good indicator of how much the modelling layer moved while the parallelism layer stayed put.</p>
+</div>
+<h3 id="3-big-science">3) Big-Science</h3>
+<ul>
+<li>Maintainer: Stas, Wang, … Hugging Face Team</li>
+<li>https://github.com/bigscience-workshop/Megatron-DeepSpeed: upstream maintained</li>
+</ul>
+<p>The Big Science Workshop is a one-year workshop in which Hugging Face leads code-base development and, using computing equipment under the French government, aims to develop a <strong>multilingual big model.</strong> It is a fork of <a href="https://github.com/microsoft/Megatron-DeepSpeed">latest Megatron + DeepSpeed</a>; it started most recently but is developing fastest because many people participate. They too are continuously adding components recently known to perform well, such as ScaleNorm, RMSNorm, Rotary Embedding, Alibi Embedding, and they operate <strong>BERT, T5, Prefix-LM and others in addition to GPT.</strong> Big-Science also has the characteristic of maintaining Megatron-LM's upstream.</p>
+<div class="warn"><span class="tag">where these projects landed, and what to use now</span><div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>BigScience</strong></td>
+<td>Concluded 2022; trained <strong>BLOOM (176B)</strong> on 384 A100s with TP=4, PP=12, DP=8. Its public training logs and post-mortems are still among the best real-world 3-D parallelism documentation in existence</td>
+</tr>
+<tr>
+<td><strong>GPT-NeoX</strong></td>
+<td>Still active; produced Pythia and other models. Upstream still diverged</td>
+</tr>
+<tr>
+<td><strong>Megatron-DeepSpeed</strong></td>
+<td>Still maintained, still a reasonable choice for ZeRO + Megatron</td>
+</tr>
+</tbody>
+</table></div>
+<p>Projects worth considering that didn't exist or weren't prominent in 2021:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Megatron Core</strong></td>
+<td>NVIDIA's refactor of Megatron into a reusable library rather than a fork-me script. Now at 0.18 (June 2026), versioned on PyPI, developed in the open on GitHub since Dec 2025. Adds Megatron-FSDP, asymmetric pipeline layouts (<code>--pipeline-model-parallel-layout</code>), HSDP for MoE (<code>--num-distributed-optimizer-instances</code>), and dynamic context parallelism</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>| <strong>Megatron Bridge</strong> | Bidirectional HF ↔ Megatron checkpoint conversion with per-model recipes — the answer to the "checkpoint won't load at a new layout" row below |</p>
+<div class="warn"><p>| <strong>torchtitan</strong> | PyTorch-native reference for 4-D parallelism (FSDP2 + TP + PP + CP) on <code>DeviceMesh</code>. The clearest modern code for everything in this chapter |
+| <strong>NVIDIA NeMo</strong> | Production framework built on Megatron Core |
+| <strong>Hugging Face <code>accelerate</code></strong> | Lower-effort path to FSDP/DeepSpeed for smaller-scale work |</p>
+<p><strong>If you're starting today</strong>, read torchtitan first — it does in a few hundred readable lines what the MPU class above does in six hundred, and it composes all the axes rather than restricting their combinations.</p></div></div></section><section class="panel" id="pan-4-devicemesh-the-modern-mpu" role="tabpanel" aria-labelledby="t-4-devicemesh-the-modern-mpu" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 12</p><h2 id="4-devicemesh-the-modern-mpu">4. DeviceMesh, the modern MPU</h2></div><div class="body"><p>The MPU class exists to answer one question — "which ranks are in my group for axis X?" — and PyTorch now answers it declaratively.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
+
+dist.init_process_group(&quot;nccl&quot;)         # REQUIRED FIRST since PyTorch 2.11 —
+                                        # DeviceMesh now resolves its process groups
+                                        # at construction, not lazily
+
+# shape multiplies to world_size; order = OUTERMOST → INNERMOST
+mesh = init_device_mesh(
+    &quot;cuda&quot;, (2, 4, 8), mesh_dim_names=(&quot;dp&quot;, &quot;pp&quot;, &quot;tp&quot;)
+)                                       # 2 × 4 × 8 = 64 GPUs
+
+tp_group = mesh[&quot;tp&quot;].get_group()       # this rank&#x27;s 8-way TP group
+pp_group = mesh[&quot;pp&quot;].get_group()
+dp_mesh  = mesh[&quot;dp&quot;]                   # hand this to fully_shard
+
+tp_rank  = mesh[&quot;tp&quot;].get_local_rank()</pre></div>
+<div class="note"><span class="tag">Note — mapping the MPU onto the mesh, method by method</span>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>MPU</th>
+<th>DeviceMesh</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_tensor_model_parallel_group()</code></td>
+<td><code>mesh["tp"].get_group()</code></td>
+</tr>
+<tr>
+<td><code>get_tensor_model_parallel_rank()</code></td>
+<td><code>mesh["tp"].get_local_rank()</code></td>
+</tr>
+<tr>
+<td><code>get_tensor_model_parallel_world_size()</code></td>
+<td><code>mesh["tp"].size()</code></td>
+</tr>
+<tr>
+<td><code>is_pipeline_first_stage()</code></td>
+<td><code>mesh["pp"].get_local_rank() == 0</code></td>
+</tr>
+<tr>
+<td><code>get_pipeline_model_parallel_next_rank()</code></td>
+<td>handled by <code>torch.distributed.pipelining</code></td>
+</tr>
+<tr>
+<td><code>broadcast</code> / <code>reduce</code> / <code>scatter</code> / <code>gather</code> (f, g)</td>
+<td>inserted by DTensor from sharding annotations</td>
+</tr>
+<tr>
+<td>the whole <code>_initialize_*_group</code> machinery</td>
+<td><code>init_device_mesh(...)</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Note the ordering convention: <code>mesh_dim_names</code> runs <strong>outermost to innermost</strong>, and the innermost dimension is the fastest-varying one — the same "TP must be the innermost digit so it stays node-local" rule the MPU implemented by hand. The mesh makes it a one-line declaration instead of a stride calculation.</p>
+</div>
+<div class="note"><span class="tag">Note — three DeviceMesh details that have changed and will bite you</span>
+<ol>
+<li><strong>Initialize the process group first (PyTorch 2.11).</strong> <code>DeviceMesh</code> now keeps its own process-group registry so <code>torch.compile</code> can trace <code>get_group()</code>. The consequence: groups must exist when the mesh is built. Code that constructed a mesh early (or loaded a saved DTensor) and created groups later now fails at runtime.</li>
+<li><strong>Flattening is no longer implicit (deprecated in 2.10).</strong> After <code>mesh["dp", "cp"]._flatten()</code>, referring to <code>mesh["dp_cp"]</code> mutates the parent mesh's state implicitly and warns. Hold your own reference to the flattened mesh instead.</li>
+<li><strong><code>backend_override=</code></strong> lets you choose a different backend per mesh dimension — e.g. NCCL on the TP dimension, Gloo on a CPU-side dimension. Useful once you have heterogeneous axes.</li>
+</ol>
+<p>Putting the whole stack together, as torchtitan does:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>mesh = init_device_mesh(&quot;cuda&quot;, (dp, pp, tp), mesh_dim_names=(&quot;dp&quot;, &quot;pp&quot;, &quot;tp&quot;))
+
+# --- TP (chapter 07)
+parallelize_module(block, mesh[&quot;tp&quot;], {
+    &quot;attn.wq&quot;: ColwiseParallel(), &quot;attn.wo&quot;: RowwiseParallel(), ...
+})
+
+# --- PP (chapter 06)
+stage = pipe.build_stage(mesh[&quot;pp&quot;].get_local_rank(), device=device)
+schedule = Schedule1F1B(stage, n_microbatches=m, loss_fn=loss_fn)
+
+# --- FSDP on the DP axis (chapter 08)
+for block in model.layers:
+    fully_shard(block, mesh=mesh[&quot;dp&quot;])
+fully_shard(model, mesh=mesh[&quot;dp&quot;])</pre></div>
+<p>Three chapters, three lines, one mesh.</p>
+</div></div></section><section class="panel" id="pan-5-choosing-the-degrees" role="tabpanel" aria-labelledby="t-5-choosing-the-degrees" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 12</p><h2 id="5-choosing-the-degrees">5. Choosing the degrees</h2></div><div class="body"><div class="note"><span class="tag">Note — a procedure, in the order that minimizes regret</span>
+<div class="ascii-card"><pre>   1. TP  = smallest degree that makes one pipeline stage fit.
+            HARD CAP: GPUs per node (usually 8). Never span nodes.
+   2. PP  = enough extra stages to fit the rest of the model.
+            Prefer small — the bubble is pure waste.
+   3. DP  = world_size / (TP × PP).   Free scaling.
+   4. ZeRO-1 (or FSDP) on the DP axis. Reclaims memory at ~zero comm cost.
+   5. m   = micro-batches ≥ 4 × PP, as large as keeps each GPU busy.
+   6. Activation checkpointing if still tight.
+
+   VERIFY:  TP × PP × DP  ==  world_size      exactly.</pre></div>
+<p>Worked example — <strong>64 GPUs (8 nodes × 8), a ~40B model:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Choice</th>
+<th>Reasoning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TP</td>
+<td><strong>8</strong></td>
+<td>One node. Makes a stage fit; stays on NVLink</td>
+</tr>
+<tr>
+<td>PP</td>
+<td><strong>4</strong></td>
+<td>40B ÷ (8 TP × 4 PP) ≈ 1.25B of parameters per GPU — fits with room</td>
+</tr>
+<tr>
+<td>DP</td>
+<td><strong>2</strong></td>
+<td>64 / (8 × 4) = 2</td>
+</tr>
+<tr>
+<td>ZeRO</td>
+<td><strong>stage 1</strong></td>
+<td>Compatible with PP; shards 12 of 16 bytes/param</td>
+</tr>
+<tr>
+<td>micro-batches</td>
+<td><strong>16</strong></td>
+<td>≥ 4 × PP → bubble ≈ 16%</td>
+</tr>
+</tbody>
+</table></div>
+<p>Communication placement check:</p>
+<div class="ascii-card"><pre>   TP groups (stride 1)      : within a node ✓  ← 4 all_reduces per layer
+   PP groups (stride 8×2=16) : across nodes  ✓  ← one activation per boundary
+   DP groups (stride 8)      : within a node ~  ← one gradient reduction per step</pre></div>
+</div>
+<div class="note"><span class="tag">Note — a sanity check on expected throughput</span>
+<p>Multi-dimensional parallelism does not multiply your throughput by the number of GPUs. Approximately:</p>
+<div class="ascii-card"><pre>   effective throughput  ≈  ideal
+                            × (1 − bubble)              ← PP tax
+                            × (TP communication factor)  ← ~0.85–0.95 on NVLink
+                            × (DP scaling efficiency)    ← ~0.9+</pre></div>
+<p>With PP=4, m=16 → bubble ≈ 16%, so ~0.84 × 0.9 × 0.95 ≈ <strong>0.72</strong>. An MFU in the 35–50% range for a well-tuned large run is normal; if you're expecting 90%, recalibrate.</p>
+</div></div></section><section class="panel" id="pan-6-the-axes-that-came-later" role="tabpanel" aria-labelledby="t-6-the-axes-that-came-later" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 12</p><h2 id="6-the-axes-that-came-later">6. The axes that came later</h2></div><div class="body"><p>The chapter's 3-D model was the state of the art in 2021. Two axes joined since, and a large run today is commonly 4-D or 5-D.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Splits</th>
+<th>Primitive</th>
+<th>Typical degree</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DP</strong></td>
+<td>the batch</td>
+<td><code>all_reduce</code></td>
+<td>2 – thousands</td>
+<td>outermost</td>
+</tr>
+<tr>
+<td><strong>FSDP/ZeRO</strong></td>
+<td>model state, on the DP axis</td>
+<td><code>all_gather</code> + <code>reduce_scatter</code></td>
+<td>= DP</td>
+<td>layered on DP</td>
+</tr>
+<tr>
+<td><strong>PP</strong></td>
+<td>layers</td>
+<td><code>send</code>/<code>recv</code></td>
+<td>2 – 64</td>
+<td>across nodes</td>
+</tr>
+<tr>
+<td><strong>TP</strong></td>
+<td>weight matrices</td>
+<td><code>all_reduce</code></td>
+<td>2 – 8</td>
+<td><strong>inside a node</strong></td>
+</tr>
+<tr>
+<td><strong>CP</strong></td>
+<td>the sequence</td>
+<td><code>all_gather</code> / <code>all_to_all</code></td>
+<td>1 – 8</td>
+<td>with TP</td>
+</tr>
+<tr>
+<td><strong>EP</strong></td>
+<td>MoE experts</td>
+<td><code>all_to_all</code></td>
+<td>8 – 64</td>
+<td>across nodes</td>
+</tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>mesh = init_device_mesh(
+    &quot;cuda&quot;, (dp, pp, cp, tp), mesh_dim_names=(&quot;dp&quot;, &quot;pp&quot;, &quot;cp&quot;, &quot;tp&quot;)
+)</pre></div>
+<div class="note"><span class="tag">Note — context parallelism got adaptive in 2026</span>
+<p>Megatron Core added <strong>dynamic context parallelism</strong>, which sizes the CP degree per batch according to the actual sequence lengths present rather than fixing it for the whole run — reported at up to 1.48× on variable-length workloads. The static-degree assumption that the rest of this chapter makes for TP and PP does not have to hold for CP, because CP's cost is driven by sequence length, which varies batch to batch.</p>
+<p><strong>Context parallelism (CP)</strong> shards the sequence dimension so attention over 128k+ tokens is feasible; Ring Attention circulates K/V blocks around a ring while each rank accumulates its partial attention. <strong>Expert parallelism (EP)</strong> places MoE experts on different devices and routes tokens to them with two <code>all_to_all</code>s per MoE layer.</p>
+</div>
+<div class="note"><span class="tag">Note — one more axis that isn&#x27;t a parallelism axis: HSDP</span>
+<p>Hybrid Sharded Data Parallel splits the DP axis in two — <strong>shard within a node, replicate across nodes</strong>:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>mesh = init_device_mesh(&quot;cuda&quot;, (nodes, gpus_per_node),
+                        mesh_dim_names=(&quot;replicate&quot;, &quot;shard&quot;))
+fully_shard(model, mesh=mesh)</pre></div>
+<p>This confines FSDP's chatty per-layer <code>all_gather</code> to NVLink and reduces only gradients over the slow inter-node link. For jobs that are FSDP-bound on a weak network it's often the single biggest win available, and it's the natural generalization of this chapter's "match the axis to the interconnect" principle.</p>
+</div></div></section><section class="panel" id="pan-7-gotchas" role="tabpanel" aria-labelledby="t-7-gotchas" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 12</p><h2 id="7-gotchas">7. Gotchas</h2></div><div class="body"><div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hang at startup, no error</td>
+<td><code>new_group</code> not called by all ranks</td>
+<td>Call it unconditionally; keep only your own group</td>
+</tr>
+<tr>
+<td><code>DeviceMesh</code> construction fails or PG lookup errors under compile</td>
+<td>PGs created after the mesh (PyTorch ≥ 2.11)</td>
+<td><code>init_process_group</code> <strong>before</strong> <code>init_device_mesh</code></td>
+</tr>
+<tr>
+<td><code>mesh["dp_cp"]</code> warns or misbehaves</td>
+<td>Implicit flattened-mesh lookup deprecated in 2.10</td>
+<td>Keep the object returned by <code>_flatten()</code></td>
+</tr>
+<tr>
+<td>Hang after N steps</td>
+<td>A rank-conditional collective</td>
+<td>Every rank, every collective, same order</td>
+</tr>
+<tr>
+<td>Correct but several× too slow</td>
+<td>TP group spans nodes</td>
+<td>Make TP the innermost mesh dim</td>
+</tr>
+<tr>
+<td><code>world_size</code> assertion at init</td>
+<td><code>TP × PP × DP ≠ world_size</code></td>
+<td>Recompute; DP is derived, not chosen</td>
+</tr>
+<tr>
+<td>Divisibility error</td>
+<td><code>num_heads</code>, <code>hidden</code>, or vocab not divisible by TP</td>
+<td>Pad, or reduce TP</td>
+</tr>
+<tr>
+<td>ZeRO-2/3 + PP silently misbehaves or errors</td>
+<td>DeepSpeed restriction</td>
+<td>Use ZeRO-1 with PP, or FSDP2 via DeviceMesh</td>
+</tr>
+<tr>
+<td>Loss only appears on some ranks</td>
+<td>It exists on the last pipeline stage only</td>
+<td>Gather it, or log from <code>is_pipeline_last_stage()</code></td>
+</tr>
+<tr>
+<td>Checkpoint won't load at a new layout</td>
+<td>Sharded by TP/PP rank</td>
+<td><code>torch.distributed.checkpoint</code>, or Megatron's converters</td>
+</tr>
+<tr>
+<td>Dropout correlated across TP ranks</td>
+<td>Shared RNG state</td>
+<td>Separate RNG tracker for parallel regions (ch. 07)</td>
+</tr>
+<tr>
+<td>Throughput far below expectation</td>
+<td>Bubble + comm, not a bug</td>
+<td>Compute the expected MFU before assuming breakage</td>
+</tr>
+</tbody>
+</table></div>
+<div class="rulebox"><span class="tag">The cardinal rule, in its most dangerous setting</span><p><strong>Every rank must call every collective, in the same order, with matching shapes and dtypes.</strong></p>
+<p>A 3-D job has three independent sets of groups and therefore three independent chances to violate it. Bring the axes up <strong>one at a time</strong> — TP alone, then TP+PP, then TP+PP+DP — verifying the loss curve against a single-GPU baseline at each step. Debugging a 3-D configuration that was never correct at 1-D is genuinely miserable.</p></div>
+<div class="note"><span class="tag">Note — you can now do a lot of that debugging without a cluster</span>
+<p>PyTorch 2.10 added <strong><code>LocalTensor</code></strong>, a tensor subclass that holds a mapping from rank IDs to per-rank shards and applies operations to each shard independently, simulating SPMD execution across many ranks <strong>inside a single process</strong>. Collectives are simulated locally with no network at all.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed._local_tensor import LocalTensorMode
+
+with LocalTensorMode(world_size=16):
+    # DTensor operations here produce LocalTensors;
+    # inspect per-rank state directly, including uneven sharding
+    ...</pre></div>
+<p>For this chapter specifically it is close to ideal: you can verify that a <code>(dp, pp, tp)</code> mesh produces the group memberships you expect, and check sharding behaviour under an uneven split, before you request 16 GPUs. It carries significant overhead and is explicitly a debugging tool, not a production path — but "did I get the rank arithmetic right" is exactly the question it answers cheaply.</p>
+<p>Also worth knowing for real clusters: PyTorch 2.10 exposed <strong><code>shrink_group</code></strong> (wrapping <code>ncclCommShrink</code>), which lets a job drop failed ranks from a communicator rather than tearing everything down. It is one of the building blocks of the fault-tolerance story that torchcomms is being built to complete.</p>
+</div></div></section><section class="panel" id="pan-8-quick-reference" role="tabpanel" aria-labelledby="t-8-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 12</p><h2 id="8-quick-reference">8. Quick reference</h2></div><div class="body"><div class="ascii-card"><pre>   THE RANK LAYOUT
+   ───────────────
+   global_rank = tp_rank + TP × (dp_rank + DP × pp_rank)
+                 ▲ innermost = fastest varying = stays inside a node
+
+   GROUP CONSTRUCTION      vary        fix        stride
+   ──────────────────      ────        ───        ──────
+   TP group                tp_rank     dp, pp     1
+   DP group                dp_rank     tp, pp     TP
+   PP group                pp_rank     tp, dp     TP × DP
+
+   # of groups on an axis  =  world_size / degree
+
+   EXAMPLE: world=16, TP=2, DP=2, PP=4
+   TP: [0,1][2,3][4,5][6,7][8,9][10,11][12,13][14,15]      8 groups
+   DP: [0,2][1,3][4,6][5,7][8,10][9,11][12,14][13,15]      8 groups
+   PP: [0,4,8,12][1,5,9,13][2,6,10,14][3,7,11,15]          4 groups
+
+   PLACEMENT RULE
+   ──────────────
+   TP  → inside a node, NVLink      4 all_reduce per layer, on the critical path
+   CP  → inside a node               per attention block
+   PP  → across nodes                one activation per boundary
+   DP  → across nodes                one gradient reduction per step
+
+   THE CONSTRAINT
+   ──────────────
+   world_size = DP × TP × PP (× CP × EP)      exactly</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># ── modern: one mesh, three axes ───────────────────────────
+from torch.distributed.device_mesh import init_device_mesh
+dist.init_process_group(&quot;nccl&quot;)          # BEFORE the mesh (PyTorch &gt;= 2.11)
+mesh = init_device_mesh(&quot;cuda&quot;, (dp, pp, tp), mesh_dim_names=(&quot;dp&quot;, &quot;pp&quot;, &quot;tp&quot;))
+
+parallelize_module(block, mesh[&quot;tp&quot;], {...})              # ch. 07
+stage    = pipe.build_stage(mesh[&quot;pp&quot;].get_local_rank())  # ch. 06
+schedule = Schedule1F1B(stage, n_microbatches=m, loss_fn=loss_fn)
+for b in model.layers: fully_shard(b, mesh=mesh[&quot;dp&quot;])    # ch. 08
+fully_shard(model, mesh=mesh[&quot;dp&quot;])
+
+# ── Megatron ───────────────────────────────────────────────
+# torchrun --nproc_per_node 8 --nnodes 8 pretrain_gpt.py \
+#   --tensor-model-parallel-size 8 \
+#   --pipeline-model-parallel-size 4 \
+#   --sequence-parallel --use-distributed-optimizer --bf16
+#   (DP = 64 / (8*4) = 2, derived automatically)</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 12</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Verified version</th>
+<th>Notes for this chapter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PyTorch</strong></td>
+<td><strong>2.13.0</strong> (8 Jul 2026)</td>
+<td>2.12 → 2.13 changed several distributed names; see below</td>
+</tr>
+<tr>
+<td><strong>Megatron Core</strong></td>
+<td><strong>0.18.0</strong> (23 Jun 2026)</td>
+<td>Development moved to GitHub in Dec 2025; <code>megatron.core.*</code> is the supported API</td>
+</tr>
+<tr>
+<td><strong>transformers</strong></td>
+<td><strong>v5.14</strong></td>
+<td>v5 is <strong>PyTorch-only</strong>; the slow/fast tokenizer split is gone</td>
+</tr>
+<tr>
+<td><strong>DeepSpeed</strong></td>
+<td><strong>0.18.x</strong></td>
+<td>Still maintained; ZeRO config keys in this chapter unchanged</td>
+</tr>
+<tr>
+<td><strong>CUDA</strong></td>
+<td>13.0 default on PyPI, 13.2 experimental</td>
+<td>Volta/Pascal/Maxwell dropped from recent builds</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Distributed changes since this material was first drafted, in one place:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Version</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>all_gather_into_tensor</code> → <strong><code>all_gather_single</code></strong></td>
+<td>2.13</td>
+<td>Renamed to align with torchcomms; old name still resolves for now</td>
+</tr>
+<tr>
+<td><code>reduce_scatter_tensor</code> → <strong><code>reduce_scatter_single</code></strong></td>
+<td>2.13</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>torchcomms</strong> lands as the new backend layer</td>
+<td>2.13</td>
+<td><code>c10d</code> is still the user-facing surface; torchcomms replaces the layer <em>beneath</em> it</td>
+</tr>
+<tr>
+<td><code>torchrun</code> picks an <strong>OS-assigned free port</strong> by default</td>
+<td>2.12</td>
+<td>Only when neither <code>--standalone</code> nor <code>--master-port</code> is given. Fixes "Address already in use"</td>
+</tr>
+<tr>
+<td><code>torch.distributed.nn.functional</code> raises under <code>torch.compile</code></td>
+<td>2.12</td>
+<td>Use <code>torch.distributed._functional_collectives</code></td>
+</tr>
+<tr>
+<td><strong>Differentiable collectives</strong> added</td>
+<td>2.11</td>
+<td>Native autograd-aware collectives — the <code>f</code>/<code>g</code> adjoint pattern, built in</td>
+</tr>
+<tr>
+<td><code>DeviceMesh</code> requires PGs to exist at construction</td>
+<td>2.11</td>
+<td>Call <code>init_process_group</code> <strong>before</strong> building the mesh</td>
+</tr>
+<tr>
+<td>Implicit <code>mesh["dp_cp"]</code> after <code>_flatten()</code> deprecated</td>
+<td>2.10</td>
+<td>Keep your own reference to the flattened mesh</td>
+</tr>
+<tr>
+<td><strong><code>torch.cuda.amp.*</code></strong></td>
+<td>deprecated since 2.4</td>
+<td>Use <code>torch.amp.GradScaler("cuda")</code> / <code>torch.autocast("cuda", ...)</code></td>
+</tr>
+<tr>
+<td><strong>XCCL</strong> backend for Intel XPU</td>
+<td>2.8</td>
+<td>Fourth backend alongside NCCL / Gloo / MPI</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Specific to this chapter:</strong> the rank arithmetic (<code>global_rank = tp_rank + TP × (dp_rank + DP × pp_rank)</code>), the stride rules, and the placement rule are unchanged — they are conventions, not APIs. What changed: <code>DeviceMesh</code> now requires process groups to exist at construction (2.11), implicit flattened-mesh lookup is deprecated (2.10), <code>LocalTensor</code> (2.10) lets you verify a mesh layout without a cluster, <code>shrink_group</code> (2.10) supports dropping failed ranks, and torchcomms (2.13) is the emerging backend layer aimed squarely at fault tolerance and one-sided communication at 100k+ GPU scale.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 12</p><h2 id="further-reading">Further reading</h2></div><div class="body"><ul>
+<li><strong>Efficient Large-Scale Language Model Training on GPU Clusters</strong> — Narayanan et al., 2021. The definitive 3-D parallelism analysis: how the degrees interact and why the standard layout is standard.</li>
+<li><strong>Megatron-LM</strong> <code>megatron/core/parallel_state.py</code> — the current MPU, and the direct descendant of the code in this chapter.</li>
+<li><strong>torchtitan</strong> — 4-D parallelism on <code>DeviceMesh</code> in readable PyTorch. The single best modern reference for this chapter.</li>
+<li><strong>BLOOM training chronicles</strong> (bigscience-workshop) — a real 3-D run's configuration, failures, and fixes, documented publicly. Rare and valuable.</li>
+<li><code>DeviceMesh</code> and <code>DTensor</code> documentation.</li>
+<li><strong>ZeRO</strong> — Rajbhandari et al., 2019, for the ZeRO-DP-on-the-DP-axis argument.</li>
+<li><strong>Ring Attention</strong> (Liu et al., 2023) and <strong>DeepSpeed-Ulysses</strong> — the context-parallel axis.</li>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 12 of 12</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+<li><strong>Derive the groups.</strong> For world=32, TP=4, PP=2, DP=4, write out all three sets of groups by hand using the stride rules. Then verify against <code>MPU</code> or <code>init_device_mesh</code>.</li>
+</ol>
+<ol start="2">
+<li><strong>Predict the reduce.</strong> In the <code>test_mpu.py</code> run (4 GPUs, TP=2, PP=2), predict each rank's output <em>before</em> running it. Then change TP to 4 and predict again.</li>
+</ol>
+<ol start="3">
+<li><strong>Break it deliberately.</strong> Modify <code>_initialize_data_parallel_group</code> so <code>new_group</code> is called only when <code>current_rank in ranks</code>. Run it. How long before anything happens, and what does the error say?</li>
+</ol>
+<ol start="4">
+<li><strong>Place the axes wrong.</strong> On a 2-node cluster, run TP=8 (node-local) and then TP=8 spanning both nodes with everything else equal. Measure step time. That ratio is the whole argument of §3.</li>
+</ol>
+<ol start="5">
+<li><strong>Budget a cluster.</strong> You have 128 GPUs (16 nodes × 8) and a 70B model. Choose TP, PP, DP, ZeRO stage, and micro-batch count. Show the memory arithmetic and the expected bubble.</li>
+</ol>
+<ol start="6">
+<li><strong>Translate.</strong> Rewrite the <code>MPU</code> constructor as a single <code>init_device_mesh</code> call and confirm the groups match for TP=2, PP=4, world=16.</li>
+</ol>
+<p><em>Part of a practical series on large-scale model training. Verified against PyTorch 2.13, Megatron Core 0.18, transformers v5, and DeepSpeed 0.18 in July 2026. Distributed APIs move quickly — where this document and your installed docs disagree, trust the docs.</em></p></div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

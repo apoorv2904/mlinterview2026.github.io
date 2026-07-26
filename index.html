@@ -84,6 +84,13 @@ body{
 }
 .tag.key{border-color:var(--cool);color:var(--cool)}
 
+/* series entry — marks a multi-page collection rather than a single note */
+.entry .kind{
+  display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--warm);border:1px solid var(--warm);
+  padding:1px 7px;border-radius:2px;margin-bottom:9px;
+}
+
 /* planned entries — same shape, no link */
 .entry.planned{cursor:default;opacity:.5}
 .entry.planned:hover{background:none}
@@ -118,7 +125,7 @@ footer a{color:var(--ink-2)}
   <h1>Interview notes</h1>
   <p class="standfirst">Notes on ML systems and research topics, written for recall under time pressure rather than for completeness. Every claim that can be a number is a number.</p>
   <div class="meta">
-    <span><b>2</b> published</span>
+    <span><b>3</b> published</span>
     <span><b>3</b> planned</span>
     <span>Updated <b>July 2026</b></span>
   </div>
@@ -149,6 +156,9 @@ footer a{color:var(--ink-2)}
   <a class="entry" href="..."> for <div class="entry planned"> and close
   with </div> instead of </a>.
 
+  For a multi-page series (its own index), add <span class="kind">Series</span>
+  as the first child of the inner <div>, before <h2> — see entry 03.
+
   Group headings are just <p class="group-label">Your heading</p>.
   Remember to bump the published/planned counts in the masthead.
 -->
@@ -169,8 +179,27 @@ footer a{color:var(--ink-2)}
   <span class="arrow" aria-hidden="true">&rarr;</span>
 </a>
 
-<div class="entry planned">
+<p class="group-label">Distributed training</p>
+
+<a class="entry" href="parallelisms.html">
   <span class="idx">03</span>
+  <div>
+    <span class="kind">Series &middot; 8 chapters</span>
+    <h2>Large-Scale Model Training</h2>
+    <p class="dek">Training models that don't fit on one GPU, in order: the communication primitives, then each axis of parallelism in turn, then composing them and making the result fast. Every chapter runnable and self-contained.</p>
+    <div class="tags">
+      <span class="tag key">parallelism</span>
+      <span class="tag">collectives</span>
+      <span class="tag">ZeRO / FSDP</span>
+      <span class="tag">pipeline</span>
+      <span class="tag">tensor</span>
+    </div>
+  </div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+</a>
+
+<div class="entry planned">
+  <span class="idx">04</span>
   <div>
     <h2>Paged attention and the KV cache</h2>
     <p class="dek">Why inference memory is a fragmentation problem rather than a bandwidth one, and what vLLM's block table actually buys.</p>
@@ -182,28 +211,15 @@ footer a{color:var(--ink-2)}
   <span class="arrow">Planned</span>
 </div>
 
-<p class="group-label">Training and optimisation</p>
+<p class="group-label">Numerics</p>
 
 <div class="entry planned">
-  <span class="idx">04</span>
+  <span class="idx">05</span>
   <div>
     <h2>Mixed precision, and what actually overflows</h2>
     <p class="dek">fp16 against bf16 against fp8, where the dynamic range runs out, and which accumulations have to stay in fp32.</p>
     <div class="tags">
       <span class="tag">numerics</span>
-      <span class="tag">training</span>
-    </div>
-  </div>
-  <span class="arrow">Planned</span>
-</div>
-
-<div class="entry planned">
-  <span class="idx">05</span>
-  <div>
-    <h2>Parallelism: data, tensor, pipeline, sequence</h2>
-    <p class="dek">What each one shards, what each one costs in communication, and how they compose in a real training run.</p>
-    <div class="tags">
-      <span class="tag">distributed</span>
       <span class="tag">training</span>
     </div>
   </div>

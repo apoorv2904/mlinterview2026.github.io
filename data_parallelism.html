@@ -1,0 +1,1452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Parallelism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Chapter 05</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <h1>Data Parallelism</h1>
+  <div class="ring-wrap">
+    <div class="pipe" aria-hidden="true">
+      <div class="pipe-row"><span class="pipe-lbl">backward</span><div class="pipe-cells"><div class="pc on" style="--d:0.00s"><span>&#8711;8</span></div><div class="pc on" style="--d:0.34s"><span>&#8711;7</span></div><div class="pc on" style="--d:0.68s"><span>&#8711;6</span></div><div class="pc on" style="--d:1.02s"><span>&#8711;5</span></div><div class="pc on" style="--d:1.36s"><span>&#8711;4</span></div><div class="pc on" style="--d:1.70s"><span>&#8711;3</span></div><div class="pc on" style="--d:2.04s"><span>&#8711;2</span></div><div class="pc on" style="--d:2.38s"><span>&#8711;1</span></div></div></div>
+      <div class="pipe-row"><span class="pipe-lbl">all&#8209;reduce</span><div class="pipe-cells"><div class="pc on" style="--d:0.54s"><span>shard 0</span></div><div class="pc on" style="--d:1.22s"><span>shard 1</span></div><div class="pc on" style="--d:1.90s"><span>shard 2</span></div><div class="pc on" style="--d:2.58s"><span>shard 3</span></div></div></div>
+    </div>
+    <p class="ring-cap"><span>Gradient bucketing &middot; backward runs right&#8202;&#8594;&#8202;left, each bucket all-reduces as it fills</span><span>computation &amp; communication overlap</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>Blocks marked <strong>📝 Note</strong> expand on something the main text assumes — the reasoning behind a design, a derivation, or a number worth internalizing.</li>
+<li>Blocks marked <strong>⚠️</strong> are traps: things that produce silently wrong results, silently slow results, or hangs. They are the parts most worth reading twice.</li>
+<li>Diagrams are ASCII so they survive copy-paste into a terminal, a code review, or a text editor.</li>
+<li>All code targets <strong>PyTorch 2.13</strong> (July 2026). See the <em>Version check</em> tab for exactly what was verified and when.
+<strong>Prerequisites:</strong> Familiarity with the collective operations — <code>scatter</code>, <code>gather</code>, <code>broadcast</code>, <code>reduce</code>, <code>all_reduce</code> — and with a single-GPU PyTorch training loop.</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-0-where-this-chapter-sits" aria-controls="pan-0-where-this-chapter-sits" aria-selected="false" tabindex="-1"><span class="num">02</span>0 · Where this sits</button><button class="tab" role="tab" id="t-1-torchnndataparallel" aria-controls="pan-1-torchnndataparallel" aria-selected="false" tabindex="-1"><span class="num">03</span>1 · DataParallel</button><button class="tab" role="tab" id="t-2-problems-with-torchnndataparallel" aria-controls="pan-2-problems-with-torchnndataparallel" aria-selected="false" tabindex="-1"><span class="num">04</span>2 · Its problems</button><button class="tab" role="tab" id="t-3-torchnnparalleldistributeddataparallel-henceforth-ddp" aria-controls="pan-3-torchnnparalleldistributeddataparallel-henceforth-ddp" aria-selected="false" tabindex="-1"><span class="num">05</span>3 · DDP</button><button class="tab" role="tab" id="t-4-the-production-version" aria-controls="pan-4-the-production-version" aria-selected="false" tabindex="-1"><span class="num">06</span>4 · Production version</button><button class="tab" role="tab" id="t-5-the-correctness-checklist" aria-controls="pan-5-the-correctness-checklist" aria-selected="false" tabindex="-1"><span class="num">07</span>5 · Correctness</button><button class="tab" role="tab" id="t-6-performance-tuning" aria-controls="pan-6-performance-tuning" aria-selected="false" tabindex="-1"><span class="num">08</span>6 · Tuning</button><button class="tab" role="tab" id="t-7-beyond-ddp--when-to-switch-to-fsdp" aria-controls="pan-7-beyond-ddp--when-to-switch-to-fsdp" aria-selected="false" tabindex="-1"><span class="num">09</span>7 · Beyond DDP</button><button class="tab" role="tab" id="t-8-quick-reference" aria-controls="pan-8-quick-reference" aria-selected="false" tabindex="-1"><span class="num">10</span>8 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">11</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">12</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">13</span>Exercises</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 13</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<li><a href="#0-where-this-chapter-sits">Where this chapter sits</a></li>
+<li><a href="#1-torchnndataparallel"><code>torch.nn.DataParallel</code></a></li>
+<li><a href="#2-problems-with-torchnndataparallel">Problems with <code>torch.nn.DataParallel</code></a></li>
+<li><a href="#3-torchnnparalleldistributeddataparallel-henceforth-ddp"><code>torch.nn.parallel.DistributedDataParallel</code></a></li>
+<li><a href="#4-the-production-version">The production version</a></li>
+<li><a href="#5-the-correctness-checklist">The correctness checklist</a></li>
+<li><a href="#6-performance-tuning">Performance tuning</a></li>
+<li><a href="#7-beyond-ddp--when-to-switch-to-fsdp">Beyond DDP — when to switch to FSDP</a></li>
+<li><a href="#8-quick-reference">Quick reference</a></li>
+</ol></div></section><section class="panel" id="pan-0-where-this-chapter-sits" role="tabpanel" aria-labelledby="t-0-where-this-chapter-sits" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 13</p><h2 id="0-where-this-chapter-sits">0. Where this chapter sits</h2></div><div class="body"><div class="note"><span class="tag">Note — the throughline from chapters 03 and 04</span>
+<p>Chapter 03 taught you <code>scatter</code>, <code>gather</code>, <code>broadcast</code>, <code>reduce</code>, and <code>all_reduce</code>. Chapter 04 said data parallelism is "<code>all_reduce</code> of gradients." This chapter shows you the two implementations PyTorch actually ships, and the interesting part is that <strong>they use different primitives</strong>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th><code>DataParallel</code></th>
+<th><code>DistributedDataParallel</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Split the batch</td>
+<td><code>scatter</code></td>
+<td><code>DistributedSampler</code> (no comm — each process reads its own slice)</td>
+</tr>
+<tr>
+<td>Distribute the model</td>
+<td><code>broadcast</code>, <strong>every step</strong></td>
+<td><code>broadcast</code> <strong>once</strong>, at construction</td>
+</tr>
+<tr>
+<td>Collect outputs</td>
+<td><code>gather</code> to GPU 0</td>
+<td>nothing — loss stays local</td>
+</tr>
+<tr>
+<td>Combine gradients</td>
+<td><code>reduce</code> to GPU 0</td>
+<td><strong><code>all_reduce</code></strong></td>
+</tr>
+<tr>
+<td>Update</td>
+<td>on GPU 0, then re-broadcast</td>
+<td>independently on every rank</td>
+</tr>
+</tbody>
+</table></div>
+<p>Read down the two columns and the entire design argument of this chapter is visible: <strong>DP has a master device, DDP does not.</strong> Replacing <code>reduce</code>-to-a-master with <code>all_reduce</code>-to-everyone is what removes the master, and removing the master is what removes the re-broadcast, the memory imbalance, and the single-process bottleneck all at once.</p>
+</div>
+<h1 id="data-parallelism">Data Parallelism</h1></div></section><section class="panel" id="pan-1-torchnndataparallel" role="tabpanel" aria-labelledby="t-1-torchnndataparallel" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 13</p><h2 id="1-torchnndataparallel">1. `torch.nn.DataParallel`</h2></div><div class="body"><p>First let's look at how the familiar <code>torch.nn.DataParallel</code> works. <code>torch.nn.DataParallel</code> is a <strong>multi-thread</strong> module that operates on a single node with multiple GPUs.</p>
+<h3 id="1-forward-pass">1) Forward Pass</h3>
+<ol>
+<li><strong>Scatter</strong> the input mini-batch and send the pieces to each device.</li>
+<li><strong>Broadcast</strong> the model parameters sitting on GPU-1 to GPUs 2, 3, 4.</li>
+<li><strong>Forward</strong> through the model replicated on each device to compute logits.</li>
+<li><strong>Gather</strong> the computed logits back onto GPU-1.</li>
+<li>Compute the <strong>loss</strong> from the logits (with loss reduction).</li>
+</ol>
+<div class="ascii-card"><pre>                          ┌── mini-batch (128) ──┐
+                          └──────────┬───────────┘
+                            1. scatter │
+              ┌──────────────┬────────┴────────┬──────────────┐
+              ▼              ▼                 ▼              ▼
+          ┌───────┐      ┌───────┐         ┌───────┐      ┌───────┐
+          │ GPU 0 │      │ GPU 1 │         │ GPU 2 │      │ GPU 3 │
+          │ 32 ex │      │ 32 ex │         │ 32 ex │      │ 32 ex │
+          └───┬───┘      └───┬───┘         └───┬───┘      └───┬───┘
+              │  ▲           │  ▲              │  ▲           │  ▲
+              │  └───────────┴──┴─ 2. broadcast model ────────┘  │
+              │              │                 │                 │
+              │  3. forward  │                 │                 │
+              ▼              ▼                 ▼                 ▼
+           logits         logits            logits            logits
+              └──────────────┴────────┬────────┴─────────────────┘
+                            4. gather │  ← all logits land on GPU 0
+                                      ▼
+                              ┌───────────────┐
+                              │ GPU 0: loss   │   5. loss (reduction)
+                              └───────────────┘
+                               ▲ this device now holds
+                                 4× the activations of the others</pre></div>
+<p>Expressed as code, it looks like this.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import torch.nn as nn
+
+def data_parallel(module, inputs, labels, device_ids, output_device):
+    inputs = nn.parallel.scatter(inputs, device_ids)
+    # Scatter the input data to device_ids
+
+    replicas = nn.parallel.replicate(module, device_ids)
+    # Replicate the model onto device_ids
+
+    logit = nn.parallel.parallel_apply(replicas, inputs)
+    # The model replicated on each device forwards that device&#x27;s data
+
+    logits = nn.parallel.gather(outputs, output_device)
+    # Collect the models&#x27; logits onto output_device (a single device)
+
+    return logits</pre></div>
+<div class="note"><span class="tag">Note — this snippet has a typo, and it&#x27;s instructive</span>
+<p><code>parallel_apply</code> returns into <code>logit</code>, but the next line gathers <code>outputs</code>, which is never defined. The intent is <code>nn.parallel.gather(logit, output_device)</code>. Worth noticing because the four function names are the real content here: <code>scatter</code>, <code>replicate</code>, <code>parallel_apply</code>, <code>gather</code> are exactly the chapter-03 collectives, exposed as a public API you can call yourself. <code>nn.DataParallel</code> is little more than these four lines in a <code>forward()</code>.</p>
+</div>
+<div class="note"><span class="tag">Note — replicate runs on every forward pass, and that is the expensive part</span>
+<p>Step 2 isn't a one-time setup cost. Every single iteration, the parameters updated on GPU 0 are copied to GPUs 1–3 before the forward can proceed. For BERT-base (110M params, 440 MB in fp32) across 4 GPUs, that's ~1.3 GB of PCIe traffic per step doing nothing but undoing the fact that only one device did the update. Hold onto this — it's problem #2 in §2.</p>
+</div>
+<h3 id="2-backward-pass">2) Backward Pass</h3>
+<ol>
+<li><strong>Scatter</strong> the computed loss to each device.</li>
+<li>Using the received loss, perform <strong>backward</strong> on each device to compute gradients.</li>
+<li><strong>Reduce</strong> all computed gradients onto GPU-1, summing them there.</li>
+<li>Update the model on GPU-1 using the summed gradients.</li>
+</ol>
+<div class="ascii-card"><pre>                              ┌───────────────┐
+                              │ GPU 0: loss   │
+                              └───────┬───────┘
+                            1. scatter │
+              ┌──────────────┬────────┴────────┬──────────────┐
+              ▼              ▼                 ▼              ▼
+          ┌───────┐      ┌───────┐         ┌───────┐      ┌───────┐
+          │backward│     │backward│        │backward│     │backward│   2.
+          └───┬───┘      └───┬───┘         └───┬───┘      └───┬───┘
+              │  ∇₀          │  ∇₁             │  ∇₂          │  ∇₃
+              └──────────────┴────────┬────────┴──────────────┘
+                            3. reduce │  ← sum onto GPU 0 only
+                                      ▼
+                            ┌────────────────────┐
+                            │ GPU 0: step()      │  4. only this device
+                            │ updates the model  │     has a valid model now
+                            └────────────────────┘
+                                      │
+                                      └──▶ must broadcast again next step</pre></div>
+<h4 id="for-anyone-who-doesnt-know">For anyone who doesn't know…</h4>
+<ul>
+<li><code>loss.backward()</code>: differentiates to compute the gradients.</li>
+<li><code>optimizer.step()</code>: updates the parameters using the computed gradients.</li>
+<li>Computation cost: <code>backward()</code> &gt; <code>step()</code>.</li>
+</ul>
+<div class="ascii-card"><pre>   relative cost of one training iteration
+
+   forward   ████████
+   backward  ████████████████████        ← roughly 2× forward
+   step      ███                         ← cheap: an elementwise update</pre></div>
+<div class="note"><span class="tag">Note — why &quot;backward() &gt; step()&quot; is the load-bearing fact of this chapter</span>
+<p>It looks like a throwaway remark. It isn't: it's the premise of the overlap argument in §3. <code>backward()</code> is a long, heavy, <em>incremental</em> computation, which means it offers a long window during which the network could be busy. <code>step()</code> is short and elementwise. If you want to hide communication behind computation, <code>backward()</code> is the only place with enough room to hide it.</p>
+<p>Roughly: backward costs about twice forward (it computes gradients w.r.t. both inputs and weights), while <code>step()</code> is a handful of elementwise operations over the parameters.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+dp_demo.py  —  single process, 4 GPUs.  Shown for contrast; do not use in production.
+&quot;&quot;&quot;
+import torch
+from torch import nn
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+ds = load_dataset(&quot;nyu-mll/multi_nli&quot;)[&quot;train&quot;]
+tok = AutoTokenizer.from_pretrained(&quot;bert-base-cased&quot;)
+
+def collate(batch):
+    enc = tok([b[&quot;premise&quot;] for b in batch], [b[&quot;hypothesis&quot;] for b in batch],
+              padding=True, truncation=True, max_length=128, return_tensors=&quot;pt&quot;)
+    enc[&quot;labels&quot;] = torch.tensor([b[&quot;label&quot;] for b in batch])
+    return enc
+
+# NOTE: batch_size here is the GLOBAL batch. DataParallel splits it internally.
+loader = DataLoader(ds, batch_size=128, collate_fn=collate, num_workers=4)
+
+model = AutoModelForSequenceClassification.from_pretrained(
+    &quot;bert-base-cased&quot;, num_labels=3
+).cuda()
+model = nn.DataParallel(model, device_ids=[0, 1, 2, 3], output_device=0)
+
+optimizer = AdamW(model.parameters(), lr=3e-5)
+
+for i, batch in enumerate(loader):
+    optimizer.zero_grad(set_to_none=True)
+    batch = {k: v.cuda() for k, v in batch.items()}
+    loss = model(**batch).loss    # shape (4,) — one loss per device
+    loss = loss.mean()            # -&gt; scalar; backward() requires this
+    loss.backward()
+    optimizer.step()</pre></div>
+</div>
+<div class="note"><span class="tag">Note — the one line that makes it data-parallel, and the one that trips people up</span>
+<p><code>nn.DataParallel(model, device_ids=[0,1,2,3])</code> is the whole change. That convenience is exactly why DP was popular, and why it survives in old code you will inherit.</p>
+<p>Two details to carry forward. First, <code>batch_size=128</code> here is the <strong>global</strong> batch, split 32-per-device internally — under DDP the same number means something different (§3), which is a genuine source of confusion when porting scripts. Second, <code>loss.mean()</code>: because the model returns one loss <em>per device</em>, what comes back is a tensor of shape <code>(4,)</code>, and <code>backward()</code> requires a scalar. Omitting it raises <code>grad can be implicitly created only for scalar outputs</code>, which is the most common error people hit the first time they wrap a Hugging Face model in <code>DataParallel</code>.</p>
+<div class="ascii-card"><pre>   nvidia-smi during DataParallel training
+
+   GPU 0  ██████████████████████████  22.1 GB   ← logits + loss + master model
+   GPU 1  ███████████                 9.4 GB
+   GPU 2  ███████████                 9.4 GB
+   GPU 3  ███████████                 9.4 GB
+                                      ▲ the imbalance the next paragraph is about</pre></div>
+<p>Training works fine on multiple GPUs. The problem, though, is that because logits pile up on GPU 0, a <strong>GPU memory imbalance</strong> occurs. You can mitigate this to some extent by changing the design so that what gets gathered onto device 0 is the <strong>loss</strong> rather than the logits — because compared to logits, a loss is a scalar and therefore far smaller. This is the same thing as <code>DataParallelCriterion</code> from <a href="https://github.com/zhanghang1989/PyTorch-Encoding">PyTorch-Encoding</a>, introduced in the <a href="https://medium.com/daangn/pytorch-multi-gpu-%ED%95%99%EC%8A%B5-%EC%A0%9C%EB%8C%80%EB%A1%9C-%ED%95%98%EA%B8%B0-27270617936b">Danggeun Market blog post</a>. It's explained in a fairly complicated way on that blog, but instead of the complicated approach you can implement the same functionality very easily just by <strong>overriding the forward function</strong>.</p>
+<div class="ascii-card"><pre>   Before: gather LOGITS            After: gather LOSS
+   ───────────────────────          ──────────────────────
+   [B/4, seq, vocab] per GPU        [1] per GPU
+        │                                │
+        ▼  gather                        ▼  gather
+   GPU 0 holds [B, seq, vocab]       GPU 0 holds [4]
+   = hundreds of MB → GBs            = 16 bytes</pre></div>
+<p>The key point is to make the loss computation and the loss reduction run <strong>inside the multi-thread region</strong>. Since the model's forward function is already running in multiple threads, if you put the loss computation inside the forward function it becomes very easy to implement.</p>
+<p>One peculiarity is that implementing it this way makes the loss reduction happen <strong>twice</strong>. Inside the multi-thread region a reduction from <code>batch_size//4</code> values down to 1 happens once (step 4 in the figure), and then the 4 losses emitted by each device get reduced to 1 again (step 5 in the figure). Even so, this is far more efficient, because the loss computation can be parallelized and the memory burden on GPU 0 is small.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/custom_data_parallel.py
+&quot;&quot;&quot;
+
+from torch import nn
+
+# an ordinary model that outputs logits
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(768, 3)
+
+    def forward(self, inputs):
+        outputs = self.linear(inputs)
+        return outputs
+
+# a parallel model that outputs the loss from the forward pass
+class ParallelLossModel(Model):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inputs, labels):
+        logits = super(ParallelLossModel, self).forward(inputs)
+        loss = nn.CrossEntropyLoss(reduction=&quot;mean&quot;)(logits, labels)
+        return loss</pre></div>
+</div>
+<div class="note"><span class="tag">Note — why the double reduction is harmless here, and when it wouldn&#x27;t be</span>
+<p><code>mean</code> of <code>mean</code>s equals the overall <code>mean</code> <strong>only when every group has the same size</strong>. With <code>batch_size=128</code> over 4 GPUs, each device gets exactly 32, so the two-stage mean is exact.</p>
+<p>It stops being exact on the last batch of an epoch, when the batch may not divide evenly — say 100 examples split as 25/25/25/25 is fine, but 99 split as 25/25/25/24 is not. The device with 24 examples contributes each of its examples with weight <code>1/24</code> instead of <code>1/25</code>, so those examples are slightly over-weighted in the final average.</p>
+<div class="ascii-card"><pre>   equal split:     mean(mean(32), mean(32), mean(32), mean(32)) == mean(128)   ✓
+   ragged split:    mean(mean(25), mean(25), mean(25), mean(24)) != mean(99)    ✗</pre></div>
+<p>In practice the error is tiny and everyone ignores it. But it is the same class of bug that bites much harder in DDP with variable-length sequences, where per-device token counts genuinely differ — there, if you want token-level averaging, you must sum the losses and all-reduce the token counts rather than averaging the averages.</p>
+<p>Fortunately, the Huggingface Transformers models we use often have the ability to compute the loss right in the forward pass built in. So we'll skip that step and use the transformers feature instead. The code below passes labels to the Transformers model's <code>labels</code> argument and gets the loss directly.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/efficient_data_parallel.py
+&quot;&quot;&quot;
+
+# 1 ~ 4 omitted...
+
+# 5. start training
+for i, data in enumerate(data_loader):
+    optimizer.zero_grad()
+    tokens = tokenizer(
+        data[&quot;premise&quot;],
+        data[&quot;hypothesis&quot;],
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_tensors=&quot;pt&quot;,
+    )
+
+    loss = model(
+        input_ids=tokens.input_ids.cuda(),
+        attention_mask=tokens.attention_mask.cuda(),
+        labels=data[&quot;labels&quot;],
+    ).loss
+
+    loss = loss.mean()
+    # (4,) -&gt; (1,)
+    loss.backward()
+    optimizer.step()
+
+    if i % 10 == 0:
+        print(f&quot;step:{i}, loss:{loss}&quot;)
+
+    if i == 300:
+        break</pre></div>
+</div>
+<div class="note"><span class="tag">Note — that loss.mean() is not cosmetic</span>
+<p>With DP, the model's <code>forward</code> now returns one loss <em>per device</em>, so what comes back is a tensor of shape <code>(4,)</code>, not a scalar. <code>backward()</code> requires a scalar. The <code>.mean()</code> is step 5 of the figure — the second reduction — written out explicitly. Omitting it raises <code>grad can be implicitly created only for scalar outputs</code>, which is one of the most common errors people hit the first time they wrap a Huggingface model in <code>DataParallel</code>.</p>
+</div></div></section><section class="panel" id="pan-2-problems-with-torchnndataparallel" role="tabpanel" aria-labelledby="t-2-problems-with-torchnndataparallel" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 13</p><h2 id="2-problems-with-torchnndataparallel">2. Problems with `torch.nn.DataParallel`</h2></div><div class="body"><div class="subnav"><a href="#1-its-a-multi-thread-module-which-is-inefficient-in-python">1) It's a multi-thread module, which is inefficient in Python.</a><a href="#2-the-model-updated-on-one-device-has-to-be-replicated-to-the-other-devices-at-every-step">2) The model updated on one device has to be replicated to the other devices at every step.</a><a href="#solution-all-reduce">Solution? ➝ All-reduce!! 👍</a><a href="#but">But… 🤔</a><a href="#the-reduce-broadcast-implementation">The Reduce + Broadcast implementation</a><a href="#the-all-to-all-implementation">The All-to-All implementation</a></div><h3 id="1-its-a-multi-thread-module-which-is-inefficient-in-python">1) It's a multi-thread module, which is inefficient in Python.</h3>
+<p>Because of the GIL (Global Interpreter Lock), Python cannot run multiple threads simultaneously within a single process. So fundamentally we need to build this as a <strong>multi-process program</strong> rather than a multi-threaded one, so that several processes can run at the same time.</p>
+<div class="note"><span class="tag">Note — what the GIL costs you concretely</span>
+<p>The GPU kernels themselves release the GIL, so the actual matmuls do overlap. What does <em>not</em> overlap is everything the Python interpreter must do to launch them: building the autograd graph, dispatching ~1,000+ operator calls per BERT forward, indexing tensors, and running the <code>replicate</code>/<code>scatter</code>/<code>gather</code> bookkeeping. With one process driving four GPUs, that Python work is serialized and becomes the bottleneck — the GPUs sit idle waiting to be fed.</p>
+<p>The practical consequence: <strong>DP typically delivers well under half the scaling of DDP on the same 4 GPUs</strong>, and the gap widens with more devices and with smaller models (smaller kernels = less GPU time to hide the Python overhead behind).</p>
+<div class="ascii-card"><pre>   4 GPUs, same model, same batch
+
+   ideal      ████████████████  4.0×
+   DDP        ██████████████    3.5× ish
+   DP         ██████            1.5–2.5× ish, model-dependent
+   1 GPU      ████              1.0×</pre></div>
+</div>
+<h3 id="2-the-model-updated-on-one-device-has-to-be-replicated-to-the-other-devices-at-every-step">2) The model updated on one device has to be replicated to the other devices at every step.</h3>
+<p>The current scheme gathers the gradients computed on each device onto a single device and updates there, so the updated model must be <strong>broadcast</strong> to the other devices every time — and that process is quite expensive. But if, instead of gathering the gradients, each device performed <code>step()</code> on its own, we wouldn't need to replicate the model every time. How can we implement that?</p>
+<h3 id="solution-all-reduce">Solution? ➝ All-reduce!! 👍</h3>
+<div class="ascii-card"><pre>   before all_reduce                    after all_reduce
+   GPU0: ∇₀                             GPU0: ∇₀+∇₁+∇₂+∇₃
+   GPU1: ∇₁            ═══════▶         GPU1: ∇₀+∇₁+∇₂+∇₃
+   GPU2: ∇₂                             GPU2: ∇₀+∇₁+∇₂+∇₃
+   GPU3: ∇₃                             GPU3: ∇₀+∇₁+∇₂+∇₃
+
+   every device now has the same gradient
+   → every device can run step() itself
+   → no device is special → nothing to broadcast</pre></div>
+<p>The answer is the all-reduce operation we learned earlier. If we sum the gradients computed on each device and distribute the result evenly to all devices, each device can run <code>step()</code> on its own. Then there's no need to copy the model from a particular device every time. So we should improve the existing approach by making use of all-reduce.</p>
+<div class="note"><span class="tag">Note — this is the pivotal paragraph of the chapter</span>
+<p>Read the causal chain once more, because it explains every design decision in DDP:</p>
+<div class="ascii-card"><pre>   use all_reduce instead of reduce
+        └─▶ every rank has identical gradients
+              └─▶ every rank runs an identical optimizer step
+                    └─▶ every rank has identical weights, always
+                          └─▶ no master, no re-broadcast, no memory imbalance,
+                              no single process bottleneck</pre></div>
+<p>The invariant at the end — <em>all replicas hold identical weights at the start of every step</em> — is what data parallelism actually rests on. DP maintains it by copying from a master. DDP maintains it by having every rank independently compute the same thing. The second is strictly better, and the only reason it works is that <code>all_reduce</code> gives everyone the same bytes.</p>
+</div>
+<h3 id="but">But… 🤔</h3>
+<p>However, all-reduce is a very expensive operation. Why is that? Let's look at how all-reduce is implemented in detail.</p>
+<h3 id="the-reduce-broadcast-implementation">The Reduce + Broadcast implementation</h3>
+<div class="ascii-card"><pre>   phase 1: reduce to master        phase 2: broadcast from master
+
+        ∇₀ ─┐                              ┌─▶ GPU0
+        ∇₁ ─┼──▶ ┌────────┐                ├─▶ GPU1
+        ∇₂ ─┼──▶ │ GPU 0  │ ──────────────▶┼─▶ GPU2
+        ∇₃ ─┘    │ sums   │                └─▶ GPU3
+                 └────────┘
+                     ▲
+        GPU 0 sends and receives (N−1)·D bytes.
+        Its link is the bottleneck; cost grows with N.</pre></div>
+<h3 id="the-all-to-all-implementation">The All-to-All implementation</h3>
+<div class="ascii-card"><pre>   every device sends its gradient to every other device,
+   then each sums locally
+
+        GPU0 ⇄ GPU1        each device sends D bytes to (N−1) peers
+         ⇅  ╳  ⇅           total traffic = N·(N−1)·D
+        GPU2 ⇄ GPU3        no master bottleneck, but traffic explodes as N²</pre></div>
+<div class="note"><span class="tag">Note — the scorecard, so the next section&#x27;s punchline lands</span>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th>Bytes sent per rank</th>
+<th>Bottleneck</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reduce + Broadcast</td>
+<td><code>(N−1)·D</code> <strong>on the master</strong>, ~0 elsewhere</td>
+<td>one device's link; grows linearly with <code>N</code></td>
+</tr>
+<tr>
+<td>All-to-All</td>
+<td><code>(N−1)·D</code> on every rank</td>
+<td>total traffic grows as <code>N²</code></td>
+</tr>
+<tr>
+<td><strong>Ring all-reduce</strong></td>
+<td><code>2·(N−1)/N·D</code> ≈ <strong><code>2D</code></strong></td>
+<td>none — <strong>independent of <code>N</code></strong></td>
+</tr>
+</tbody>
+</table></div>
+<p>Both naive schemes get worse as you add GPUs, which is fatal for a technique whose entire purpose is adding GPUs. The next section's algorithm is the fix.</p>
+</div></div></section><section class="panel" id="pan-3-torchnnparalleldistributeddataparallel-henceforth-ddp" role="tabpanel" aria-labelledby="t-3-torchnnparalleldistributeddataparallel-henceforth-ddp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="3-torchnnparalleldistributeddataparallel-henceforth-ddp">3. `torch.nn.parallel.DistributedDataParallel` (henceforth DDP)</h2></div><div class="body"><div class="subnav"><a href="#ring-all-reduce">Ring All-reduce 💍</a><a href="#what-is-ddp">What is DDP?</a><a href="#but-wait-when-is-the-best-time-to-run-the-all-reduce">But wait — when is the best time to run the all-reduce?</a><a href="#in-the-end-overlapping-backward-and-all-reduce-is-better">In the end, overlapping backward() and all-reduce is better.</a><a href="#questions-that-might-come-up-here">Questions that might come up here…</a><a href="#gradient-bucketing">Gradient Bucketing</a></div><h3 id="ring-all-reduce">Ring All-reduce 💍</h3>
+<p>Ring all-reduce is a new operation developed by Baidu researchers in 2017. It showed dramatically better performance than the existing approaches, and so became the core of DDP's development.</p>
+<ul>
+<li>https://github.com/baidu-research/baidu-allreduce</li>
+</ul>
+<p><em>(diagram: <code>../images/ring_allreduce.gif</code> and <code>../images/ring_allreduce.png</code>)</em></p>
+<div class="ascii-card"><pre>   Arrange the ranks in a ring. Split each gradient tensor into N chunks.
+
+              ┌──────▶ GPU0 ──────▶ GPU1 ──────┐
+              │                                 ▼
+            GPU3 ◀────────────────────────── GPU2
+
+   Phase 1 — reduce-scatter (N−1 steps)
+     each step: send one chunk right, add the chunk you receive
+     after N−1 steps: rank i holds the fully-summed chunk i
+
+   Phase 2 — all-gather (N−1 steps)
+     circulate the finished chunks around the ring
+     after N−1 steps: everyone holds every finished chunk
+
+   Bytes per rank = 2·(N−1)/N·D  →  ≈ 2D, CONSTANT in N
+   Every link is busy the whole time; no device is special.</pre></div>
+<div class="note"><span class="tag">Note — the identity from chapter 03, made concrete</span>
+<p>That two-phase structure is exactly</p>
+<div class="ascii-card"><pre>   all_reduce  =  reduce_scatter  +  all_gather</pre></div>
+<p>which chapter 03 introduced as an algebraic curiosity. It isn't a curiosity — it <em>is</em> the implementation. And it explains the factor of 2 in the cost: an all-reduce moves twice what either half moves alone, which is the reason ZeRO-2 (chapter 08) can halve gradient communication by keeping only the reduce-scatter half.</p>
+<p>You will not implement this yourself. NCCL picks ring or tree automatically based on message size and topology — ring for large tensors (bandwidth-optimal), tree for small ones (latency-optimal, <code>O(log N)</code> depth instead of <code>2(N−1)</code> steps). This is also why bucketing matters so much: it converts many latency-bound small reductions into a few bandwidth-bound large ones.</p>
+</div>
+<h3 id="what-is-ddp">What is DDP?</h3>
+<p>DDP is a data-parallel-processing module that appeared to fix the problems of the existing DataParallel. It is a <strong>multi-process</strong> module that works on single/multi-node with multiple GPUs. Because it uses all-reduce, the concept of a master process disappears, so the training process becomes very simple.</p>
+<div class="ascii-card"><pre>   ┌── process 0 ──┐ ┌── process 1 ──┐ ┌── process 2 ──┐ ┌── process 3 ──┐
+   │   GPU 0       │ │   GPU 1       │ │   GPU 2       │ │   GPU 3       │
+   │   own data    │ │   own data    │ │   own data    │ │   own data    │
+   │   forward     │ │   forward     │ │   forward     │ │   forward     │
+   │   backward    │ │   backward    │ │   backward    │ │   backward    │
+   └───────┬───────┘ └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+           └─────────────────┴────── all_reduce ┴────────────────┘
+   ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+   │   step()      │ │   step()      │ │   step()      │ │   step()      │
+   └───────────────┘ └───────────────┘ └───────────────┘ └───────────────┘
+
+   Symmetric. Every process runs the same code. No rank is special.</pre></div>
+<div class="note"><span class="tag">Note — where the batch splitting went</span>
+<p>DP <em>scattered</em> the batch at runtime, which meant one process had to read all 128 examples and then ship them out. DDP has no such step: each process independently loads only the examples assigned to it. That's what <code>DistributedSampler</code> does — it's a sampler, not a collective. It deterministically partitions the index space so that rank <code>i</code> reads indices <code>i, i+N, i+2N, …</code>, with no communication at all.</p>
+<p>This is a small design detail with a large consequence: <strong>data loading also parallelizes</strong>, whereas under DP the single process's dataloader was a shared bottleneck.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+ddp.py  —  torchrun --standalone --nproc_per_node=4 ddp.py
+&quot;&quot;&quot;
+import os
+
+import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import AdamW
+from torch.utils.data import DataLoader, DistributedSampler
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+# 1. initialize the process group.  set_device FIRST, then init.
+local_rank = int(os.environ[&quot;LOCAL_RANK&quot;])
+torch.cuda.set_device(local_rank)
+dist.init_process_group(&quot;nccl&quot;, device_id=torch.device(f&quot;cuda:{local_rank}&quot;))
+rank, world_size = dist.get_rank(), dist.get_world_size()
+
+# 2. dataset
+ds = load_dataset(&quot;nyu-mll/multi_nli&quot;)[&quot;train&quot;]
+tok = AutoTokenizer.from_pretrained(&quot;bert-base-cased&quot;)
+
+def collate(batch):
+    enc = tok([b[&quot;premise&quot;] for b in batch], [b[&quot;hypothesis&quot;] for b in batch],
+              padding=True, truncation=True, max_length=128, return_tensors=&quot;pt&quot;)
+    enc[&quot;labels&quot;] = torch.tensor([b[&quot;label&quot;] for b in batch])
+    return enc
+
+# 3. DistributedSampler partitions the index space — no communication involved
+sampler = DistributedSampler(ds, num_replicas=world_size, rank=rank,
+                             shuffle=True, drop_last=True)
+loader = DataLoader(ds, batch_size=32,          # PER PROCESS, not global
+                    sampler=sampler, collate_fn=collate,
+                    num_workers=4, pin_memory=True, drop_last=True)
+
+# 4. model
+model = AutoModelForSequenceClassification.from_pretrained(
+    &quot;bert-base-cased&quot;, num_labels=3
+).to(local_rank)
+model = DDP(model, device_ids=[local_rank], bucket_cap_mb=25)
+
+optimizer = AdamW(model.parameters(), lr=3e-5, fused=True)
+
+# 5. train
+try:
+    for epoch in range(3):
+        sampler.set_epoch(epoch)                # NOT optional — see the note below
+        for batch in loader:
+            optimizer.zero_grad(set_to_none=True)
+            batch = {k: v.to(local_rank, non_blocking=True) for k, v in batch.items()}
+            with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+                loss = model(**batch).loss
+            loss.backward()                     # all_reduce happens in here, overlapped
+            optimizer.step()
+finally:
+    dist.destroy_process_group()</pre></div>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ torchrun --standalone --nproc_per_node=4 ddp.py</pre></div>
+</div>
+<div class="note"><span class="tag">Note — batch_size=32 here, batch_size=128 in the DP script. This is the single most important line to understand when porting</span>
+<p>Under DDP, <code>batch_size</code> is <strong>per process</strong>. The global batch is:</p>
+<div class="ascii-card"><pre>global_batch = batch_size × world_size × grad_accumulation_steps
+             = 32 × 4 × 1 = 128</pre></div>
+<p>So both scripts above train on the same global batch of 128 — deliberately. But this trips up almost everyone at least once: taking a single-GPU script with <code>batch_size=128</code> and launching it on 8 GPUs silently gives you a <strong>global batch of 1,024</strong>, an 8× effective change, which usually needs a learning-rate change too (chapter 04's linear scaling rule). Nothing errors. The loss curve just looks different and you don't know why.</p>
+</div>
+<div class="note"><span class="tag">Note — no .mean() this time, and no loss_fn</span>
+<p>Compare to the DP loop: DP needed <code>loss.mean()</code> because forward returned one loss per device. Under DDP each process computes exactly one scalar loss for its own shard, so <code>backward()</code> works directly. Notice too that <strong>no all-reduce appears anywhere in this loop</strong> — DDP registers autograd hooks at construction time, so the gradient synchronization happens invisibly inside <code>loss.backward()</code>. That invisibility is the point of §3's final part.</p>
+</div>
+<div class="warn"><span class="tag">Three lines in that script that are silently wrong if you omit them</span><p>Every one of these produces a job that runs, converges, and is quietly worse or less portable. None of them errors.</p>
+<ol>
+<li><strong><code>sampler.set_epoch(epoch)</code>.</strong> <code>DistributedSampler</code> derives its shuffle from an internal epoch counter that defaults to 0 and <strong>never advances on its own</strong>. Without this call every epoch sees the data in the identical order — a real quality regression that is very hard to spot, because nothing about the run looks unusual.</li>
+<li><strong><code>LOCAL_RANK</code>, not <code>rank</code>, for <code>set_device</code>.</strong> On node 1 of a 2-node job, <code>rank</code> is 4–7 but the node only has <code>cuda:0</code>–<code>cuda:3</code>. Single-node code that uses <code>rank</code> works fine right up until you add a second node.</li>
+<li><strong><code>dist.destroy_process_group()</code> in a <code>finally</code>.</strong> Leaves NCCL communicators dangling otherwise; recent PyTorch warns on exit and it can hang at shutdown. A crashing rank should not take the rest of the job's teardown with it.</li>
+</ol>
+<p>Two smaller ones: call <code>set_device</code> <strong>before</strong> <code>init_process_group</code>, or ranks can bind to device 0 and hang; and pass <code>drop_last=True</code> to both the sampler and the loader, or ranks can run different numbers of steps and deadlock on a collective nobody else joins.</p>
+<p>On launching: since PyTorch 2.12, plain <code>torchrun --nproc_per_node=4 script.py</code> — with neither <code>--standalone</code> nor <code>--master-port</code> — picks an <strong>OS-assigned free port</strong> rather than hard-coding 29500, which stops concurrent jobs colliding with "Address already in use". <code>--standalone</code> is unaffected.</p></div>
+<h3 id="but-wait-when-is-the-best-time-to-run-the-all-reduce">But wait — when is the best time to run the all-reduce?</h3>
+<ul>
+<li>Is it better to do the all-reduce together with the <code>backward()</code> computation?</li>
+<li>Or after <code>backward()</code> is completely finished, before <code>step()</code> begins?</li>
+</ul>
+<div class="ascii-card"><pre>   Option A — sequential: wait for all gradients, then communicate
+
+   compute  ████████████████████                        (backward)
+   network                      ████████████            (all_reduce)
+            └──────────── total ────────────────────┘   GPU idle during comm
+
+   Option B — overlapped: communicate each bucket as it fills
+
+   compute  ████████████████████                        (backward)
+   network      ███  ███  ███  ██                       (all_reduce per bucket)
+            └───────── total ──────┘                    both busy at once</pre></div>
+<h3 id="in-the-end-overlapping-backward-and-all-reduce-is-better">In the end, overlapping <code>backward()</code> and <code>all-reduce</code> is better.</h3>
+<p>Overlapping <code>backward()</code> and <code>all-reduce</code> turns out to be the most efficient approach. <code>all_reduce</code> is network communication while <code>backward()</code>, <code>step()</code> and so on are GPU computation, so they can be processed at the same time. Overlapping them — i.e. making computation and communication overlap as much as possible — greatly increases computational efficiency.</p>
+<p>From the analysis, comparing <code>backward()</code> and <code>step()</code>, <code>backward()</code> was by far the heavier operation.</p>
+<p>Naturally, the heavier the operation you overlap with, the shorter the total training time. The analysis showed that performing <code>all-reduce</code> alongside <code>backward()</code> was much faster than waiting for <code>backward()</code> to finish.</p>
+<div class="note"><span class="tag">Note — why backward() and not step() is the thing to hide behind</span>
+<p>This is the payoff of the "backward &gt; step" remark from §1. You can only overlap communication with computation that is (a) long enough to hide it and (b) <em>incremental</em>, so partial results become available early. <code>backward()</code> satisfies both: it takes roughly twice as long as forward, and it produces gradients layer by layer. <code>step()</code> satisfies neither — it's short, and it can't start until all gradients exist anyway.</p>
+<p>There's a subtlety worth naming: on NCCL, "overlap" doesn't mean threads. Collectives are enqueued on a separate CUDA stream, and the copy engines / NIC operate independently of the SMs running your backward kernels. The overlap is at the hardware level, which is why it's nearly free when it works.</p>
+</div>
+<h3 id="questions-that-might-come-up-here">Questions that might come up here…</h3>
+<ul>
+<li><strong>Q1: During the <code>backward()</code> computation, the gradients haven't all been computed yet — how can you run <code>all-reduce</code>?</strong></li>
+<li>A1: Because <code>backward()</code> proceeds sequentially starting from the later layers, you can send the layers whose computation has finished first.</li>
+</ul>
+<ul>
+<li><strong>Q2: Then how often do you run <code>all-reduce</code>? Does it happen per layer?</strong></li>
+<li>A2: No. It performs <strong>gradient bucketing</strong>. When a bucket is full, it runs all-reduce.</li>
+</ul>
+<div class="note"><span class="tag">Note — why per-layer all-reduce would be a disaster</span>
+<p>BERT-base has ~200 parameter tensors. Firing 200 separate all-reduces means paying the fixed latency cost 200 times, on messages far too small to reach peak bandwidth. Every collective has a startup cost (kernel launch, NCCL handshake, network round trip) of order tens of microseconds; a 4 KB bias vector's all-reduce is essentially 100% overhead.</p>
+<div class="ascii-card"><pre>   200 tiny all-reduces:  ▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌  mostly latency, near-zero bandwidth
+   8 bucketed all-reduces: ████ ████ ████ ████   latency amortized, full bandwidth</pre></div>
+</div>
+<h3 id="gradient-bucketing">Gradient Bucketing</h3>
+<p>Gradient bucketing is a scheme that stores gradients in buckets of a fixed size and sends them to the other processes when a bucket fills up. During the <code>backward()</code> computation, the gradients computed starting from the back are stored in a bucket in order, and when the bucket's capacity is full it performs all-reduce to deliver the sum of the gradients to each device. This may be confusing because of the figure, but what gets stored in the bucket is <strong>not the model's parameters</strong> but the gradients output at that layer. Every bucket has a fixed size, and you can set the capacity in megabytes via the <code>bucket_size_mb</code> argument.</p>
+<div class="ascii-card"><pre>   backward proceeds right → left (output layer first)
+
+   layers:   [ 1 ][ 2 ][ 3 ][ 4 ][ 5 ][ 6 ][ 7 ][ 8 ]
+                                              ◀────── backward starts here
+
+   grads arrive:                          g8 g7 g6 g5 g4 g3 g2 g1
+                                          └─bucket 0─┘└─bucket 1─┘ …
+                                                │            │
+                                          all_reduce   all_reduce
+                                          fires as soon as a bucket is full,
+                                          while earlier layers still compute</pre></div>
+<div class="warn"><span class="tag">the argument is `bucket_cap_mb`, not `bucket_size_mb`</span><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>model = DistributedDataParallel(model, device_ids=[local_rank], bucket_cap_mb=25)</pre></div>
+<p>The default is 25 MB. Tuning guidance:</p>
+<ul>
+<li><strong>Slow interconnect (Ethernet, no NVLink):</strong> larger buckets (50–100 MB) amortize latency better.</li>
+<li><strong>Fast interconnect:</strong> smaller buckets start communicating earlier, improving overlap.</li>
+<li>It rarely moves the needle more than a few percent. Profile before spending time here.</li>
+</ul></div>
+<div class="note"><span class="tag">Note — the one ordering assumption bucketing makes, and how it breaks</span>
+<p>DDP builds its buckets in <em>reverse</em> parameter-registration order, on the assumption that this approximates the order gradients will actually become ready. That assumption holds for ordinary feed-forward models. It breaks when:</p>
+<ul>
+<li>some parameters get no gradient on some steps (conditional branches, unused heads) — DDP waits forever for a bucket that will never fill. This is what <code>find_unused_parameters=True</code> fixes, at the cost of traversing the autograd graph every iteration to detect it.</li>
+<li>the model has genuinely dynamic control flow, where the ready-order changes step to step.</li>
+</ul>
+<p>Prefer restructuring the model over enabling <code>find_unused_parameters</code>. If you must enable it, know that you're paying for it on every single iteration.</p>
+</div></div></section><section class="panel" id="pan-4-the-production-version" role="tabpanel" aria-labelledby="t-4-the-production-version" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 13</p><h2 id="4-the-production-version">4. The production version</h2></div><div class="body"><p>The script in §3 is correct but minimal. A real job needs logging, checkpointing, gradient clipping, and usually gradient accumulation. Here is the same training loop with those added — and the reasoning for each addition in the table below it.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+ddp_production.py  —  torchrun --standalone --nproc_per_node=4 ddp_production.py
+&quot;&quot;&quot;
+
+import os
+
+import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import AdamW
+from torch.utils.data import DataLoader, DistributedSampler
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+EPOCHS = 3
+
+def setup():
+    local_rank = int(os.environ[&quot;LOCAL_RANK&quot;])
+    torch.cuda.set_device(local_rank)          # BEFORE init_process_group
+    dist.init_process_group(
+        backend=&quot;nccl&quot;,
+        device_id=torch.device(f&quot;cuda:{local_rank}&quot;),   # eager init, clearer errors
+    )
+    return local_rank, dist.get_rank(), dist.get_world_size()
+
+def main():
+    local_rank, rank, world_size = setup()
+    is_main = rank == 0
+
+    # ---- data: index by NAME, not by column position
+    ds = load_dataset(&quot;nyu-mll/multi_nli&quot;)[&quot;train&quot;]
+
+    tok = AutoTokenizer.from_pretrained(&quot;bert-base-cased&quot;)     # fast tokenizer
+
+    def collate(batch):
+        enc = tok(
+            [b[&quot;premise&quot;] for b in batch],
+            [b[&quot;hypothesis&quot;] for b in batch],
+            padding=True, truncation=True, max_length=128, return_tensors=&quot;pt&quot;,
+        )
+        enc[&quot;labels&quot;] = torch.tensor([b[&quot;label&quot;] for b in batch])
+        return enc
+
+    sampler = DistributedSampler(
+        ds, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True
+    )
+    loader = DataLoader(
+        ds, batch_size=32, sampler=sampler, collate_fn=collate,
+        num_workers=4, pin_memory=True, persistent_workers=True, drop_last=True,
+    )
+
+    # ---- model
+    model = AutoModelForSequenceClassification.from_pretrained(
+        &quot;bert-base-cased&quot;, num_labels=3
+    ).to(local_rank)
+    model = DDP(model, device_ids=[local_rank], bucket_cap_mb=25)
+
+    optimizer = AdamW(model.parameters(), lr=3e-5)
+    scaler = torch.amp.GradScaler(&quot;cuda&quot;)
+
+    try:
+        for epoch in range(EPOCHS):
+            sampler.set_epoch(epoch)           # &lt;-- reshuffles each epoch. NOT optional.
+            model.train()
+
+            for step, batch in enumerate(loader):
+                batch = {k: v.to(local_rank, non_blocking=True) for k, v in batch.items()}
+
+                optimizer.zero_grad(set_to_none=True)
+                with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+                    loss = model(**batch).loss
+
+                scaler.scale(loss).backward()  # all_reduce happens in here, overlapped
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+
+                if step % 50 == 0:
+                    # loss is this rank&#x27;s LOCAL loss; reduce it before logging
+                    reported = loss.detach().clone()
+                    dist.all_reduce(reported, op=dist.ReduceOp.AVG)
+                    if is_main:
+                        print(f&quot;epoch {epoch} step {step} loss {reported.item():.4f}&quot;)
+
+            if is_main:
+                # save the UNWRAPPED module, from one rank only
+                torch.save(model.module.state_dict(), f&quot;ckpt_{epoch}.pt&quot;)
+            dist.barrier()                     # others wait for the write to finish
+    finally:
+        dist.destroy_process_group()
+
+if __name__ == &quot;__main__&quot;:
+    main()</pre></div>
+<div class="note"><span class="tag">Note — what each addition buys you</span>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LOCAL_RANK</code> for <code>set_device</code></td>
+<td>The only value that is a valid device index on every node</td>
+</tr>
+<tr>
+<td><code>set_device</code> <strong>before</strong> <code>init_process_group</code></td>
+<td>Otherwise ranks can bind to device 0 and hang or OOM</td>
+</tr>
+<tr>
+<td><code>device_id=</code> in <code>init_process_group</code></td>
+<td>Eager NCCL init — failures surface here, not at a confusing later collective</td>
+</tr>
+<tr>
+<td><code>sampler.set_epoch(epoch)</code></td>
+<td>Without it the shuffle never changes across epochs</td>
+</tr>
+<tr>
+<td><code>drop_last=True</code> on both sampler and loader</td>
+<td>Guarantees every rank runs the <em>same number</em> of steps. Uneven step counts hang the job — some ranks call an all-reduce nobody else joins</td>
+</tr>
+<tr>
+<td><code>collate_fn</code> instead of tokenizing in the loop</td>
+<td>Tokenization moves into the worker processes, off the training thread</td>
+</tr>
+<tr>
+<td><code>AutoTokenizer</code></td>
+<td>Rust-backed fast tokenizer; often a large fraction of step time in this script</td>
+</tr>
+<tr>
+<td><code>torch.autocast</code> + <code>GradScaler</code></td>
+<td>bf16/fp16 compute — typically 2–3× throughput on modern GPUs</td>
+</tr>
+<tr>
+<td><code>zero_grad(set_to_none=True)</code></td>
+<td>Frees the gradient buffers rather than filling them with zeros</td>
+</tr>
+<tr>
+<td><code>clip_grad_norm_</code> after <code>unscale_</code></td>
+<td>Clipping must see true, unscaled gradients</td>
+</tr>
+<tr>
+<td><code>all_reduce(..., AVG)</code> before logging</td>
+<td><code>loss</code> on rank 0 is rank 0's shard only, not the global loss</td>
+</tr>
+<tr>
+<td><code>model.module.state_dict()</code></td>
+<td>Saving the DDP wrapper prefixes every key with <code>module.</code> and breaks single-GPU loading</td>
+</tr>
+<tr>
+<td><code>barrier()</code> after saving</td>
+<td>Stops other ranks racing ahead into a partially written file</td>
+</tr>
+<tr>
+<td><code>try/finally</code> + <code>destroy_process_group()</code></td>
+<td>A crashing rank shouldn't leave the rest hanging</td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<div class="note"><span class="tag">Note — the no_sync() idiom, for gradient accumulation</span>
+<p>If you accumulate over <code>k</code> micro-steps, DDP would otherwise all-reduce on every one of them — <code>k×</code> the necessary communication. Suppress it on all but the last:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import contextlib
+
+for i, batch in enumerate(loader):
+    is_last = (i + 1) % accum == 0
+    ctx = contextlib.nullcontext() if is_last else model.no_sync()
+    with ctx:
+        loss = model(**batch).loss / accum
+        loss.backward()          # gradients accumulate locally; no all_reduce
+    if is_last:
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)</pre></div>
+<p>Note the <code>/ accum</code>: without it you're effectively multiplying the learning rate by <code>k</code>.</p>
+</div></div></section><section class="panel" id="pan-5-the-correctness-checklist" role="tabpanel" aria-labelledby="t-5-the-correctness-checklist" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 13</p><h2 id="5-the-correctness-checklist">5. The correctness checklist</h2></div><div class="body"><p>Data-parallel bugs are mostly silent. The job runs, the loss goes down, and the result is quietly worse than the single-GPU baseline. These are the ones that actually happen:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Loss curve differs from 1-GPU run</td>
+<td>Global batch changed but LR didn't</td>
+<td>Linear scaling rule + warmup</td>
+</tr>
+<tr>
+<td>Every epoch learns the same thing</td>
+<td><code>sampler.set_epoch()</code> missing</td>
+<td>Call it at the top of each epoch</td>
+</tr>
+<tr>
+<td>Job hangs at a random step</td>
+<td>Ranks ran different numbers of steps</td>
+<td><code>drop_last=True</code>; make control flow rank-independent</td>
+</tr>
+<tr>
+<td>Job hangs, no error, ~10 min later a NCCL timeout</td>
+<td>A rank-conditional collective</td>
+<td>Every rank must call every collective, same order</td>
+</tr>
+<tr>
+<td>Checkpoint won't load on 1 GPU</td>
+<td>Saved the DDP wrapper</td>
+<td><code>model.module.state_dict()</code></td>
+</tr>
+<tr>
+<td>Corrupted checkpoint</td>
+<td>No barrier after rank-0 save</td>
+<td><code>dist.barrier()</code> after saving</td>
+</tr>
+<tr>
+<td>Logged loss looks noisy/wrong</td>
+<td>Reporting one rank's local loss</td>
+<td><code>all_reduce</code> with <code>ReduceOp.AVG</code> first</td>
+</tr>
+<tr>
+<td>Slower than 1 GPU</td>
+<td>DP not DDP; or TP-style comm over Ethernet; or tiny model</td>
+<td>Check you're using DDP; profile</td>
+</tr>
+<tr>
+<td>Validation metrics inconsistent across ranks</td>
+<td>Uneven eval shards</td>
+<td>Gather counts and totals, or evaluate on rank 0</td>
+</tr>
+<tr>
+<td><code>find_unused_parameters</code> error on step 1</td>
+<td>Some params get no grad</td>
+<td>Restructure model, or enable the flag knowingly</td>
+</tr>
+</tbody>
+</table></div>
+<div class="rulebox"><span class="tag">The cardinal rule, restated from chapter 03</span><p><strong>Every rank must call every collective, in the same order, with matching shapes and dtypes.</strong></p>
+<p>Under DDP this is mostly handled for you — until you add your own <code>all_reduce</code> for metrics, or an early <code>break</code>, or a rank-conditional validation pass. Then it's yours to get right.</p></div>
+<div class="note"><span class="tag">Note — the reproducibility question people always ask</span>
+<p>DDP is <em>not</em> bitwise reproducible run-to-run by default, and that's expected. Floating-point addition isn't associative, and NCCL may choose different reduction orders depending on message size and topology. Two "identical" runs will diverge after a few thousand steps. If you need determinism, you need <code>torch.use_deterministic_algorithms(True)</code>, fixed seeds per rank, and a fixed NCCL algorithm — and you will pay for it in speed. For ordinary training the drift is harmless.</p>
+</div>
+<div class="note"><span class="tag">Note — seeding, which is subtler than it looks</span>
+<p>You want:</p>
+<ul>
+<li><strong>Identical</strong> model initialization across ranks — DDP handles this by broadcasting parameters from rank 0 at construction, so you don't have to.</li>
+<li><strong>Different</strong> data order per rank — <code>DistributedSampler</code> handles this.</li>
+<li><strong>Different</strong> dropout masks per rank — arguably desirable; set <code>torch.manual_seed(base_seed + rank)</code> if you care.</li>
+</ul>
+<p>The common mistake is seeding everything identically and then wondering why dropout is correlated across replicas.</p>
+</div></div></section><section class="panel" id="pan-6-performance-tuning" role="tabpanel" aria-labelledby="t-6-performance-tuning" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 13</p><h2 id="6-performance-tuning">6. Performance tuning</h2></div><div class="body"><p>Roughly in order of how much they usually matter:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Lever</th>
+<th>Typical gain</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Mixed precision</strong> (bf16)</td>
+<td>2–3×</td>
+<td>Biggest single win. bf16 needs no <code>GradScaler</code> on modern GPUs</td>
+</tr>
+<tr>
+<td><strong>Fix the dataloader</strong></td>
+<td>often 1.5×+</td>
+<td><code>num_workers</code>, <code>pin_memory</code>, <code>persistent_workers</code>, tokenize in <code>collate_fn</code></td>
+</tr>
+<tr>
+<td><strong><code>torch.compile</code></strong></td>
+<td>1.1–1.5×</td>
+<td>Compile <em>before</em> wrapping in DDP; DDP has a compiled path</td>
+</tr>
+<tr>
+<td><strong>Larger per-device batch</strong></td>
+<td>varies</td>
+<td>Fewer, bigger kernels; better GPU utilization</td>
+</tr>
+<tr>
+<td><strong>Gradient accumulation + <code>no_sync</code></strong></td>
+<td>comm-bound only</td>
+<td>Raises global batch without more communication</td>
+</tr>
+<tr>
+<td><strong><code>bucket_cap_mb</code></strong></td>
+<td>few %</td>
+<td>Larger on slow links, smaller on fast ones</td>
+</tr>
+<tr>
+<td><strong>DDP comm hooks</strong></td>
+<td>comm-bound only</td>
+<td>bf16 gradient compression, PowerSGD</td>
+</tr>
+<tr>
+<td><strong><code>gradient_as_bucket_view=True</code></strong></td>
+<td>memory</td>
+<td>Avoids a copy between gradients and bucket buffers</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note"><span class="tag">Note — DDP communication hooks</span>
+<p>You can replace the default all-reduce with a custom one:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed.algorithms.ddp_comm_hooks import default_hooks as hooks
+
+# communicate gradients in bf16 instead of fp32 — halves gradient traffic
+model.register_comm_hook(state=None, hook=hooks.bf16_compress_hook)</pre></div>
+<p>There's also <code>powerSGD_hook</code> for aggressive low-rank gradient compression, which can cut communication by an order of magnitude at some cost in convergence. Only worth reaching for when you have <em>measured</em> that you're communication-bound — on a single NVLink node you almost never are.</p>
+</div>
+<div class="note"><span class="tag">Note — two newer things worth knowing about the layer underneath all of this</span>
+<p><strong>Differentiable collectives</strong> (PyTorch 2.11). Chapter 07 will show you Megatron hand-writing <code>torch.autograd.Function</code>s so that a forward <code>all_reduce</code> has an identity backward and vice versa. PyTorch now ships that natively — collectives that participate in autograd directly, no wrapper class required. If you are writing custom parallel layers, check these before rolling your own adjoint pairs.</p>
+<p><strong>torchcomms</strong> (landed 2.13). A new communications <em>backend layer</em>. <code>c10d</code> — <code>init_process_group</code>, <code>all_reduce</code>, <code>ProcessGroup</code> — remains the surface you write against and isn't going anywhere soon. What torchcomms replaces is the layer beneath: instead of a single generic <code>ProcessGroup</code>, you get a communicator object that owns setup, split, finalize, window/RMA operations, and backend-specific hints. The motivations are the ones this chapter's failure modes hint at — fault tolerance at 100k+ GPU scale, heterogeneous hardware, one-sided communication, and eager (rather than lazy) communicator setup. It ships with NCCL, RCCL, Gloo, and NCCLX backends and integrates with <code>DeviceMesh</code>, so FSDP2 works over it.</p>
+<p>Nothing in this chapter needs changing for it. It's worth knowing because it explains the 2.13 renames: <code>all_gather_into_tensor</code> → <code>all_gather_single</code> and <code>reduce_scatter_tensor</code> → <code>reduce_scatter_single</code>, aligning c10d's names with torchcomms'.</p>
+</div>
+<div class="note"><span class="tag">Note — how to know whether you&#x27;re communication-bound at all</span>
+<p>Don't guess:</p>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>NCCL_DEBUG=INFO torchrun --standalone --nproc_per_node=4 ddp_modern.py</pre></div>
+<p>prints the topology NCCL detected and the algorithm it chose. For the real answer, use <code>torch.profiler</code> and look at whether the NCCL kernels overlap the backward kernels or sit in their own gap. A gap means the overlap isn't working — usually because of an <code>unused parameters</code> stall, a synchronizing <code>.item()</code> call inside the loop, or buckets that are too large to start early.</p>
+<p>The most common self-inflicted wound: calling <code>loss.item()</code> or <code>print(loss)</code> every step. That forces a device synchronization, which stalls the CPU, which prevents it from running ahead to enqueue the next iteration's kernels, which destroys the overlap the whole design is built around.</p>
+</div></div></section><section class="panel" id="pan-7-beyond-ddp--when-to-switch-to-fsdp" role="tabpanel" aria-labelledby="t-7-beyond-ddp--when-to-switch-to-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="7-beyond-ddp--when-to-switch-to-fsdp">7. Beyond DDP — when to switch to FSDP</h2></div><div class="body"><p>DDP's assumption is the one chapter 04 flagged: <strong>the full model state must fit on one device.</strong> At ~16 bytes per parameter for mixed-precision Adam:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Model</th>
+<th>State</th>
+<th>Fits 80 GB?</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BERT-base (110M)</td>
+<td>~1.8 GB</td>
+<td>✓ easily</td>
+<td><strong>DDP</strong></td>
+</tr>
+<tr>
+<td>1.5B</td>
+<td>~24 GB</td>
+<td>✓</td>
+<td><strong>DDP</strong></td>
+</tr>
+<tr>
+<td>7B</td>
+<td>~112 GB</td>
+<td>✗</td>
+<td><strong>FSDP</strong></td>
+</tr>
+<tr>
+<td>70B</td>
+<td>~1.1 TB</td>
+<td>✗✗</td>
+<td><strong>FSDP</strong> (+ TP/PP)</td>
+</tr>
+</tbody>
+</table></div>
+<p>The switch is small, because FSDP is still data parallelism — same batch splitting, same programming model:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed.fsdp import fully_shard
+
+for layer in model.bert.encoder.layer:
+    fully_shard(layer)
+fully_shard(model)
+# then train exactly as before</pre></div>
+<p>What changes underneath: instead of every rank holding all 16 bytes/param and doing one gradient <code>all_reduce</code>, each rank holds <code>1/N</code> of the state and does an <code>all_gather</code> of each layer's parameters just before using it, plus a <code>reduce_scatter</code> of gradients. Chapter 08 covers the reasoning in full.</p>
+<div class="note"><span class="tag">Note — DDP is not obsolete</span>
+<p>For models that fit, DDP is still the right answer: it communicates less than FSDP (one gradient reduction vs. per-layer parameter gathers), it's simpler, and it's better tested. Reach for FSDP when memory forces you to, not by default.</p>
+</div></div></section><section class="panel" id="pan-8-quick-reference" role="tabpanel" aria-labelledby="t-8-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 13</p><h2 id="8-quick-reference">8. Quick reference</h2></div><div class="body"><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># ── launch ─────────────────────────────────────────────────
+# torchrun --standalone --nproc_per_node=4 train.py            # single node
+# torchrun --nnodes=2 --nproc_per_node=8 --node_rank=$R \
+#          --rdzv_backend=c10d --rdzv_endpoint=$HEAD:29500 train.py
+
+# ── setup ──────────────────────────────────────────────────
+local_rank = int(os.environ[&quot;LOCAL_RANK&quot;])
+torch.cuda.set_device(local_rank)
+dist.init_process_group(&quot;nccl&quot;, device_id=torch.device(f&quot;cuda:{local_rank}&quot;))
+rank, world = dist.get_rank(), dist.get_world_size()
+
+# ── data ───────────────────────────────────────────────────
+sampler = DistributedSampler(ds, num_replicas=world, rank=rank,
+                             shuffle=True, drop_last=True)
+loader  = DataLoader(ds, batch_size=32, sampler=sampler,
+                     num_workers=4, pin_memory=True, drop_last=True)
+# every epoch:
+sampler.set_epoch(epoch)
+
+# ── model ──────────────────────────────────────────────────
+model = model.to(local_rank)
+model = DDP(model, device_ids=[local_rank], bucket_cap_mb=25)
+
+# ── loop ───────────────────────────────────────────────────
+with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+    loss = model(**batch).loss
+loss.backward()          # all_reduce happens here, overlapped with backward
+optimizer.step()
+optimizer.zero_grad(set_to_none=True)
+
+# ── PyTorch 2.13 renames (old names still resolve, for now) ─
+# all_gather_into_tensor  -&gt; all_gather_single
+# reduce_scatter_tensor   -&gt; reduce_scatter_single
+
+# ── logging / saving ───────────────────────────────────────
+dist.all_reduce(loss_copy, op=dist.ReduceOp.AVG)     # global loss
+if rank == 0: torch.save(model.module.state_dict(), &quot;ckpt.pt&quot;)
+dist.barrier()
+
+# ── teardown ───────────────────────────────────────────────
+dist.destroy_process_group()</pre></div>
+<p><strong>The chapter in five lines:</strong></p>
+<div class="ascii-card"><pre>DP   scatter batch → broadcast model → gather logits → reduce grads → step on GPU0
+     ↑ master device: memory imbalance, re-broadcast every step, GIL-bound
+
+DDP  each process loads its own shard → forward → backward ⟷ all_reduce (overlapped)
+     ↑ no master: identical grads everywhere → identical step everywhere</pre></div>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th><code>DataParallel</code></th>
+<th><code>DistributedDataParallel</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Processes</td>
+<td>1, multi-threaded</td>
+<td>1 per GPU</td>
+</tr>
+<tr>
+<td>Nodes</td>
+<td>single only</td>
+<td>single or multi</td>
+</tr>
+<tr>
+<td>Model replication</td>
+<td>every step</td>
+<td>once, at construction</td>
+</tr>
+<tr>
+<td>Gradient combine</td>
+<td><code>reduce</code> to GPU 0</td>
+<td><code>all_reduce</code> (ring)</td>
+</tr>
+<tr>
+<td>Memory balance</td>
+<td>poor (GPU 0 heavy)</td>
+<td>even</td>
+</tr>
+<tr>
+<td>Comm/compute overlap</td>
+<td>no</td>
+<td>yes, via bucketing</td>
+</tr>
+<tr>
+<td><code>batch_size</code> means</td>
+<td>global</td>
+<td><strong>per process</strong></td>
+</tr>
+<tr>
+<td>Status</td>
+<td>deprecated</td>
+<td>the baseline</td>
+</tr>
+</tbody>
+</table></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 13</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Verified version</th>
+<th>Notes for this chapter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PyTorch</strong></td>
+<td><strong>2.13.0</strong> (8 Jul 2026)</td>
+<td>2.12 → 2.13 changed several distributed names; see below</td>
+</tr>
+<tr>
+<td><strong>Megatron Core</strong></td>
+<td><strong>0.18.0</strong> (23 Jun 2026)</td>
+<td>Development moved to GitHub in Dec 2025; <code>megatron.core.*</code> is the supported API</td>
+</tr>
+<tr>
+<td><strong>transformers</strong></td>
+<td><strong>v5.14</strong></td>
+<td>v5 is <strong>PyTorch-only</strong>; the slow/fast tokenizer split is gone</td>
+</tr>
+<tr>
+<td><strong>DeepSpeed</strong></td>
+<td><strong>0.18.x</strong></td>
+<td>Still maintained; ZeRO config keys in this chapter unchanged</td>
+</tr>
+<tr>
+<td><strong>CUDA</strong></td>
+<td>13.0 default on PyPI, 13.2 experimental</td>
+<td>Volta/Pascal/Maxwell dropped from recent builds</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Distributed changes since this material was first drafted, in one place:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Version</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>all_gather_into_tensor</code> → <strong><code>all_gather_single</code></strong></td>
+<td>2.13</td>
+<td>Renamed to align with torchcomms; old name still resolves for now</td>
+</tr>
+<tr>
+<td><code>reduce_scatter_tensor</code> → <strong><code>reduce_scatter_single</code></strong></td>
+<td>2.13</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>torchcomms</strong> lands as the new backend layer</td>
+<td>2.13</td>
+<td><code>c10d</code> is still the user-facing surface; torchcomms replaces the layer <em>beneath</em> it</td>
+</tr>
+<tr>
+<td><code>torchrun</code> picks an <strong>OS-assigned free port</strong> by default</td>
+<td>2.12</td>
+<td>Only when neither <code>--standalone</code> nor <code>--master-port</code> is given. Fixes "Address already in use"</td>
+</tr>
+<tr>
+<td><code>torch.distributed.nn.functional</code> raises under <code>torch.compile</code></td>
+<td>2.12</td>
+<td>Use <code>torch.distributed._functional_collectives</code></td>
+</tr>
+<tr>
+<td><strong>Differentiable collectives</strong> added</td>
+<td>2.11</td>
+<td>Native autograd-aware collectives — the <code>f</code>/<code>g</code> adjoint pattern, built in</td>
+</tr>
+<tr>
+<td><code>DeviceMesh</code> requires PGs to exist at construction</td>
+<td>2.11</td>
+<td>Call <code>init_process_group</code> <strong>before</strong> building the mesh</td>
+</tr>
+<tr>
+<td>Implicit <code>mesh["dp_cp"]</code> after <code>_flatten()</code> deprecated</td>
+<td>2.10</td>
+<td>Keep your own reference to the flattened mesh</td>
+</tr>
+<tr>
+<td><strong><code>torch.cuda.amp.*</code></strong></td>
+<td>deprecated since 2.4</td>
+<td>Use <code>torch.amp.GradScaler("cuda")</code> / <code>torch.autocast("cuda", ...)</code></td>
+</tr>
+<tr>
+<td><strong>XCCL</strong> backend for Intel XPU</td>
+<td>2.8</td>
+<td>Fourth backend alongside NCCL / Gloo / MPI</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Specific to this chapter:</strong> the corrected script in §4 is current as written. <code>torch.amp.GradScaler("cuda")</code> and <code>torch.autocast("cuda", ...)</code> are the right spellings; <code>torch.cuda.amp.*</code> has emitted a <code>FutureWarning</code> since 2.4. <code>bucket_cap_mb</code>, <code>no_sync()</code>, <code>set_epoch()</code>, and the comm-hook API are all unchanged.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 12 of 13</p><h2 id="further-reading">Further reading</h2></div><div class="body"><ul>
+<li><strong>PyTorch DDP paper</strong> — Li et al., <em>PyTorch Distributed: Experiences on Accelerating Data Parallel Training</em> (2020). The source of the bucketing and overlap analysis whose figures this chapter reproduces. Short and very readable.</li>
+<li><strong>Baidu ring all-reduce</strong> — the 2017 write-up, still the clearest explanation of the two-phase algorithm</li>
+<li>PyTorch docs: <em>Getting Started with Distributed Data Parallel</em>, and <em>DDP Communication Hooks</em></li>
+<li><code>torch.utils.data.DistributedSampler</code> source — it's short, and reading it removes all mystery about how the split works</li>
+<li><em>Accurate, Large Minibatch SGD</em> (Goyal et al., 2017) — the linear LR scaling rule you need when world size changes</li>
+<li><code>torch.distributed.algorithms.Join</code> — the context manager for legitimately uneven inputs across ranks</li>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 13</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+<li><strong>Find the imbalance.</strong> Run the DP script under <code>nvidia-smi dmon</code> and record per-GPU memory. Then switch to the loss-in-forward version and record again. How much of GPU 0's excess was logits?</li>
+</ol>
+<ol start="2">
+<li><strong>Break the sampler.</strong> Train two epochs with and without <code>sampler.set_epoch(epoch)</code>, logging the first 5 example IDs each rank sees per epoch. Confirm they're identical without the call.</li>
+</ol>
+<ol start="3">
+<li><strong>Measure the overlap.</strong> Profile the DDP script with <code>torch.profiler</code>. Find the NCCL kernels and check whether they sit inside the backward window. Then insert <code>loss.item()</code> every step and re-profile — watch the overlap disappear.</li>
+</ol>
+<ol start="4">
+<li><strong>Batch semantics.</strong> Take the DP script (<code>batch_size=128</code>) and the DDP script (<code>batch_size=32</code>, 4 GPUs). Confirm they train on the same global batch. Then run the DDP script on 8 GPUs without changing anything — what happened to the global batch, and what should the learning rate have done?</li>
+</ol>
+<ol start="5">
+<li><strong>Derive the cost.</strong> For BERT-base (110M params, fp32 gradients) on 4 GPUs, compute the bytes each rank sends per step under (a) reduce+broadcast, (b) all-to-all, (c) ring all-reduce. Then redo it for 64 GPUs and note which numbers changed.</li>
+</ol>
+<ol start="6">
+<li><strong>Bucket tuning.</strong> Sweep <code>bucket_cap_mb</code> over {1, 5, 25, 100} and plot step time. Explain the shape of the curve using the latency-vs-bandwidth argument from §2.</li>
+</ol>
+<p><em>Part of a practical series on large-scale model training. Verified against PyTorch 2.13, Megatron Core 0.18, transformers v5, and DeepSpeed 0.18 in July 2026. Distributed APIs move quickly — where this document and your installed docs disagree, trust the docs.</em></p></div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

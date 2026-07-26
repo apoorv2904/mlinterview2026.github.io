@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parallelism Strategies — an Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Chapter 04</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <h1>Parallelism Strategies — an Overview</h1>
+  <div class="ring-wrap">
+    <div class="pipe" aria-hidden="true">
+      <div class="pipe-row"><span class="pipe-lbl">GPU 0</span><div class="pipe-cells"><div class="pc on" style="--d:0.00s"><span>F1</span></div><div class="pc on" style="--d:0.42s"><span>F2</span></div><div class="pc on" style="--d:0.84s"><span>F3</span></div><div class="pc on" style="--d:1.26s"><span>F4</span></div><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div></div></div>
+      <div class="pipe-row"><span class="pipe-lbl">GPU 1</span><div class="pipe-cells"><div class="pc"><span>&middot;</span></div><div class="pc on" style="--d:0.42s"><span>F1</span></div><div class="pc on" style="--d:0.84s"><span>F2</span></div><div class="pc on" style="--d:1.26s"><span>F3</span></div><div class="pc on" style="--d:1.68s"><span>F4</span></div><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div></div></div>
+      <div class="pipe-row"><span class="pipe-lbl">GPU 2</span><div class="pipe-cells"><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div><div class="pc on" style="--d:0.84s"><span>F1</span></div><div class="pc on" style="--d:1.26s"><span>F2</span></div><div class="pc on" style="--d:1.68s"><span>F3</span></div><div class="pc on" style="--d:2.10s"><span>F4</span></div><div class="pc"><span>&middot;</span></div></div></div>
+      <div class="pipe-row"><span class="pipe-lbl">GPU 3</span><div class="pipe-cells"><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div><div class="pc"><span>&middot;</span></div><div class="pc on" style="--d:1.26s"><span>F1</span></div><div class="pc on" style="--d:1.68s"><span>F2</span></div><div class="pc on" style="--d:2.10s"><span>F3</span></div><div class="pc on" style="--d:2.52s"><span>F4</span></div></div></div>
+    </div>
+    <p class="ring-cap"><span>Pipeline schedule &middot; 4 stages, 4 microbatches &middot; dashed = bubble</span><span>bubble = (p&minus;1)/(m+p&minus;1)</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>Blocks marked <strong>📝 Note</strong> expand on something the main text assumes — the reasoning behind a design, a derivation, or a number worth internalizing.</li>
+<li>Blocks marked <strong>⚠️</strong> are traps: things that produce silently wrong results, silently slow results, or hangs. They are the parts most worth reading twice.</li>
+<li>Diagrams are ASCII so they survive copy-paste into a terminal, a code review, or a text editor.</li>
+<li>All code targets <strong>PyTorch 2.13</strong> (July 2026). See the <em>Version check</em> tab for exactly what was verified and when.
+<strong>Prerequisites:</strong> Nothing beyond PyTorch and a working idea of what <code>all_reduce</code> does. This chapter is the orientation for chapters 05–10.</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-0-where-this-chapter-sits" aria-controls="pan-0-where-this-chapter-sits" aria-selected="false" tabindex="-1"><span class="num">02</span>0 · Where this sits</button><button class="tab" role="tab" id="t-1-parallelism" aria-controls="pan-1-parallelism" aria-selected="false" tabindex="-1"><span class="num">03</span>1 · Parallelism</button><button class="tab" role="tab" id="t-2-data-parallelism" aria-controls="pan-2-data-parallelism" aria-selected="false" tabindex="-1"><span class="num">04</span>2 · Data parallelism</button><button class="tab" role="tab" id="t-3-model-parallelism" aria-controls="pan-3-model-parallelism" aria-selected="false" tabindex="-1"><span class="num">05</span>3 · Model parallelism</button><button class="tab" role="tab" id="t-4-multi-dimensional-parallelism" aria-controls="pan-4-multi-dimensional-parallelism" aria-selected="false" tabindex="-1"><span class="num">06</span>4 · Multi-dimensional</button><button class="tab" role="tab" id="t-5-zero-and-fsdp" aria-controls="pan-5-zero-and-fsdp" aria-selected="false" tabindex="-1"><span class="num">07</span>5 · ZeRO &amp; FSDP</button><button class="tab" role="tab" id="t-6-the-newer-axes--sequence-context-and-expert-parallelism" aria-controls="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" aria-selected="false" tabindex="-1"><span class="num">08</span>6 · Newer axes</button><button class="tab" role="tab" id="t-7-how-to-actually-choose" aria-controls="pan-7-how-to-actually-choose" aria-selected="false" tabindex="-1"><span class="num">09</span>7 · Choosing</button><button class="tab" role="tab" id="t-8-glossary-and-quick-reference" aria-controls="pan-8-glossary-and-quick-reference" aria-selected="false" tabindex="-1"><span class="num">10</span>8 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">11</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">12</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">13</span>Exercises</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 13</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<li><a href="#0-where-this-chapter-sits">Where this chapter sits</a></li>
+<li><a href="#1-parallelism">Parallelism</a></li>
+<li><a href="#2-data-parallelism">Data Parallelism</a></li>
+<li><a href="#3-model-parallelism">Model Parallelism</a>
+   - <a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a>
+   - <a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a>
+   - <a href="#pipeline-parallelism">Pipeline Parallelism</a></li>
+<li><a href="#4-multi-dimensional-parallelism">Multi-dimensional Parallelism</a></li>
+<li><a href="#5-zero-and-fsdp">ZeRO and FSDP</a></li>
+<li><a href="#6-the-newer-axes--sequence-context-and-expert-parallelism">The newer axes — sequence, context, and expert parallelism</a></li>
+<li><a href="#7-how-to-actually-choose">How to actually choose</a></li>
+<li><a href="#8-glossary-and-quick-reference">Glossary and quick reference</a></li>
+<li><a href="#further-reading">Further reading</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ol></div></section><section class="panel" id="pan-0-where-this-chapter-sits" role="tabpanel" aria-labelledby="t-0-where-this-chapter-sits" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 13</p><h2 id="0-where-this-chapter-sits">0. Where this chapter sits</h2></div><div class="body"><div class="note"><span class="tag">Note — </span>
+<p>Notebook 03 gave you a vocabulary of communication primitives. This chapter gives you the sentences you can build with them. It's worth stating the mapping up front, because every section below is really "which primitive, applied to which tensor, between which ranks":</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Strategy in this chapter</th>
+<th>Primitive it's built from</th>
+<th>What moves over the wire</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data parallelism</td>
+<td><code>all_reduce</code></td>
+<td>Gradients (once per step)</td>
+</tr>
+<tr>
+<td>Inter-layer / pipeline parallelism</td>
+<td><code>send</code> / <code>recv</code> (P2P)</td>
+<td>Activations and activation gradients (at stage boundaries)</td>
+</tr>
+<tr>
+<td>Intra-layer / tensor parallelism</td>
+<td><code>all_reduce</code> (or <code>reduce_scatter</code> + <code>all_gather</code>)</td>
+<td>Partial activations (several times <em>per layer</em>)</td>
+</tr>
+<tr>
+<td>ZeRO / FSDP</td>
+<td><code>all_gather</code> + <code>reduce_scatter</code></td>
+<td>Parameter shards and gradient shards</td>
+</tr>
+<tr>
+<td>Expert parallelism (MoE)</td>
+<td><code>all_to_all</code></td>
+<td>Routed tokens</td>
+</tr>
+</tbody>
+</table></div>
+<p>If you can hold that table in your head, the rest of this document is commentary on it.</p>
+</div></div></section><section class="panel" id="pan-1-parallelism" role="tabpanel" aria-labelledby="t-1-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 13</p><h2 id="1-parallelism">1. Parallelism</h2></div><div class="body"><p>Before getting into any one technique, here is the map: what the axes are, what each costs, and how they relate.</p>
+<p>Parallelization is a technique for handling several things at the same time, and it is one of the most important techniques in large-scale modeling. In machine learning it is mainly used to parallelize computation across multiple devices in order to improve speed or memory efficiency.</p>
+<div class="note"><span class="tag">Note — there are two different reasons to parallelize, and confusing them causes bad design choices</span>
+<p>Older material sentence quietly contains both: "improve speed <strong>or</strong> memory efficiency." These are not the same goal, and the right strategy depends entirely on which one is binding.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Throughput problem</strong></th>
+<th><strong>Capacity problem</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Symptom</td>
+<td>Training works, but an epoch takes too long</td>
+<td><code>CUDA out of memory</code> — training doesn't start at all</td>
+</tr>
+<tr>
+<td>Cause</td>
+<td>Too much data</td>
+<td>Model state too large for one device</td>
+</tr>
+<tr>
+<td>Fix</td>
+<td>Data parallelism (replicate the model, split the batch)</td>
+<td>Model parallelism (split the model) or sharding (ZeRO/FSDP)</td>
+</tr>
+<tr>
+<td>Scaling limit</td>
+<td>Statistical — beyond some batch size, more data per step stops helping</td>
+<td>Physical — you need enough aggregate memory, period</td>
+</tr>
+<tr>
+<td>Communication cost</td>
+<td>Once per step</td>
+<td>Many times per step (TP) or per stage (PP)</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Rule of thumb: reach for data parallelism first, because it's the cheapest form of communication you can buy.</strong> Only introduce model parallelism when memory forces you to. Every other axis exists because someone hit a wall that data parallelism couldn't get them over.</p>
+</div>
+<div class="note"><span class="tag">Note — the three resources you can exhaust</span>
+<p>Parallelism is always a trade among these:</p>
+<div class="ascii-card"><pre>   COMPUTE          MEMORY            BANDWIDTH
+   (FLOPs)          (bytes on device) (bytes/sec between devices)
+      │                  │                    │
+      │  more devices    │  more devices      │  more devices
+      │  → more FLOPs    │  → more capacity   │  → MORE traffic
+      ▼                  ▼                    ▼
+   scales well       scales well        gets WORSE</pre></div>
+<p>Two of the three get better as you add GPUs. The third gets worse. That asymmetry is the entire subject: <strong>every parallelism strategy is a scheme for buying compute and memory with bandwidth</strong>, and the strategies differ in how efficiently they make that trade.</p>
+</div>
+<div class="note"><span class="tag">Note — strong vs weak scaling</span>
+<p>Borrowed from HPC, and useful for setting expectations:</p>
+<ul>
+<li><strong>Strong scaling</strong>: fixed total work, more devices → is it faster? Limited by Amdahl's law — the serial fraction and the communication you added become the floor.</li>
+<li><strong>Weak scaling</strong>: work per device fixed, more devices → does time per step stay flat? This is what data-parallel training actually does, and it's the more achievable goal.</li>
+</ul>
+<p>When someone says "we got 90% scaling efficiency at 1,024 GPUs," they almost always mean weak scaling. Reported as <strong>MFU</strong> (Model FLOPs Utilization) — achieved FLOPs ÷ theoretical peak — which for well-tuned large-model training typically lands somewhere in the 35–55% range on modern hardware. It is essentially never close to 100%, and the gap is mostly communication and pipeline bubbles.</p>
+</div></div></section><section class="panel" id="pan-2-data-parallelism" role="tabpanel" aria-labelledby="t-2-data-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 13</p><h2 id="2-data-parallelism">2. Data Parallelism</h2></div><div class="body"><p>Data parallelism is a method for speeding up training when the number of data items is large, by processing the data in parallel. It works by <strong>replicating the model onto every device and feeding different data to each device</strong>. This lets you feed in a batch size that is larger by a factor of the number of devices. However, this kind of data parallelism is only possible when a single model can fit entirely onto a single device.</p>
+<div class="ascii-card"><pre>                  ┌──────────────── one global batch ────────────────┐
+                  │  shard 0    shard 1    shard 2    shard 3        │
+                  └────┬──────────┬──────────┬──────────┬────────────┘
+                       │          │          │          │
+                  ┌────▼────┐┌────▼────┐┌────▼────┐┌────▼────┐
+                  │  GPU 0  ││  GPU 1  ││  GPU 2  ││  GPU 3  │
+                  │ ┌─────┐ ││ ┌─────┐ ││ ┌─────┐ ││ ┌─────┐ │
+                  │ │FULL │ ││ │FULL │ ││ │FULL │ ││ │FULL │ │   ← identical
+                  │ │MODEL│ ││ │MODEL│ ││ │MODEL│ ││ │MODEL│ │     replicas
+                  │ └─────┘ ││ └─────┘ ││ └─────┘ ││ └─────┘ │
+                  └────┬────┘└────┬────┘└────┬────┘└────┬────┘
+                       │  ∇L₀     │  ∇L₁     │  ∇L₂     │  ∇L₃
+                       └──────────┴────┬─────┴──────────┘
+                                       │
+                            all_reduce(SUM) / world_size
+                                       │
+                       ┌──────────┬────┴─────┬──────────┐
+                       ▼          ▼          ▼          ▼
+                   identical gradient → identical optimizer step
+                        → replicas stay bit-identical forever</pre></div>
+<div class="note"><span class="tag">Note — the invariant that makes it work</span>
+<p>Data parallelism rests on one property: <strong>at the start of every step, all replicas hold identical weights.</strong> Maintaining it requires exactly three things:</p>
+<ol>
+<li>Replicas start identical (broadcast from rank 0 at construction — DDP does this for you).</li>
+<li>Every replica sees the <em>same</em> averaged gradient (the <code>all_reduce</code>).</li>
+<li>Every replica runs the <em>same</em> deterministic optimizer update.</li>
+</ol>
+<p>Break any one and the replicas silently diverge — no error, just a model that trains worse than it should. This is why "just call <code>.backward()</code> on each GPU and average the weights occasionally" (sometimes proposed as a cheaper alternative) is a different algorithm with different convergence properties, not an optimization.</p>
+</div>
+<div class="warn"><span class="tag">`DataParallel` vs `DistributedDataParallel`</span><p>Older material chapter says "data parallelism" without distinguishing the two PyTorch implementations. In 2021 <code>nn.DataParallel</code> was still commonly used. It shouldn't be now.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th><code>nn.DataParallel</code> (DP)</th>
+<th><code>nn.parallel.DistributedDataParallel</code> (DDP)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Processes</td>
+<td><strong>One</strong>, multi-threaded</td>
+<td><strong>One per GPU</strong></td>
+</tr>
+<tr>
+<td>GIL contention</td>
+<td>Yes — a real bottleneck</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Model replication</td>
+<td><strong>Re-scattered every forward pass</strong></td>
+<td>Once, at construction</td>
+</tr>
+<tr>
+<td>Gradient sync</td>
+<td>Gather to GPU 0, update, re-broadcast</td>
+<td><code>all_reduce</code>, overlapped with backward</td>
+</tr>
+<tr>
+<td>GPU 0 load</td>
+<td>Imbalanced (holds outputs and does the update)</td>
+<td>Balanced</td>
+</tr>
+<tr>
+<td>Multi-node</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Deprecated in practice</td>
+<td>The baseline</td>
+</tr>
+</tbody>
+</table></div>
+<p>Use DDP. The one-line summary of why: DP's single process must serialize everything through the GIL and reload the model onto each device every iteration, so it commonly delivers a <em>fraction</em> of the speedup DDP does on the same hardware.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>model = model.to(local_rank)
+model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])</pre></div></div>
+<div class="note"><span class="tag">Note — why DDP is faster than the diagram suggests: bucketing and overlap</span>
+<p>The naive reading of the diagram is: compute the whole backward pass, then all-reduce all gradients, then step. That would leave the network idle during backward and the GPU idle during communication.</p>
+<p>DDP doesn't do that. Gradients become available in <em>reverse</em> layer order as backward proceeds, so DDP groups them into buckets (~25 MB by default) and fires an asynchronous <code>all_reduce</code> for each bucket the moment it fills:</p>
+<div class="ascii-card"><pre>backward:  [layer N]──[layer N-1]──[layer N-2]──[layer N-3]── … ──[layer 1]
+              │            │            │            │
+              └─bucket 3 ──┴─ bucket 2 ─┴─ bucket 1 ─┴─ bucket 0
+                    ↓            ↓            ↓            ↓
+comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlapped</pre></div>
+<p>Two consequences worth knowing:</p>
+<ul>
+<li><strong>Many small all-reduces are latency-bound</strong>, which is exactly why bucketing exists. Tuning <code>bucket_cap_mb</code> matters on slow interconnects.</li>
+<li><strong>This is why <code>find_unused_parameters=True</code> is expensive.</strong> DDP needs to know when a bucket is complete. If some parameters don't receive gradients on some steps, DDP must traverse the autograd graph every iteration to figure that out. Set it only if you truly have conditionally-used parameters, and prefer restructuring the model so you don't.</li>
+</ul>
+</div>
+<div class="note"><span class="tag">Note — what &quot;larger batch size&quot; actually buys you, and where it stops</span>
+<p>Older material correctly says you can feed a batch larger by a factor of the device count. Three refinements:</p>
+<div class="ascii-card"><pre>global_batch = per_device_batch × world_size × grad_accumulation_steps</pre></div>
+<ol>
+<li><strong>Learning rate must scale with it.</strong> The standard recipe (Goyal et al., 2017) is the <em>linear scaling rule</em>: multiply the LR by the same factor you multiplied the batch by, and add a few hundred steps of warmup to avoid blowing up early. Skipping this is the most common reason "it trained fine on 1 GPU but diverges on 8."</li>
+<li><strong>There is a point of diminishing returns — the critical batch size.</strong> Past it, doubling the batch stops halving the number of steps needed; you're just burning FLOPs to reduce gradient noise that was already small enough. The gradient noise scale (McCandlish et al., 2018) is the standard way to estimate where that is. Critical batch size grows as the model gets better trained, which is why large runs often ramp batch size over training.</li>
+<li><strong>Gradient accumulation is "free" data parallelism in time rather than space.</strong> If you can't afford more GPUs, run <code>k</code> micro-steps before stepping the optimizer. Wrap the non-final micro-steps in <code>model.no_sync()</code> so DDP doesn't all-reduce on every one:</li>
+</ol>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>for i, batch in enumerate(loader):
+    is_last = (i + 1) % accum == 0
+    ctx = contextlib.nullcontext() if is_last else model.no_sync()
+    with ctx:
+        loss = model(batch).loss / accum
+        loss.backward()          # gradients accumulate; no all_reduce unless is_last
+    if is_last:
+        optimizer.step(); optimizer.zero_grad(set_to_none=True)</pre></div>
+</div>
+<div class="note"><span class="tag">Note — the memory arithmetic behind that caveat</span>
+<p>"Only possible when a single model fits on a single device" deserves numbers, because they explain everything that follows in this chapter. For mixed-precision training with Adam, per parameter:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Bytes / param</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bf16/fp16 weights</td>
+<td>2</td>
+</tr>
+<tr>
+<td>bf16/fp16 gradients</td>
+<td>2</td>
+</tr>
+<tr>
+<td>fp32 master weights</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Adam momentum (fp32)</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Adam variance (fp32)</td>
+<td>4</td>
+</tr>
+<tr>
+<td><strong>Total model state</strong></td>
+<td><strong>~16</strong></td>
+</tr>
+</tbody>
+</table></div>
+<p>Plus activations, which depend on batch size, sequence length, and whether you use activation checkpointing.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Model</th>
+<th>State at 16 B/param</th>
+<th>Fits on 80 GB?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.5B</td>
+<td>24 GB</td>
+<td>✓ comfortably</td>
+</tr>
+<tr>
+<td>7B</td>
+<td>112 GB</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>13B</td>
+<td>208 GB</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>70B</td>
+<td>1.1 TB</td>
+<td>✗ (needs ~14+ GPUs just for state)</td>
+</tr>
+</tbody>
+</table></div>
+<p>So plain DDP tops out somewhere around a few billion parameters on current hardware. Everything in §3 onward is a response to this table.</p>
+</div>
+<div class="warn"><span class="tag">the caveat is no longer absolute</span><p>"Data parallelism is only possible when one model fits on one device" was true of <em>classical</em> data parallelism, and it is the historical motivation for model parallelism. But <strong>ZeRO / FSDP break that assumption without changing the programming model</strong>: the model is still logically replicated and the batch is still split, but the 16 bytes/param of state are <em>sharded</em> across the same data-parallel ranks and reassembled layer-by-layer on demand.</p>
+<p>With FSDP, a 70B model trains across 64 GPUs using data parallelism alone — no tensor or pipeline parallelism required. This is the single biggest change in the field since 2021, and it's covered in <a href="#5-zero-and-fsdp">§5</a>.</p></div></div></section><section class="panel" id="pan-3-model-parallelism" role="tabpanel" aria-labelledby="t-3-model-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="3-model-parallelism">3. Model Parallelism</h2></div><div class="body"><div class="subnav"><a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a><a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a><a href="#pipeline-parallelism">Pipeline Parallelism</a></div><p>If a model is so large that it cannot fit entirely onto a single device, you have to split the parameters and place them across multiple devices. Each device therefore holds a portion of the parameters. This makes it possible to handle even a large model by using several small devices, and depending on which dimension is parallelized, we can distinguish <strong>inter-layer</strong> and <strong>intra-layer</strong> model parallelism.</p>
+<div class="ascii-card"><pre>        The model is a stack of layers, each layer a set of tensors.
+        There are two independent directions you can cut it.
+
+                        ┌───────────────────────────┐
+              layer 4   │ ███████████ │ ███████████ │
+              layer 3   │ ███████████ │ ███████████ │   ← INTRA-layer cut
+              ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ┤     (split each tensor)
+              layer 2   │ ███████████ │ ███████████ │
+              layer 1   │ ███████████ │ ███████████ │
+                        └───────────────────────────┘
+                              ▲
+                              │ INTER-layer cut
+                                (split the stack)</pre></div>
+<div class="note"><span class="tag">Note — the two cuts are orthogonal, which is why you can use both at once</span>
+<p>Inter-layer splits <em>depth</em>; intra-layer splits <em>width</em>. They compose without conflicting, and combining them is exactly what "3-D parallelism" means in §4. Keep the distinction crisp:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>Inter-layer (→ pipeline)</th>
+<th>Intra-layer (→ tensor)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unit of splitting</td>
+<td>Whole layers</td>
+<td>Individual weight matrices</td>
+</tr>
+<tr>
+<td>Communication</td>
+<td>Activations, at stage boundaries</td>
+<td>Partial sums, <em>inside</em> every layer</td>
+</tr>
+<tr>
+<td>Frequency</td>
+<td>Once per stage per microbatch</td>
+<td>~4 collectives per transformer layer per step</td>
+</tr>
+<tr>
+<td>Volume per event</td>
+<td>Small (one activation tensor)</td>
+<td>Small, but constant × huge count</td>
+</tr>
+<tr>
+<td>Tolerates slow links</td>
+<td>✓ (works across nodes)</td>
+<td>✗ (needs NVLink; keep inside a node)</td>
+</tr>
+<tr>
+<td>Main inefficiency</td>
+<td>Pipeline bubble (idle devices)</td>
+<td>Communication overhead + can't overlap easily</td>
+</tr>
+<tr>
+<td>Canonical system</td>
+<td>GPipe, PipeDream</td>
+<td>Megatron-LM</td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<h3 id="inter-layer-model-parallelism">Inter-layer Model Parallelism</h3>
+<p>Inter-layer model parallelism is a parallelization scheme that splits the model along layer boundaries. As shown below, layers 1, 2, 3 can be assigned to GPU 1 and layers 4, 5 to GPU 2. Google's <strong>GPipe</strong> is a representative example.</p>
+<div class="ascii-card"><pre>        ┌──────── GPU 1 ────────┐   ┌──────── GPU 2 ────────┐
+  x ──▶ │ layer1 → layer2 → l3  │ ──▶ │ layer4 → layer5     │ ──▶ ŷ
+        └───────────────────────┘   └───────────────────────┘
+                                ▲
+                        activations cross here
+                        via send/recv  (P2P)</pre></div>
+<div class="note"><span class="tag">Note — this is the easiest form of model parallelism to implement and the worst-performing if you stop here</span>
+<p>Splitting a <code>nn.Sequential</code> across devices is almost trivial, which is why it's often someone's first attempt. But note what the diagram implies about <em>time</em>: GPU 2 cannot start until GPU 1 finishes, and GPU 1 has nothing to do while GPU 2 works. With <code>p</code> stages you are using <code>1/p</code> of your hardware. Older material addresses this directly in the pipeline section below — inter-layer parallelism is best understood as <em>the naive version that pipelining fixes</em>.</p>
+</div>
+<div class="note"><span class="tag">Note — a second, subtler cost: it splits parameters but not activations well</span>
+<p>Each stage stores the activations it needs for its own backward pass. With a naive schedule and one large batch, the first stage holds activations for the entire batch across all its layers. Activation memory is often the <em>actual</em> constraint in transformer training, so a scheme that only addresses parameter memory solves half the problem.</p>
+</div>
+<h3 id="intra-layer-model-parallelism">Intra-layer Model Parallelism</h3>
+<p>Intra-layer model parallelism is a scheme that splits the tensors themselves, independently of layers. For example, if there is a parameter of size <code>[256, 256]</code>, it can be split into <code>[128, 256]</code> or <code>[256, 128]</code>. NVIDIA's <strong>Megatron-LM</strong> is a representative example.</p>
+<div class="ascii-card"><pre>              A single weight matrix, split two ways
+              ─────────────────────────────────────
+
+    column-parallel                       row-parallel
+    (split output dim)                    (split input dim)
+
+    ┌─────────┬─────────┐                ┌───────────────────┐
+    │         │         │                │      A_row0       │  → GPU 0
+    │  A_col0 │  A_col1 │                ├───────────────────┤
+    │         │         │                │      A_row1       │  → GPU 1
+    └─────────┴─────────┘                └───────────────────┘
+       GPU 0     GPU 1
+
+    Y = X·A   →  [Y0 | Y1]               Y = X·A  →  Y0 + Y1
+    no comm in forward                    all_reduce in forward</pre></div>
+<div class="note"><span class="tag">Note — how Megatron actually splits a transformer block, and why the pairing matters</span>
+<p>The trick is to chain a column-parallel layer into a row-parallel layer so that only <strong>one</strong> collective is needed per block, not two.</p>
+<p>Take the MLP: <code>Z = GeLU(X·A)·B</code>.</p>
+<ol>
+<li>Split <code>A</code> <strong>column-wise</strong>: <code>A = [A₀ | A₁]</code>. Each rank computes <code>Y_i = GeLU(X·A_i)</code>. GeLU is elementwise, so this is exact — <strong>no communication needed</strong>, and this is precisely why the split must be column-wise here (a row-wise split would require summing <em>before</em> the nonlinearity).</li>
+<li>Split <code>B</code> <strong>row-wise</strong> to match: <code>B = [B₀ ; B₁]</code>. Each rank computes <code>Z_i = Y_i·B_i</code>, and the true result is <code>Z = Z₀ + Z₁</code> → <strong>one <code>all_reduce</code></strong>.</li>
+</ol>
+<div class="ascii-card"><pre>   X ──┬──▶ [A₀] ──▶ GeLU ──▶ [B₀] ──┐
+       │                              ├──▶ all_reduce ──▶ Z
+       └──▶ [A₁] ──▶ GeLU ──▶ [B₁] ──┘
+       ↑                              ↑
+       f (identity fwd,               g (all_reduce fwd,
+          all_reduce bwd)                identity bwd)</pre></div>
+<p>Attention is split the same way: <strong>each rank owns a subset of the attention heads</strong> (Q/K/V projections column-parallel), and the output projection is row-parallel. Heads are independent, so this is clean.</p>
+</div>
+<div class="note"><span class="tag">Note — the f/g operators are the autograd pairing from notebook 03</span>
+<p>That chapter's <code>_ScatterToModelParallelRegion</code> snippet, with <code>forward=_split</code> and <code>backward=_gather</code>, is one of these. Megatron defines four:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Forward</th>
+<th>Backward</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>f</code></td>
+<td>identity</td>
+<td><code>all_reduce</code></td>
+</tr>
+<tr>
+<td><code>g</code></td>
+<td><code>all_reduce</code></td>
+<td>identity</td>
+</tr>
+<tr>
+<td>scatter</td>
+<td><code>split</code></td>
+<td><code>gather</code></td>
+</tr>
+<tr>
+<td>gather</td>
+<td><code>gather</code></td>
+<td><code>split</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Communication operations come in adjoint pairs</strong> because gradients flow backward through the same data movement. Once you accept that, tensor parallelism reduces to: pick a split for each weight matrix, then insert whichever f/g pair makes the math close.</p>
+</div>
+<div class="note"><span class="tag">Note — the cost, and why TP must stay inside a node</span>
+<p>Per transformer layer, per step: <strong>2 all-reduces forward</strong> (one for attention, one for MLP) + <strong>2 backward</strong> = 4. For a 40-layer model that's <strong>160 all-reduces per step</strong>, each on a tensor of size <code>batch × seq_len × hidden</code>.</p>
+<p>Compare to data parallelism: <strong>one</strong> all-reduce per step, on the gradients.</p>
+<div class="ascii-card"><pre>   DP  : 1 collective / step,   volume ≈ 2 × model size
+   TP  : 4 collectives / layer / step,  volume ≈ 2 × activation size, ×L layers</pre></div>
+<p>That's a difference of two or three orders of magnitude in <em>frequency</em>, and it's unavoidable — these all-reduces sit on the critical path and can't be overlapped with computation the way DDP's gradient reduction can (the next layer literally needs the result).</p>
+<div class="rulebox"><p><strong>The practical consequence, and it is close to a hard rule: keep the tensor-parallel group within a single node, over NVLink.</strong></p></div><p> Approximate per-GPU bandwidths (hardware dependent, order of magnitude only):</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Link</th>
+<th>Rough bandwidth</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVLink / NVSwitch (intra-node)</td>
+<td>hundreds of GB/s</td>
+<td><strong>Tensor parallelism</strong></td>
+</tr>
+<tr>
+<td>PCIe (intra-node, no NVLink)</td>
+<td>tens of GB/s</td>
+<td>Marginal for TP</td>
+</tr>
+<tr>
+<td>InfiniBand (inter-node, per NIC)</td>
+<td>~25–50 GB/s</td>
+<td>Pipeline, data parallelism</td>
+</tr>
+<tr>
+<td>Ethernet</td>
+<td>often less</td>
+<td>Data parallelism only</td>
+</tr>
+</tbody>
+</table></div>
+<p>This single fact — TP is bandwidth-hungry and therefore node-local — is what determines the layout of every large training job, and it's the punchline of §4. It also caps TP degree at the number of GPUs per node (typically 8).</p>
+</div>
+<div class="note"><span class="tag">Note — two details that bite people</span>
+<ul>
+<li><strong>Vocabulary-parallel embeddings.</strong> The embedding table and output projection are enormous for large vocabularies (e.g. <code>128k × 8192</code>). Megatron splits them along the vocabulary dimension; each rank looks up only the token IDs in its range and masks the rest, then all-reduces. The output side is usually fused with cross-entropy so the full <code>[batch, seq, vocab]</code> logit tensor is never materialized — that tensor alone can be tens of GB.</li>
+<li><strong>Dropout and LayerNorm are replicated, not split</strong>, in vanilla TP — every rank computes them redundantly on the full activation. This wastes both compute and memory, and it's exactly the redundancy that <em>sequence parallelism</em> was invented to remove (<a href="#6-the-newer-axes--sequence-context-and-expert-parallelism">§6</a>).</li>
+</ul>
+</div>
+<h3 id="pipeline-parallelism">Pipeline Parallelism</h3>
+<p>Pipeline parallelism is a model-parallel technique that improves on the shortcoming of inter-layer model parallelism. When you perform inter-layer model parallelism, an ordering of GPU computation is necessarily created. For example, if layers 1, 2, 3 have not run, layers 4, 5 cannot run, so GPU 2 must wait until GPU 1's computation is finished.</p>
+<div class="ascii-card"><pre>   Naive inter-layer execution — one big batch, 4 stages
+
+   time ──────────────────────────────────────────────────────────▶
+   GPU0  ███████                                         ███████
+   GPU1         ███████                           ███████
+   GPU2                ███████             ███████
+   GPU3                       ███████ ███████
+         └── forward ────────────────┘└──── backward ────────────┘
+
+         ███ = working      (blank) = IDLE
+
+   Utilization ≈ 1/4.  Three quarters of your cluster is doing nothing.</pre></div>
+<p>This is very inefficient. Even though there are several GPUs, in practice only one GPU can be used at a time. To solve this problem, pipeline parallelism pipelines the computation process in parallel as shown below. (Sounds difficult? We'll explain it in detail later.)</p>
+<div class="ascii-card"><pre>   Pipelined execution — the batch is split into m microbatches
+
+   time ─────────────────────────────────────────────────────────────▶
+   GPU0  F1 F2 F3 F4                         B4 B3 B2 B1
+   GPU1     F1 F2 F3 F4                   B4 B3 B2 B1
+   GPU2        F1 F2 F3 F4             B4 B3 B2 B1
+   GPU3           F1 F2 F3 F4       B4 B3 B2 B1
+         └ fill ┘                             └ drain ┘
+            ▲                                     ▲
+            └────────── &quot;bubble&quot; (idle) ──────────┘
+
+   Fk = forward on microbatch k     Bk = backward on microbatch k</pre></div>
+<div class="note"><span class="tag">Note — the one idea: split the batch, not just the model</span>
+<p>The batch of size <code>B</code> is divided into <code>m</code> <strong>microbatches</strong> of size <code>B/m</code>. As soon as GPU 0 finishes microbatch 1 it hands it to GPU 1 and immediately starts microbatch 2. The stages fill up like an assembly line. Nothing about the model changed — only the <em>scheduling</em> of work through it.</p>
+</div>
+<div class="note"><span class="tag">Note — the bubble, quantified</span>
+<p>This is the one formula worth memorizing from this chapter.</p>
+<p>With <code>p</code> stages and <code>m</code> microbatches, the pipeline takes <code>m + p − 1</code> time slots instead of the ideal <code>m</code>:</p>
+<div class="formula">bubble fraction = (p−1) / (m+p−1) · equivalently · overhead vs. ideal = (p−1) / m</div>
+<p>Fraction of total time spent idle, for <code>p = 4</code> and <code>p = 8</code>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>microbatches <code>m</code></th>
+<th><code>p = 4</code></th>
+<th><code>p = 8</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>75%</td>
+<td>88%</td>
+</tr>
+<tr>
+<td>4</td>
+<td>43%</td>
+<td>64%</td>
+</tr>
+<tr>
+<td>8</td>
+<td>27%</td>
+<td>47%</td>
+</tr>
+<tr>
+<td>16</td>
+<td>16%</td>
+<td>30%</td>
+</tr>
+<tr>
+<td>32</td>
+<td>9%</td>
+<td>18%</td>
+</tr>
+<tr>
+<td>64</td>
+<td>4.5%</td>
+<td>10%</td>
+</tr>
+<tr>
+<td>128</td>
+<td>2.3%</td>
+<td>5.2%</td>
+</tr>
+</tbody>
+</table></div>
+<div class="rulebox"><p><strong>Read off the design rule: you want <code>m ≫ p</code>.</strong></p></div><p> A common target is <code>m ≈ 4p</code> or more. Note also that <code>m = 1</code> reproduces the naive inter-layer case exactly — the naive scheme <em>is</em> pipelining with a single microbatch.</p>
+<p>But <code>m</code> is bounded above: <code>m</code> microbatches of size <code>B/m</code> must each be large enough to keep a GPU busy (tiny matmuls waste the hardware), so you can't shrink them indefinitely. <strong>The bubble is the fundamental tax on pipeline parallelism</strong>, and the last decade of schedule research is about reducing it.</p>
+</div>
+<div class="note"><span class="tag">Note — the schedules, in the order they were invented</span>
+<p><em>GPipe (all-forward-then-all-backward)</em> — the diagram above. Simple, but every stage must hold the activations of <strong>all <code>m</code> microbatches</strong> before backward starts, so activation memory grows linearly with <code>m</code>, which fights the very thing you increased <code>m</code> to fix.</p>
+<p><em>1F1B (one-forward-one-backward)</em> — from PipeDream, now the default everywhere. Once the pipeline is full, each stage alternates: one forward, one backward. Same bubble fraction, but the number of in-flight microbatches per stage is capped at <code>p</code> instead of <code>m</code>:</p>
+<div class="ascii-card"><pre>   1F1B, p=4, m=8   (steady state alternates F and B)
+
+   GPU0  F1 F2 F3 F4 B1 F5 B2 F6 B3 F7 B4 F8 B5 B6 B7 B8
+   GPU1     F1 F2 F3 B1 F4 B2 F5 B3 F6 B4 F7 B5 F8 B6 B7 B8
+   GPU2        F1 F2 B1 F3 B2 F4 B3 F5 B4 F6 B5 F7 B6 F8 B7 B8
+   GPU3           F1 B1 F2 B2 F3 B3 F4 B4 F5 B5 F6 B6 F7 B7 F8 B8
+                     ▲
+                     backward starts as early as possible
+                     → activations freed sooner → memory ∝ p, not m</pre></div>
+<p><strong>Activation memory independent of <code>m</code> is the whole point.</strong> It's what lets you raise <code>m</code> enough to shrink the bubble.</p>
+<p><em>Interleaved 1F1B (virtual stages)</em> — assign each device <code>v</code> non-contiguous chunks of layers instead of one contiguous block (device 0 gets layers 1–2 <em>and</em> 9–10, etc.). Bubble becomes <code>(p−1)/(v·m+p−1)</code>, so <code>v = 2</code> roughly halves it. Cost: <code>v×</code> more P2P communication events. Megatron's default for large runs.</p>
+<p><em>Zero-bubble / DualPipe</em> — exploits the fact that a backward pass is really two computations, gradient-w.r.t.-input (needed immediately by the previous stage) and gradient-w.r.t.-weights (needed only before the optimizer step). Deferring the latter fills the bubble with useful work and can bring it near zero.</p>
+</div>
+<div class="warn"><span class="tag">the PyTorch API</span><p>In 2021 pipeline parallelism in PyTorch meant <code>torch.distributed.pipeline.sync.Pipe</code> (RPC-based) or a third-party library (DeepSpeed, Megatron, FairScale). That module is gone. The current API is <code>torch.distributed.pipelining</code>:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed.pipelining import pipeline, SplitPoint, ScheduleGPipe
+
+# 1. Declare where to cut the model into stages
+pipe = pipeline(
+    module=model,
+    mb_args=(example_microbatch,),
+    split_spec={&quot;layers.4&quot;: SplitPoint.BEGINNING},
+)
+
+# 2. Materialize this rank&#x27;s stage
+stage = pipe.build_stage(stage_index=rank, device=device)
+
+# 3. Attach a schedule and run
+schedule = ScheduleGPipe(stage, n_microbatches=8)
+if rank == 0:
+    schedule.step(x)                  # first stage feeds input
+elif rank == world_size - 1:
+    output = schedule.step(target=y)  # last stage computes loss
+else:
+    schedule.step()</pre></div>
+<p>Available schedules: <code>ScheduleGPipe</code>, <code>Schedule1F1B</code>, <code>ScheduleInterleaved1F1B</code>, <code>ScheduleLoopedBFS</code>, <code>ScheduleInterleavedZeroBubble</code>, <code>ScheduleZBVZeroBubble</code>, <code>ScheduleDualPipeV</code>. Start with <code>ScheduleGPipe</code> to get it working, then switch to <code>Schedule1F1B</code> for memory, then interleaved for throughput.</p></div>
+<div class="note"><span class="tag">Note — pipeline parallelism is where notebook 03&#x27;s P2P section pays off</span>
+<p>Stage boundaries are <code>send</code>/<code>recv</code> of activations forward and activation-gradients backward. Three things carry over directly:</p>
+<ul>
+<li><code>recv</code> needs a <strong>pre-allocated buffer of the correct shape</strong> — it doesn't infer shape. Pipeline implementations either fix shapes by construction or exchange shape metadata first. This is why variable sequence lengths are awkward under pipelining.</li>
+<li>Use <code>batch_isend_irecv</code>, not paired blocking <code>send</code>/<code>recv</code>. Every stage wanting to send downstream and receive upstream simultaneously is the textbook deadlock.</li>
+<li>P2P over NCCL is fine on modern PyTorch. The notebook-03 comment that "NCCL doesn't support send/recv" was true in 2021 and is not now — which matters enormously here, since pipelining over GLOO would be crippling.</li>
+</ul>
+</div>
+<div class="note"><span class="tag">Note — practical gotchas that surprise people</span>
+<ul>
+<li><strong>Load balancing is on you.</strong> The slowest stage sets the pace. Splitting a transformer into equal <em>layer counts</em> isn't equal <em>time</em>: the first stage carries the embedding, the last carries the LM head and loss. Balance by measured time, not layer count.</li>
+<li><strong>BatchNorm breaks</strong> under microbatching (statistics computed over <code>B/m</code> samples). LayerNorm/RMSNorm are fine — one reason transformers pipeline so much more comfortably than CNNs.</li>
+<li><strong>The loss is computed only on the last stage</strong>, so logging and metrics need to be gathered or handled rank-conditionally.</li>
+<li><strong>Pipeline + activation checkpointing interact.</strong> Both trade compute for activation memory; applying both blindly can recompute more than necessary.</li>
+</ul>
+</div></div></section><section class="panel" id="pan-4-multi-dimensional-parallelism" role="tabpanel" aria-labelledby="t-4-multi-dimensional-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 13</p><h2 id="4-multi-dimensional-parallelism">4. Multi-dimensional Parallelism</h2></div><div class="body"><p>The various parallelization techniques mentioned above can also be applied several at a time, and the number of dimensions increases with the number of parallelization schemes applied. You can perform n-dimensional parallelization in various ways, as below.</p>
+<ul>
+<li>e.g. 2-D parallelism: data parallelism + inter-layer parallelism</li>
+<li>e.g. 2-D parallelism: data parallelism + intra-layer parallelism</li>
+<li>e.g. 3-D parallelism: data parallelism + intra-layer parallelism + pipeline parallelism</li>
+</ul>
+<div class="ascii-card"><pre>        3-D parallelism on 32 GPUs:  TP=4  ×  PP=4  ×  DP=2
+
+        ┌─────────────── data-parallel replica 0 ───────────────┐
+        │  pipeline stage 0   stage 1   stage 2   stage 3       │
+        │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────┐ │
+        │  │g0 g1 g2 g3│→ │g4 g5 g6 g7│→ │g8 …      │→ │…    │ │
+        │  └───────────┘  └───────────┘  └───────────┘  └─────┘ │
+        │   └─ tensor-parallel group (all_reduce inside) ─┘     │
+        └───────────────────────────────────────────────────────┘
+                              ▲
+                              │ gradient all_reduce across replicas
+                              ▼
+        ┌─────────────── data-parallel replica 1 ───────────────┐
+        │  … same structure, ranks 16–31 …                      │
+        └───────────────────────────────────────────────────────┘</pre></div>
+<p>This kind of multi-dimensional parallelism is the most highly regarded approach in large-scale modeling these days. Besides the methods mentioned above there are additional techniques such as ZeRO, but we'll explain those in detail in a later chapter.</p>
+<div class="note"><span class="tag">Note — the modern axis list</span>
+<p>Older material names three axes. As of now there are six in common use, and a large training run may use four or five simultaneously.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Splits</th>
+<th>Primitive</th>
+<th>Typical degree</th>
+<th>Placement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DP</strong> — data</td>
+<td>The batch</td>
+<td><code>all_reduce</code></td>
+<td>2 – thousands</td>
+<td>Outermost, across nodes</td>
+</tr>
+<tr>
+<td><strong>FSDP/ZeRO</strong> — shard</td>
+<td>Model state, across the DP ranks</td>
+<td><code>all_gather</code> + <code>reduce_scatter</code></td>
+<td>= DP degree</td>
+<td>Layered onto DP</td>
+</tr>
+<tr>
+<td><strong>TP</strong> — tensor (intra-layer)</td>
+<td>Weight matrices</td>
+<td><code>all_reduce</code></td>
+<td>2 – 8</td>
+<td><strong>Inside a node</strong></td>
+</tr>
+<tr>
+<td><strong>PP</strong> — pipeline (inter-layer)</td>
+<td>Layers</td>
+<td><code>send</code>/<code>recv</code></td>
+<td>2 – 64</td>
+<td>Across nodes</td>
+</tr>
+<tr>
+<td><strong>CP/SP</strong> — context/sequence</td>
+<td>The sequence dim</td>
+<td><code>all_gather</code>/<code>reduce_scatter</code> or <code>all_to_all</code></td>
+<td>1 – 8</td>
+<td>Usually with TP</td>
+</tr>
+<tr>
+<td><strong>EP</strong> — expert</td>
+<td>MoE experts</td>
+<td><code>all_to_all</code></td>
+<td>8 – 64</td>
+<td>Across nodes</td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<div class="note"><span class="tag">Note — a worked layout, with the rank arithmetic</span>
+<p>64 GPUs = 8 nodes × 8 GPUs. Choose <strong>TP=8, PP=4, DP=2</strong> (note <code>8 × 4 × 2 = 64</code>).</p>
+<div class="ascii-card"><pre>                 world_size = 64
+
+  node0 [g0 … g7]  ──┐
+  node1 [g8 … g15] ──┤  replica 0:  4 pipeline stages,
+  node2 [g16… g23] ──┤              each stage = 1 node = 1 TP group of 8
+  node3 [g24… g31] ──┘
+  node4 [g32… g39] ──┐
+  node5 [g40… g47] ──┤  replica 1:  same structure
+  node6 [g48… g55] ──┤
+  node7 [g56… g63] ──┘
+
+  TP groups (8 ranks, node-local, NVLink):   {0..7} {8..15} … {56..63}
+  PP groups (4 ranks, one per stage):        {0,8,16,24} {1,9,17,25} …
+  DP groups (2 ranks, same stage+tp slot):   {0,32} {1,33} {2,34} …</pre></div>
+<p>With TP innermost, DP middle, PP outermost, the mapping is:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>global_rank = (pp_rank * dp_size + dp_rank) * tp_size + tp_rank</pre></div>
+<p>Every collective names its group, and each collective touches only the ranks it should. <strong>That is all "3-D parallelism" is, mechanically</strong> — three overlapping sets of process groups created with <code>new_group</code>, each rank belonging to one group per axis.</p>
+<p>Recall from notebook 03: <strong><code>new_group</code> is a collective call. Every rank must call it, in the same order, with the same arguments — including ranks that won't be members.</strong> Building a 3-D layout means many <code>new_group</code> calls, so this is the single most likely place to introduce a silent hang.</p>
+</div>
+<div class="note"><span class="tag">Note — the ordering is not arbitrary; it&#x27;s dictated by bandwidth</span>
+<p>Assign the chattiest axis to the fastest link:</p>
+<div class="ascii-card"><pre>   communication volume per step (roughly)
+   ───────────────────────────────────────
+   TP   ████████████████████████  many collectives per layer  → NVLink   (node-local)
+   CP   ████████████              per attention block          → NVLink
+   PP   ███                       one activation per boundary  → InfiniBand
+   DP   ██                        one gradient reduction       → InfiniBand</pre></div>
+<p>Getting this backwards — a TP group spanning nodes — is one of the most common and most catastrophic misconfigurations in multi-node training. The job runs and produces correct numbers; it's just several times slower than it should be, with no error to point at. <strong>If a multi-node job is inexplicably slow, check the TP group placement first.</strong></p>
+</div>
+<div class="note"><span class="tag">Note — you don&#x27;t hand-compute these groups any more: DeviceMesh</span>
+</div>
+<div class="warn"><span class="tag">Note</span><p>In 2021 everyone wrote their own rank arithmetic (Megatron's <code>mpu</code> module is exactly this). PyTorch now provides <code>DeviceMesh</code> — an n-dimensional, <em>named</em> view of your ranks that creates the process groups for you:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed.device_mesh import init_device_mesh
+
+# shape must multiply to world_size; order = outermost → innermost
+mesh = init_device_mesh(&quot;cuda&quot;, (2, 4, 8), mesh_dim_names=(&quot;dp&quot;, &quot;pp&quot;, &quot;tp&quot;))
+
+tp_group = mesh[&quot;tp&quot;].get_group()      # this rank&#x27;s 8-way TP group
+dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</pre></div>
+<p>Combined with <strong>DTensor</strong> (a tensor that knows how it's sharded across a mesh), you annotate <em>what</em> is sharded and PyTorch inserts the collectives. PyTorch's <code>torchtitan</code> repository composes 4-D parallelism this way, and it's the clearest place to see the ideas in this chapter as running code.</p></div>
+<div class="note"><span class="tag">Note — a rough budgeting procedure</span>
+<p>Given a model and a cluster, in this order:</p>
+<ol>
+<li><strong>TP degree</strong> — smallest value that makes one pipeline stage fit in memory, capped at GPUs-per-node (usually 8). Prefer smaller; TP has the worst communication profile.</li>
+<li><strong>PP degree</strong> — enough additional stages to fit the rest of the model. Prefer smaller; the bubble is pure waste.</li>
+<li><strong>DP degree</strong> — whatever GPUs remain (<code>world / (TP × PP)</code>). Free scaling, mostly.</li>
+<li><strong>Microbatches</strong> <code>m</code> — as large as you can while keeping per-microbatch work meaningful. Target <code>m ≥ 4p</code>.</li>
+<li><strong>FSDP/ZeRO stage on the DP axis</strong> — reclaim memory without touching the other axes.</li>
+<li><strong>Activation checkpointing</strong> — the last lever; trades ~30% extra compute for a large activation-memory reduction.</li>
+</ol>
+<p>Sanity check that <code>TP × PP × DP (× CP × EP) = world_size</code> exactly. Mismatches here produce confusing hangs rather than clean errors.</p>
+</div></div></section><section class="panel" id="pan-5-zero-and-fsdp" role="tabpanel" aria-labelledby="t-5-zero-and-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 13</p><h2 id="5-zero-and-fsdp">5. ZeRO and FSDP</h2></div><div class="body"><div class="subnav"><a href="#the-stages">The stages</a><a href="#why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</a><a href="#zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</a></div><p>Older material ends with "there are additional techniques such as ZeRO, but we'll explain those later." Since 2021 this stopped being a footnote and became the default, so it deserves a place in the overview.</p>
+<p><strong>The observation ZeRO starts from:</strong> in plain data parallelism, every replica stores an <em>identical</em> copy of all 16 bytes/param of model state. Across <code>N</code> GPUs that's <code>N</code> redundant copies. But at any given moment, a rank only needs the parameters of the layer it is currently computing.</p>
+<p>So: <strong>shard the state across the data-parallel ranks, and reconstruct each layer just in time.</strong></p>
+<div class="ascii-card"><pre>   Plain DDP (N=4)                     ZeRO-3 / FSDP (N=4)
+   ┌────┬────┬────┬────┐               ┌────┬────┬────┬────┐
+   │ALL │ALL │ALL │ALL │               │ 1/4│ 1/4│ 1/4│ 1/4│  ← each rank holds a shard
+   │ 16Ψ│ 16Ψ│ 16Ψ│ 16Ψ│               │ 4Ψ │ 4Ψ │ 4Ψ │ 4Ψ │
+   └────┴────┴────┴────┘               └────┴────┴────┴────┘
+   4× redundancy                       no redundancy
+                                          │
+                                          ▼  before layer k&#x27;s forward:
+                                       all_gather(layer k&#x27;s params)
+                                       compute, then FREE them again</pre></div>
+<h3 id="the-stages">The stages</h3>
+<p>Let <code>Ψ</code> = number of parameters, <code>N</code> = data-parallel world size.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Shards</th>
+<th>Memory / GPU</th>
+<th>Comm vs. DDP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DDP baseline</td>
+<td>nothing</td>
+<td><code>16Ψ</code></td>
+<td>1×</td>
+</tr>
+<tr>
+<td><strong>ZeRO-1</strong></td>
+<td>optimizer states</td>
+<td><code>4Ψ + 12Ψ/N</code></td>
+<td>1×</td>
+</tr>
+<tr>
+<td><strong>ZeRO-2</strong></td>
+<td>+ gradients</td>
+<td><code>2Ψ + 14Ψ/N</code></td>
+<td>1×</td>
+</tr>
+<tr>
+<td><strong>ZeRO-3 / FSDP</strong></td>
+<td>+ parameters</td>
+<td><code>16Ψ/N</code></td>
+<td>~1.5×</td>
+</tr>
+</tbody>
+</table></div>
+<p>For a <strong>7B model</strong> (<code>16Ψ = 112 GB</code>) on <strong>8 GPUs</strong>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>Memory per GPU</th>
+<th>Fits in 80 GB?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DDP</td>
+<td>112 GB</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>ZeRO-1</td>
+<td>28 + 10.5 = <strong>38.5 GB</strong></td>
+<td>✓</td>
+</tr>
+<tr>
+<td>ZeRO-2</td>
+<td>14 + 12.25 = <strong>26.3 GB</strong></td>
+<td>✓</td>
+</tr>
+<tr>
+<td>ZeRO-3</td>
+<td><strong>14 GB</strong></td>
+<td>✓ with lots of room for activations</td>
+</tr>
+</tbody>
+</table></div>
+<p>The <code>1/N</code> in stage 3 is the important part: <strong>memory per GPU falls as you add GPUs</strong>, so there is no model size that's out of reach given enough devices. That is qualitatively different from DDP, where adding GPUs doesn't help capacity at all.</p>
+<h3 id="why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</h3>
+<p>From notebook 03's cost model: <code>all_reduce = reduce_scatter + all_gather</code>, and it moves exactly twice what either half moves alone. Plain DDP all-reduces gradients. ZeRO-2 needs only the <em>shard</em> of the gradient matching its optimizer shard — so it does a <code>reduce_scatter</code> instead, then <code>all_gather</code>s the updated parameters after the step. Same total volume, less memory. <strong>That's the whole trick</strong>, and it's why ZeRO-1 and ZeRO-2 are essentially strict improvements over DDP.</p>
+<p>ZeRO-3 costs extra because parameters must be gathered in <em>both</em> the forward and backward pass — roughly 1.5× DDP's communication. Usually worth it, and much of it can be prefetched and overlapped with compute.</p>
+<h3 id="zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</h3>
+<p>They solve the same problem — "parameters don't fit" — in very different ways, and the difference determines when to use which:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>FSDP / ZeRO-3</th>
+<th>Tensor parallelism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>What's split</td>
+<td>Parameters, <strong>temporarily</strong> (regathered to use)</td>
+<td>Parameters, <strong>permanently</strong> (never regathered)</td>
+</tr>
+<tr>
+<td>Math changes?</td>
+<td>No — the layer computes normally on full weights</td>
+<td>Yes — each rank computes a partial result</td>
+</tr>
+<tr>
+<td>Model code changes?</td>
+<td>Essentially none</td>
+<td>Every layer must be rewritten as column/row-parallel</td>
+</tr>
+<tr>
+<td>Communication</td>
+<td><code>all_gather</code> per layer, <strong>prefetchable</strong></td>
+<td><code>all_reduce</code> per layer, <strong>on the critical path</strong></td>
+</tr>
+<tr>
+<td>Tolerates slow links</td>
+<td>Better (can overlap)</td>
+<td>Poorly</td>
+</tr>
+<tr>
+<td>Reduces activation memory</td>
+<td>No</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Rule of thumb:</strong> try FSDP first — it's far less invasive. Add tensor parallelism when activations, not parameters, are the binding constraint, or when the per-layer <code>all_gather</code> can no longer be hidden behind compute.</p>
+<div class="warn"><span class="tag">the PyTorch API</span><ul>
+<li><code>FairScale</code> FSDP → upstreamed into PyTorch as <code>torch.distributed.fsdp.FullyShardedDataParallel</code> ("FSDP1")</li>
+<li>Now superseded by <strong><code>fully_shard</code></strong> ("FSDP2"), which is DTensor-based, composes cleanly with the other axes, and shards per-parameter rather than per-flat-buffer:</li>
+</ul>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.distributed.fsdp import fully_shard
+
+for layer in model.layers:
+    fully_shard(layer, mesh=mesh[&quot;dp&quot;])   # shard each block
+fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
+<p>DeepSpeed remains a fine choice and is where ZeRO originated; the concepts are identical and the stage numbers mean the same thing.</p></div></div></section><section class="panel" id="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" role="tabpanel" aria-labelledby="t-6-the-newer-axes--sequence-context-and-expert-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 13</p><h2 id="6-the-newer-axes--sequence-context-and-expert-parallelism">6. The newer axes — sequence, context, and expert parallelism</h2></div><div class="body"><div class="subnav"><a href="#sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</a><a href="#context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</a><a href="#expert-parallelism-moe">Expert parallelism (MoE)</a></div><p>Two axes that barely existed when this notebook was written are now routine. Both exist because the <em>shape</em> of the problem changed: contexts got much longer, and models got sparse.</p>
+<h3 id="sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</h3>
+<p>Recall the gotcha from §3: under vanilla tensor parallelism, LayerNorm and dropout are <strong>replicated</strong> on every TP rank — each holds the full <code>batch × seq × hidden</code> activation. For long sequences this dominates memory.</p>
+<p>Sequence parallelism splits <em>those</em> regions along the sequence dimension, so no activation is ever fully replicated:</p>
+<div class="ascii-card"><pre>   vanilla TP:      [ LayerNorm replicated ] → [ attention/MLP split ] → [ LayerNorm replicated ]
+                          ▲ full activation on every rank
+
+   TP + SP:         [ LN sharded by seq ] → all_gather → [ split ] → reduce_scatter → [ LN sharded ]
+                          ▲ 1/tp of the activation per rank</pre></div>
+<p>The clever part: the <code>all_reduce</code> that TP already needed is <em>replaced</em> by <code>all_gather</code> + <code>reduce_scatter</code>. Same total communication volume (from the cost model: one all-reduce = one of each), strictly less memory. <strong>Effectively free.</strong> It's on by default in Megatron-style implementations.</p>
+<h3 id="context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</h3>
+<p>Attention memory and compute scale with sequence length, so 128k-token contexts need the sequence split across devices for the attention computation itself. Two main approaches:</p>
+<ul>
+<li><strong>Ring Attention</strong> — each rank holds a contiguous chunk of the sequence; K/V blocks circulate around a ring of devices while each rank accumulates its partial attention. Communication overlaps with the attention compute.</li>
+<li><strong>DeepSpeed-Ulysses</strong> — <code>all_to_all</code> to switch the sharding <em>axis</em>: shard by sequence outside attention, transpose to shard by attention head inside it, transpose back. Exactly the distributed-transpose use of <code>all_to_all</code> from notebook 03.</li>
+</ul>
+<h3 id="expert-parallelism-moe">Expert parallelism (MoE)</h3>
+<p>In a Mixture-of-Experts layer, each token is routed to a small number of experts (often 1 or 2) out of many. Experts are placed on different devices, so tokens must travel to wherever their expert lives — and come back:</p>
+<div class="ascii-card"><pre>   before:  each GPU holds tokens 0..k        (sharded by token)
+              │  route: token → expert id
+              ▼
+            all_to_all  ──────────────────▶   sharded by expert
+              │  each GPU runs ITS experts on whatever arrived
+              ▼
+            all_to_all  ──────────────────▶   back to sharded by token</pre></div>
+<p>Two <code>all_to_all</code>s per MoE layer. This makes <code>all_to_all</code> — the collective most introductions skip — arguably the most important primitive in modern sparse models.</p>
+<p>The characteristic difficulty is <strong>load imbalance</strong>: routing is learned, so some experts get far more tokens than others, and the slowest device gates the step. Hence capacity factors, auxiliary load-balancing losses, and token dropping.</p></div></section><section class="panel" id="pan-7-how-to-actually-choose" role="tabpanel" aria-labelledby="t-7-how-to-actually-choose" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="7-how-to-actually-choose">7. How to actually choose</h2></div><div class="body"><p>A decision procedure that matches how practitioners actually reason:</p>
+<div class="ascii-card"><pre>                   Does the model state fit on ONE GPU?
+                          │                    │
+                        YES                   NO
+                          │                    │
+                    ┌─────▼─────┐              │
+                    │    DDP    │              │
+                    └───────────┘              │
+                                               ▼
+                        Does it fit with FSDP / ZeRO-3 across your GPUs?
+                                    │                   │
+                                  YES                  NO
+                                    │                   │
+                        ┌───────────▼──────────┐        │
+                        │  FSDP (+ activation  │        │
+                        │   checkpointing)     │        │
+                        └──────────────────────┘        │
+                                                        ▼
+                                       Add TENSOR parallelism (≤ node size).
+                                       Still doesn&#x27;t fit, or too many nodes?
+                                                        │
+                                                        ▼
+                                       Add PIPELINE parallelism across nodes.
+                                       Long contexts? add CONTEXT parallelism.
+                                       MoE? add EXPERT parallelism.</pre></div>
+<p><strong>Rules of thumb worth internalizing:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data parallelism first, always</td>
+<td>Cheapest communication, no model changes</td>
+</tr>
+<tr>
+<td>TP degree ≤ GPUs per node</td>
+<td>TP over inter-node links is the classic silent killer</td>
+</tr>
+<tr>
+<td>Keep PP degree as small as it can be</td>
+<td>The bubble is pure waste</td>
+</tr>
+<tr>
+<td>Microbatches <code>m ≥ 4 × pipeline stages</code></td>
+<td>Keeps the bubble under ~10%</td>
+</tr>
+<tr>
+<td>Activation checkpointing before more parallelism</td>
+<td>~30% extra compute is usually cheaper than another axis</td>
+</tr>
+<tr>
+<td>Measure before adding an axis</td>
+<td>Every axis adds failure modes; most people over-parallelize</td>
+</tr>
+<tr>
+<td>Profile with <code>torch.profiler</code>, not intuition</td>
+<td>Comm/compute overlap is impossible to reason about by eye</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note"><span class="tag">Note — the failure modes scale with the number of axes</span>
+<p>Each axis is a set of process groups, and notebook 03's cardinal rule applies to each of them independently: <em>every rank must call every collective, in the same order, with matching shapes.</em> A 4-D job has four independent chances to violate it. Practical advice: bring the axes up <strong>one at a time</strong>, verifying loss curves match the single-GPU baseline at each step. Debugging a 4-D configuration that was never correct at 2-D is genuinely miserable.</p>
+</div></div></section><section class="panel" id="pan-8-glossary-and-quick-reference" role="tabpanel" aria-labelledby="t-8-glossary-and-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 13</p><h2 id="8-glossary-and-quick-reference">8. Glossary and quick reference</h2></div><div class="body"><div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DP</strong></td>
+<td>Data parallelism — replicate model, split batch</td>
+</tr>
+<tr>
+<td><strong>DDP</strong></td>
+<td><code>DistributedDataParallel</code>, PyTorch's one-process-per-GPU data parallelism</td>
+</tr>
+<tr>
+<td><strong>MP</strong></td>
+<td>Model parallelism — umbrella term for splitting the model</td>
+</tr>
+<tr>
+<td><strong>TP</strong></td>
+<td>Tensor parallelism = intra-layer MP (Megatron)</td>
+</tr>
+<tr>
+<td><strong>PP</strong></td>
+<td>Pipeline parallelism = inter-layer MP + microbatching (GPipe, PipeDream)</td>
+</tr>
+<tr>
+<td><strong>CP / SP</strong></td>
+<td>Context / sequence parallelism — split the sequence dimension</td>
+</tr>
+<tr>
+<td><strong>EP</strong></td>
+<td>Expert parallelism — MoE experts across devices</td>
+</tr>
+<tr>
+<td><strong>ZeRO</strong></td>
+<td>Zero Redundancy Optimizer — shard model state across DP ranks (DeepSpeed)</td>
+</tr>
+<tr>
+<td><strong>FSDP</strong></td>
+<td>Fully Sharded Data Parallel — PyTorch's implementation of the same idea</td>
+</tr>
+<tr>
+<td><strong>Microbatch</strong></td>
+<td>One of the <code>m</code> pieces a batch is split into for pipelining</td>
+</tr>
+<tr>
+<td><strong>Bubble</strong></td>
+<td>Idle pipeline time during fill and drain</td>
+</tr>
+<tr>
+<td><strong>1F1B</strong></td>
+<td>One-forward-one-backward pipeline schedule</td>
+</tr>
+<tr>
+<td><strong>f / g operators</strong></td>
+<td>Megatron's adjoint autograd pairs (identity↔all_reduce)</td>
+</tr>
+<tr>
+<td><strong>MFU</strong></td>
+<td>Model FLOPs Utilization — achieved ÷ theoretical peak FLOPs</td>
+</tr>
+<tr>
+<td><strong>DeviceMesh</strong></td>
+<td>PyTorch's named n-D view of ranks; creates the process groups</td>
+</tr>
+<tr>
+<td><strong>DTensor</strong></td>
+<td>Tensor annotated with how it's sharded across a mesh</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>One-line summary of each strategy:</strong></p>
+<div class="ascii-card"><pre>DP    split the BATCH,      replicate the model     → all_reduce gradients
+FSDP  split the STATE,      regather per layer      → all_gather + reduce_scatter
+TP    split each TENSOR,    never regather          → all_reduce inside every layer
+PP    split the LAYERS,     pipeline microbatches   → send/recv at boundaries
+CP    split the SEQUENCE                            → all_gather / all_to_all
+EP    split the EXPERTS                             → all_to_all</pre></div>
+<p><strong>The composition rule:</strong></p>
+<div class="ascii-card"><pre>world_size = DP × TP × PP × CP × EP
+             ▲    ▲    ▲
+             │    │    └── across nodes (tolerates slow links)
+             │    └─────── inside a node (needs NVLink)
+             └──────────── outermost, most scalable</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 13</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Verified version</th>
+<th>Notes for this chapter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PyTorch</strong></td>
+<td><strong>2.13.0</strong> (8 Jul 2026)</td>
+<td>2.12 → 2.13 changed several distributed names; see below</td>
+</tr>
+<tr>
+<td><strong>Megatron Core</strong></td>
+<td><strong>0.18.0</strong> (23 Jun 2026)</td>
+<td>Development moved to GitHub in Dec 2025; <code>megatron.core.*</code> is the supported API</td>
+</tr>
+<tr>
+<td><strong>transformers</strong></td>
+<td><strong>v5.14</strong></td>
+<td>v5 is <strong>PyTorch-only</strong>; the slow/fast tokenizer split is gone</td>
+</tr>
+<tr>
+<td><strong>DeepSpeed</strong></td>
+<td><strong>0.18.x</strong></td>
+<td>Still maintained; ZeRO config keys in this chapter unchanged</td>
+</tr>
+<tr>
+<td><strong>CUDA</strong></td>
+<td>13.0 default on PyPI, 13.2 experimental</td>
+<td>Volta/Pascal/Maxwell dropped from recent builds</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Distributed changes since this material was first drafted, in one place:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Version</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>all_gather_into_tensor</code> → <strong><code>all_gather_single</code></strong></td>
+<td>2.13</td>
+<td>Renamed to align with torchcomms; old name still resolves for now</td>
+</tr>
+<tr>
+<td><code>reduce_scatter_tensor</code> → <strong><code>reduce_scatter_single</code></strong></td>
+<td>2.13</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>torchcomms</strong> lands as the new backend layer</td>
+<td>2.13</td>
+<td><code>c10d</code> is still the user-facing surface; torchcomms replaces the layer <em>beneath</em> it</td>
+</tr>
+<tr>
+<td><code>torchrun</code> picks an <strong>OS-assigned free port</strong> by default</td>
+<td>2.12</td>
+<td>Only when neither <code>--standalone</code> nor <code>--master-port</code> is given. Fixes "Address already in use"</td>
+</tr>
+<tr>
+<td><code>torch.distributed.nn.functional</code> raises under <code>torch.compile</code></td>
+<td>2.12</td>
+<td>Use <code>torch.distributed._functional_collectives</code></td>
+</tr>
+<tr>
+<td><strong>Differentiable collectives</strong> added</td>
+<td>2.11</td>
+<td>Native autograd-aware collectives — the <code>f</code>/<code>g</code> adjoint pattern, built in</td>
+</tr>
+<tr>
+<td><code>DeviceMesh</code> requires PGs to exist at construction</td>
+<td>2.11</td>
+<td>Call <code>init_process_group</code> <strong>before</strong> building the mesh</td>
+</tr>
+<tr>
+<td>Implicit <code>mesh["dp_cp"]</code> after <code>_flatten()</code> deprecated</td>
+<td>2.10</td>
+<td>Keep your own reference to the flattened mesh</td>
+</tr>
+<tr>
+<td><strong><code>torch.cuda.amp.*</code></strong></td>
+<td>deprecated since 2.4</td>
+<td>Use <code>torch.amp.GradScaler("cuda")</code> / <code>torch.autocast("cuda", ...)</code></td>
+</tr>
+<tr>
+<td><strong>XCCL</strong> backend for Intel XPU</td>
+<td>2.8</td>
+<td>Fourth backend alongside NCCL / Gloo / MPI</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Specific to this chapter:</strong> the taxonomy and the decision procedure are conceptual and unchanged. Two notes on the surrounding tooling. First, <code>DeviceMesh</code> — which this chapter recommends as the way to express multi-axis layouts — now requires <code>init_process_group</code> to be called <strong>before</strong> the mesh is built (PyTorch 2.11). Second, <code>torch.distributed</code> now has a <strong>fourth backend</strong>, <code>xccl</code>, for Intel XPU, alongside NCCL, Gloo and MPI; the rule "NCCL for NVIDIA GPUs, Gloo for CPU" is otherwise unchanged.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 12 of 13</p><h2 id="further-reading">Further reading</h2></div><div class="body"><p><strong>Papers, roughly in the order the ideas arrived</strong></p>
+<ul>
+<li><em>GPipe</em> (Huang et al., 2018) — microbatching and the bubble</li>
+<li><em>PipeDream</em> (Narayanan et al., 2019) — 1F1B scheduling</li>
+<li><em>Megatron-LM</em> (Shoeybi et al., 2019) — tensor parallelism and the f/g operators</li>
+<li><em>ZeRO</em> (Rajbhandari et al., 2019) — the memory/communication analysis behind stages 1–3</li>
+<li><em>Efficient Large-Scale LM Training on GPU Clusters</em> (Narayanan et al., 2021) — the definitive 3-D parallelism study; where the interleaved schedule and the bubble formulas come from</li>
+<li><em>Reducing Activation Recomputation in Large Transformer Models</em> (Korthikanti et al., 2022) — sequence parallelism</li>
+<li><em>Ring Attention</em> (Liu et al., 2023) — context parallelism</li>
+<li><em>Accurate, Large Minibatch SGD</em> (Goyal et al., 2017) — the linear LR scaling rule</li>
+<li><em>An Empirical Model of Large-Batch Training</em> (McCandlish et al., 2018) — critical batch size</li>
+</ul>
+<p><strong>Code and docs</strong></p>
+<ul>
+<li><code>torch.distributed.pipelining</code> documentation — the current pipeline API and its schedules</li>
+<li><code>torch.distributed.fsdp</code> / <code>fully_shard</code> documentation</li>
+<li><code>DeviceMesh</code> and <code>DTensor</code> documentation — how n-D parallelism is expressed today</li>
+<li><strong>torchtitan</strong> — PyTorch's own reference implementation of multi-dimensional parallel training; the clearest place to read this chapter as working code</li>
+<li>Megatron-LM and DeepSpeed source — the original implementations, still the most battle-tested</li>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 13</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+<li><strong>Bubble arithmetic.</strong> You have 8 pipeline stages and a global batch of 1,024. Compute the bubble fraction for <code>m</code> = 8, 32, and 128. At <code>m = 128</code>, how large is each microbatch — and is that still big enough to keep an H100 busy? What does that tell you about the real limit on <code>m</code>?</li>
+</ol>
+<ol start="2">
+<li><strong>Choose a configuration.</strong> You have 4 nodes × 8 H100s (80 GB). Train a 30B-parameter model, mixed precision, Adam. Compute the model state, then propose a TP/PP/DP split. Justify each degree, and verify the product equals 32.</li>
+</ol>
+<ol start="3">
+<li><strong>Trace the collectives.</strong> For a single training step of a 32-layer transformer under TP=8, PP=4, DP=2, count every collective operation and P2P transfer that occurs. Which axis dominates the count? Does that match where you'd expect the time to go?</li>
+</ol>
+<ol start="4">
+<li><strong>Derive the pairing.</strong> Show why Megatron splits the first MLP weight column-wise and the second row-wise. Specifically: what goes wrong if you split the <em>first</em> one row-wise instead? (Hint: where does GeLU sit relative to the summation?)</li>
+</ol>
+<ol start="5">
+<li><strong>Implement scatter without scatter.</strong> Using only notebook 03's primitives, implement a two-stage pipeline: rank 0 runs the first half of an MLP, sends activations to rank 1, which runs the second half and sends gradients back. Use <code>batch_isend_irecv</code>. Then break it deliberately by using blocking <code>send</code>/<code>recv</code> on both ranks in the same order, and observe the deadlock.</li>
+</ol>
+<ol start="6">
+<li><strong>Measure the wrong layout.</strong> If you have multi-node access, run the same job twice — once with the TP group node-local, once with it spanning nodes — and measure step time. The gap you find is the whole argument of §4 in one number.</li>
+</ol>
+<p><em>Part of a practical series on large-scale model training. Verified against PyTorch 2.13, Megatron Core 0.18, transformers v5, and DeepSpeed 0.18 in July 2026. Distributed APIs move quickly — where this document and your installed docs disagree, trust the docs.</em></p></div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed Programming — Large-Scale Model Training</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Chapter 03</span><span>Large-Scale Model Training</span></p>
+  <h1>Distributed Programming for Large-Scale Models</h1>
+  <div class="ring-wrap">
+    <div class="ring" aria-hidden="true">
+      <div class="ring-cell"><span>rank 0</span></div><div class="ring-cell"><span>rank 1</span></div><div class="ring-cell"><span>rank 2</span></div><div class="ring-cell"><span>rank 3</span></div><div class="ring-cell"><span>rank 4</span></div><div class="ring-cell"><span>rank 5</span></div><div class="ring-cell"><span>rank 6</span></div><div class="ring-cell"><span>rank 7</span></div>
+    </div>
+    <p class="ring-cap"><span>Ring all-reduce &middot; each rank sends only to its right neighbour</span><span>2(N&minus;1)D / N bytes per rank</span></p>
+  </div>
+  <div class="intro"><p><em>The foundation. How processes find each other, the ten communication primitives everything else is built from, how ring all-reduce actually works, and the hardware that decides whether any of it is fast.</em></p>
+<p><strong>How to read this document</strong></p>
+<ul>
+<li>Blocks marked <strong>&#128221; Note</strong> expand on something the main text assumes &mdash; the reasoning behind a design, a derivation, or a number worth internalizing.</li>
+<li>Blocks marked <strong>&#9888;&#65039;</strong> are traps: things that produce silently wrong results, silently slow results, or hangs.</li>
+<li>All code targets <strong>PyTorch 2.13</strong> (July 2026) and NVIDIA GPUs, though most of it transfers. Every example runs under <code>torchrun</code> as written.</li>
+</ul>
+<p><strong>Prerequisites:</strong> a single-GPU PyTorch training loop, and a rough idea of what a process is. Everything else is built up from here.</p></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Overview</button><button class="tab" role="tab" id="t-2-processes-ranks-and-launching" aria-controls="pan-2-processes-ranks-and-launching" aria-selected="false" tabindex="-1"><span class="num">02</span>2 &middot; Processes &amp; launching</button><button class="tab" role="tab" id="t-3-process-groups-and-rendezvous" aria-controls="pan-3-process-groups-and-rendezvous" aria-selected="false" tabindex="-1"><span class="num">03</span>3 &middot; Process groups</button><button class="tab" role="tab" id="t-4-point-to-point-communication" aria-controls="pan-4-point-to-point-communication" aria-selected="false" tabindex="-1"><span class="num">04</span>4 &middot; Point-to-point</button><button class="tab" role="tab" id="t-5-collective-communication" aria-controls="pan-5-collective-communication" aria-selected="false" tabindex="-1"><span class="num">05</span>5 &middot; Collectives</button><button class="tab" role="tab" id="t-6-how-ring-all-reduce-actually-works" aria-controls="pan-6-how-ring-all-reduce-actually-works" aria-selected="false" tabindex="-1"><span class="num">06</span>6 &middot; Ring all-reduce</button><button class="tab" role="tab" id="t-7-the-hardware-underneath" aria-controls="pan-7-the-hardware-underneath" aria-selected="false" tabindex="-1"><span class="num">07</span>7 &middot; Hardware</button><button class="tab" role="tab" id="t-8-what-the-primitives-build" aria-controls="pan-8-what-the-primitives-build" aria-selected="false" tabindex="-1"><span class="num">08</span>8 &middot; Parallelism</button><button class="tab" role="tab" id="t-9-pitfalls-and-debugging" aria-controls="pan-9-pitfalls-and-debugging" aria-selected="false" tabindex="-1"><span class="num">09</span>9 &middot; Pitfalls</button><button class="tab" role="tab" id="t-10-quick-reference" aria-controls="pan-10-quick-reference" aria-selected="false" tabindex="-1"><span class="num">10</span>10 &middot; Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">11</span>Version check</button></div>
+</div>
+
+<main>
+<section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head short"><p class="kicker">Section 1 of 11</p></div><div class="body"><h2 class="sec" id="table-of-contents">Table of contents</h2><ol>
+<li><a href="#1-why-distributed-training-needs-this">Why distributed training needs this</a></li>
+<li><a href="#2-processes-ranks-and-launching">Processes, ranks, and launching</a></li>
+<li><a href="#3-process-groups-and-rendezvous">Process groups and rendezvous</a></li>
+<li><a href="#4-point-to-point-communication">Point-to-point communication</a></li>
+<li><a href="#5-collective-communication">Collective communication</a></li>
+<li><a href="#6-how-ring-all-reduce-actually-works">How ring all-reduce actually works</a></li>
+<li><a href="#7-the-hardware-underneath">The hardware underneath</a></li>
+<li><a href="#8-what-the-primitives-build">What the primitives build</a></li>
+<li><a href="#9-pitfalls-and-debugging">Pitfalls and debugging</a></li>
+<li><a href="#10-quick-reference">Quick reference</a></li>
+</ol><h2 class="sec" id="1-why-distributed-training-needs-this">1. Why distributed training needs this</h2><p>Large models do not fit on one GPU. That is worth making concrete, because the numbers drive every design decision that follows.</p><p>For a model trained in mixed precision with Adam, the <em>per-parameter</em> memory cost is roughly:</p><div class="tablewrap"><table>
+<thead><tr><th>Item</th><th>Bytes per parameter</th></tr></thead>
+<tbody>
+<tr><td>bf16 weights</td><td>2</td></tr>
+<tr><td>bf16 gradients</td><td>2</td></tr>
+<tr><td>fp32 master weights</td><td>4</td></tr>
+<tr><td>Adam momentum (fp32)</td><td>4</td></tr>
+<tr><td>Adam variance (fp32)</td><td>4</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>~16</strong></td></tr>
+</tbody>
+</table></div><p>So a 7B model needs ~112&nbsp;GB of <em>state</em> before you have stored a single activation. An 80&nbsp;GB H100 cannot hold it. A 70B model needs ~1.1&nbsp;TB. This is why the model must be split across devices &mdash; and once it is split, the pieces must talk to each other. That conversation is what this chapter is about.</p><p>Distributed processing = spreading a large resource across multiple machines or devices and having them cooperate.</p><div class="note"><span class="tag">&#128221; Note &mdash; where this chapter sits in the series.</span><p>Everything in chapters 04&ndash;10 is a specific arrangement of the primitives defined here. It is worth reading this one first even if you are impatient to get to FSDP, because the later chapters use these operations as vocabulary rather than re-explaining them.</p><div class="ascii-card"><pre>  ch03  primitives        send/recv, broadcast, reduce, all_reduce, ...
+    |
+    +-- ch04  the map     which axis to split, what each costs
+    +-- ch05  data        all_reduce of gradients
+    +-- ch06  pipeline    send/recv of activations between stages
+    +-- ch07  tensor      all_reduce inside every layer
+    +-- ch08  memory      reduce_scatter + all_gather instead of all_reduce
+    +-- ch09  combined    one process group per axis
+    +-- ch10  throughput  making each GPU-second count
+</pre></div></div></div></section>
+<section class="panel" id="pan-2-processes-ranks-and-launching" role="tabpanel" aria-labelledby="t-2-processes-ranks-and-launching" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 11</p><h2 id="2-processes-ranks-and-launching">2. Processes, ranks, and launching</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#basic-terminology">Basic terminology</a><a class="lv3" href="#how-to-run-a-multi-process-application">Running a multi-process app</a><a class="lv3" href="#style-1-your-code-forks-a-function">1) Your code forks a function</a><a class="lv3" href="#style-2-the-launcher-forks-your-script">2) The launcher forks your script</a></nav><div class="body"><h3 id="basic-terminology">Basic terminology</h3><ul>
+<li><strong>Node</strong>: one computer. "3 nodes" means 3 machines.</li>
+<li><strong>Global Rank</strong>: a process's index across the whole job. In ML, effectively <strong>the GPU's global ID</strong>.</li>
+<li><strong>Local Rank</strong>: the same index scoped to one node &mdash; <strong>the GPU ID within that machine</strong>.</li>
+<li><strong>World Size</strong>: the total number of processes.</li>
+</ul><div class="note"><span class="tag">&#128221; Note &mdash; the full set of identifiers, and why the distinction matters.</span><p>Picture 2 nodes with 4 GPUs each:</p><div class="ascii-card"><pre>                    WORLD_SIZE = 8
+
+  +---- Node 0 -----------------+   +---- Node 1 -----------------+
+  | GPU0  GPU1  GPU2  GPU3      |   | GPU0  GPU1  GPU2  GPU3      |
+  |  v     v     v     v        |   |  v     v     v     v        |
+  | rank0 rank1 rank2 rank3     |   | rank4 rank5 rank6 rank7     |  &lt;- RANK (global)
+  | lr:0  lr:1  lr:2  lr:3      |   | lr:0  lr:1  lr:2  lr:3      |  &lt;- LOCAL_RANK
+  +-----------------------------+   +-----------------------------+
+     LOCAL_WORLD_SIZE = 4               LOCAL_WORLD_SIZE = 4
+</pre></div><div class="tablewrap"><table>
+<thead><tr><th>Variable</th><th>Meaning</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td><code>RANK</code></td><td>Unique process ID across the job, <code>0 &hellip; WORLD_SIZE-1</code></td><td>Deciding <em>who does what</em> (only rank 0 logs or saves)</td></tr>
+<tr><td><code>LOCAL_RANK</code></td><td>Process ID within its node</td><td>Choosing the <strong>CUDA device</strong>: <code>torch.cuda.set_device(local_rank)</code></td></tr>
+<tr><td><code>WORLD_SIZE</code></td><td>Total number of processes</td><td>Sizing collectives, scaling learning rate</td></tr>
+<tr><td><code>LOCAL_WORLD_SIZE</code></td><td>Processes on this node</td><td>Per-node resource limits</td></tr>
+<tr><td><code>GROUP_RANK</code></td><td>Which node this is (0-indexed)</td><td>Node-level logic</td></tr>
+</tbody>
+</table></div><p><strong>The single most common beginner bug in multi-node training:</strong> using <code>RANK</code> where <code>LOCAL_RANK</code> is required. On node 1, <code>RANK=5</code>, but there is no <code>cuda:5</code> &mdash; the node only has GPUs 0&ndash;3. <code>torch.cuda.set_device(rank)</code> crashes or silently misbehaves. <strong>Device selection is always <code>LOCAL_RANK</code>.</strong> Single-node examples hide this, because there the two coincide &mdash; which is why the bug so often shows up only when a job is first scaled out.</p><p>Note also that "one process per GPU" is a convention, not a law. It just happens to be the only configuration that performs well, so effectively everyone follows it.</p></div><h3 id="how-to-run-a-multi-process-application">How to run a multi-process application</h3><p>There are two broad styles:</p><ol>
+<li><strong>Your code is the parent</strong>, and it forks a specific <em>function</em> into subprocesses.</li>
+<li><strong>The PyTorch launcher is the parent</strong>, and it forks your <em>entire script</em>.</li>
+</ol><h3 id="style-1-your-code-forks-a-function">1) Your code forks a function</h3><p>Subprocesses start in one of two ways:</p><ul>
+<li><strong><code>spawn</code></strong> &mdash; does not inherit the parent's resources; allocates fresh. Slow but safe.</li>
+<li><strong><code>fork</code></strong> &mdash; shares the parent's resources with the child. Fast but dangerous.</li>
+</ul><div class="warn"><span class="tag">&#9888;&#65039; What "dangerous" means, and why it matters for CUDA.</span><p><code>fork()</code> gives the child a copy-on-write image of the parent's memory. That copy includes locks, open file descriptors, and &mdash; critically &mdash; <strong>CUDA context state that cannot be duplicated</strong>. If the parent has already touched CUDA, a forked child that tries to use it typically fails with:</p><div class="ascii-card"><pre>Cannot re-initialize CUDA in forked subprocess.
+To use CUDA with multiprocessing, you must use the 'spawn' start method
+</pre></div><p>This is why every CUDA example uses <code>spawn</code>. The cost is that a fresh interpreter starts and re-imports your modules, so arguments must be <strong>picklable</strong> and module-level side effects run again in each child &mdash; hence the mandatory <code>if __name__ == "__main__":</code> guard. Without it, <code>spawn</code> re-executes the launching code in every child and you get infinite process recursion.</p><div class="tablewrap"><table>
+<thead><tr><th></th><th><code>fork</code></th><th><code>spawn</code></th><th><code>forkserver</code></th></tr></thead>
+<tbody>
+<tr><td>Speed</td><td>Fast</td><td>Slow (re-imports)</td><td>Medium</td></tr>
+<tr><td>CUDA-safe</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td></tr>
+<tr><td>Args must be picklable</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+</tbody>
+</table></div></div><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+multi_process.py
+"""
+import torch.multiprocessing as mp
+
+# Runs concurrently in the subprocesses
+def fn(rank, param1, param2):
+    # `rank` is injected automatically as the FIRST positional argument.
+    print(f"{param1} {param2} - rank: {rank}")
+
+if __name__ == "__main__":
+    mp.spawn(
+        fn=fn,
+        args=("A0", "B1"),     # everything AFTER rank
+        nprocs=4,
+        join=True,
+        daemon=False,
+    )
+</pre></div><div class="code shell"><div class="code-bar"><span>output</span><button class="copy" type="button">copy</button></div><pre><span class="p">$</span> python multi_process.py
+A0 B1 - rank: 1
+A0 B1 - rank: 0
+A0 B1 - rank: 3
+A0 B1 - rank: 2
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; the output order is scrambled, and that is the whole point.</span><p>There is no ordering guarantee between independent processes writing to a shared stdout. Get comfortable with this now: for the rest of your distributed career, log output arrives interleaved. The standard fix is to gate logging on rank:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>if dist.get_rank() == 0:
+    print(...)
+</pre></div></div><div class="note"><span class="tag">&#128221; Note &mdash; two things about <code>mp.spawn</code> worth knowing.</span><p><strong>The implicit first argument.</strong> <code>mp.spawn</code> <em>always</em> injects the process index as the first positional argument. You never pass <code>rank</code> yourself and you cannot reorder it. Write <code>fn(param1, param2, rank)</code> and you will silently get the index bound to <code>param1</code>.</p><p><strong>It surfaces child exceptions; a hand-rolled loop does not.</strong> Each child gets an error queue: if it raises, the traceback is pickled back to the parent and re-raised. Roll your own <code>mp.Process</code> loop and a crashed child dies silently while the parent blocks in <code>join()</code> forever.</p></div><h3 id="style-2-the-launcher-forks-your-script">2) The launcher forks your script</h3><p>This is what you will use for anything real. <code>torchrun</code> runs your whole script as N subprocesses and sets the environment variables for you.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+hello_dist.py
+"""
+import os
+
+rank       = int(os.environ["RANK"])
+local_rank = int(os.environ["LOCAL_RANK"])
+world_size = int(os.environ["WORLD_SIZE"])
+print(f"hello world, rank={rank} local_rank={local_rank} / {world_size}")
+</pre></div><div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre><span class="p">$</span> torchrun --standalone --nproc_per_node=4 hello_dist.py
+hello world, rank=0 local_rank=0 / 4
+hello world, rank=1 local_rank=1 / 4
+hello world, rank=2 local_rank=2 / 4
+hello world, rank=3 local_rank=3 / 4
+</pre></div><div class="rulebox"><span class="tag">Why <code>torchrun</code>, and not <code>torch.distributed.launch</code></span><p>You will meet the older <code>python -m torch.distributed.launch</code> in a lot of material. It is deprecated. <code>torchrun</code> replaces it and ships as a console script with PyTorch:</p>
+<div class="code"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre># Single node, 4 GPUs
+torchrun --standalone --nproc_per_node=4 train.py
+
+# Multi-node: run on each node, changing --node_rank
+torchrun \
+  --nnodes=2 \
+  --nproc_per_node=8 \
+  --node_rank=0 \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint=10.0.0.1:29500 \
+  train.py
+</pre></div>
+<p>Three practical differences:</p>
+<ol>
+<li><strong>No more <code>--local_rank</code> argparse argument.</strong> The old launcher passed <code>--local_rank=N</code> as a command-line flag, so every script carried <code>parser.add_argument("--local_rank", type=int)</code>. <code>torchrun</code> sets the <code>LOCAL_RANK</code> <strong>environment variable</strong> instead. If you inherit old code with that argparse line, delete it.</li>
+<li><strong>Elasticity and fault tolerance.</strong> <code>torchrun</code> can restart failed workers and supports a dynamic node count (<code>--nnodes=1:4</code>) via <code>torch.distributed.elastic</code>.</li>
+<li><strong>Rendezvous.</strong> <code>--rdzv_backend=c10d --rdzv_endpoint=host:port</code> replaces manually setting <code>MASTER_ADDR</code>/<code>MASTER_PORT</code>. <code>--standalone</code> is shorthand for a single-node rendezvous on a free port. Since PyTorch 2.12, a plain <code>torchrun --nproc_per_node=N script.py</code> with neither flag also picks an OS-assigned free port rather than hard-coding 29500 &mdash; which stops two concurrent jobs colliding with "Address already in use".</li>
+</ol></div><div class="note"><span class="tag">&#128221; Note &mdash; which launch style should you actually use?</span><div class="tablewrap"><table>
+<thead><tr><th></th><th><code>mp.spawn</code></th><th><code>torchrun</code></th></tr></thead>
+<tbody>
+<tr><td>Multi-node</td><td>Awkward (you orchestrate it)</td><td>Built in</td></tr>
+<tr><td>Fault tolerance / elasticity</td><td>None</td><td>Yes</td></tr>
+<tr><td>Debugging</td><td>Easier (one <code>python</code> invocation)</td><td>Slightly harder</td></tr>
+<tr><td>Notebook-friendly</td><td>Sometimes</td><td>No</td></tr>
+<tr><td>Recommended for training jobs</td><td>&mdash;</td><td>&#9989;</td></tr>
+</tbody>
+</table></div><p>Rule of thumb: <code>torchrun</code> for anything real; <code>mp.spawn</code> for unit tests and library code that must launch workers programmatically.</p></div></div></section>
+<section class="panel" id="pan-3-process-groups-and-rendezvous" role="tabpanel" aria-labelledby="t-3-process-groups-and-rendezvous" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 11</p><h2 id="3-process-groups-and-rendezvous">3. Process groups and rendezvous</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#message-passing">Message passing</a><a class="lv3" href="#the-backends">The backends</a><a class="lv3" href="#backend-support-table">Backend support table</a><a class="lv3" href="#process-groups">Process groups</a><a class="lv3" href="#rendezvous">Rendezvous</a></nav><div class="body"><h3 id="message-passing">Message passing</h3><p>Message passing means several processes that do <strong>not</strong> share an address space exchange data by passing explicit messages. Process 1 <code>send</code>s, process 2 <code>recv</code>s, and no shared memory is involved. Nearly all distributed communication in large-model training is built on this model.</p><div class="note"><span class="tag">&#128221; Note &mdash; why message passing rather than shared memory.</span><p>Shared memory is faster and simpler, but it only exists <em>within one machine</em>. The moment your job spans two nodes connected by a network, there is no shared address space, and message passing is the only model that works. Standardizing on it means the same code runs on 1 GPU or 1,000 &mdash; only the transport underneath changes (NVLink &rarr; PCIe &rarr; InfiniBand &rarr; Ethernet).</p><p>The operation names below (<code>scatter</code>, <code>gather</code>, <code>all_reduce</code>, <code>barrier</code>) come from <strong>MPI</strong>, the 1994 HPC standard. NCCL deliberately mirrors MPI's naming, which is why the vocabulary feels like it arrived from another field &mdash; it did.</p></div><h3 id="the-backends">The backends</h3><div class="tablewrap"><table>
+<thead><tr><th>Backend</th><th>Hardware</th><th>Use when</th></tr></thead>
+<tbody>
+<tr><td><code>nccl</code></td><td>NVIDIA GPU</td><td>Default for all GPU training</td></tr>
+<tr><td><code>gloo</code></td><td>CPU (and limited GPU)</td><td>CPU training, debugging, sanity-checking a suspected NCCL problem</td></tr>
+<tr><td><code>mpi</code></td><td>CPU/GPU</td><td>Only to integrate with an existing MPI/HPC stack; requires building PyTorch from source</td></tr>
+<tr><td><code>xccl</code></td><td>Intel GPU (XPU)</td><td>Intel accelerators</td></tr>
+<tr><td>RCCL (spelled <code>nccl</code>)</td><td>AMD GPU (ROCm)</td><td>AMD &mdash; NCCL-compatible API, so the same <code>"nccl"</code> string works</td></tr>
+</tbody>
+</table></div><div class="note"><span class="tag">&#128221; Note &mdash; why NCCL is so much faster.</span><p>NCCL is not just "an implementation" &mdash; it is <strong>topology-aware</strong>. At init it discovers the actual interconnect graph (NVLink, NVSwitch, PCIe switches, InfiniBand HCAs) and builds rings or trees that maximize bandwidth over the fastest available links. On an 8-GPU NVLink node, an all-reduce may never touch the PCIe bus or host memory at all. Section 7 opens this up properly.</p><p>You can also mix: <code>dist.init_process_group(backend="cpu:gloo,cuda:nccl")</code>, for jobs where some collectives (object/metadata) must run on CPU. The general form is a comma-separated list of <code>device_type:backend</code> pairs.</p></div><h3 id="backend-support-table">Backend support table</h3><p>Support is listed per <strong>backend and device</strong>, not per backend alone &mdash; a backend can support an operation on GPU but not CPU.</p><div class="tablewrap"><table>
+<thead><tr><th>Operation</th><th>gloo CPU</th><th>gloo GPU</th><th>mpi CPU</th><th>mpi GPU</th><th>nccl CPU</th><th>nccl GPU</th><th>xccl CPU</th><th>xccl GPU</th></tr></thead>
+<tbody>
+<tr><td><code>send</code></td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>recv</code></td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>broadcast</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>all_reduce</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>reduce</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>all_gather</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>gather</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>scatter</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>reduce_scatter</code></td><td>&#10003;</td><td>&#10003;</td><td>&#10007;</td><td>&#10007;</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>all_to_all</code></td><td>&#10007;</td><td>&#10007;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+<tr><td><code>barrier</code></td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td><td>?</td><td>&#10007;</td><td>&#10003;</td><td>&#10007;</td><td>&#10003;</td></tr>
+</tbody>
+</table></div><p>Reading the table:</p><ul>
+<li><strong>NCCL is GPU-only.</strong> Its entire CPU column is &#10007; &mdash; that is not a gap, it is what the library is. Its GPU column is now complete.</li>
+<li><strong>Older tutorials will tell you otherwise.</strong> Until PyTorch 1.8 NCCL had no <code>send</code>/<code>recv</code>, and <code>scatter</code>/<code>gather</code> arrived later still, so material written before ~2022 falls back to <code>gloo</code> for those. That is no longer necessary &mdash; and it matters enormously for pipeline parallelism, which is built on P2P.</li>
+<li><strong>GLOO gained <code>reduce_scatter</code></strong> on both CPU and GPU.</li>
+<li><strong>GLOO's GPU column still has real holes</strong>: no <code>send</code>/<code>recv</code>, no <code>all_to_all</code>, no <code>barrier</code>. GLOO is a CPU backend that happens to accept some GPU tensors, not a GPU backend.</li>
+<li><strong>The <code>?</code> in the MPI GPU column means "depends on your build."</strong> Whether MPI accepts a CUDA pointer depends on whether it was compiled CUDA-aware. PyTorch cannot know, so it declines to claim.</li>
+</ul><p>This table moves between releases. Check the docs for the version you actually have before designing around a gap.</p><h3 id="process-groups">Process groups</h3><p>Calling <code>init_process_group</code> creates the default group that all processes belong to. <code>new_group</code> creates a subset.</p><div class="note"><span class="tag">&#128221; Note &mdash; what a process group actually buys you.</span><p>A process group is a <strong>communicator</strong>: a named subset of ranks plus its own communication channel. Two things follow:</p><ol>
+<li><strong>Scoped collectives.</strong> <code>dist.all_reduce(t, group=g)</code> only involves ranks in <code>g</code>. This is the mechanism behind multi-dimensional parallelism &mdash; one group per tensor-parallel slice, one per pipeline stage, one per data-parallel replica.</li>
+<li><strong>Concurrency.</strong> Distinct groups can have distinct NCCL communicators, so a tensor-parallel all-reduce and a data-parallel all-reduce can overlap.</li>
+</ol><div class="ascii-card"><pre>                    default_pg  (all 8 ranks)
+       +----------------------------------------------+
+       |  0    1    2    3    4    5    6    7         |
+       +----------------------------------------------+
+   tp groups:  [0,1]  [2,3]  [4,5]  [6,7]      &lt;- tensor parallel
+   dp groups:  [0,2,4,6]     [1,3,5,7]         &lt;- data parallel
+</pre></div><p>You will rarely build these by hand for long. <code>DeviceMesh</code> declares the same structure as an n-dimensional named grid and creates every group for you &mdash; the subject of chapter 09. One ordering requirement carries over from here: since PyTorch 2.11, <code>DeviceMesh</code> resolves its process groups <em>at construction</em>, so <code>init_process_group</code> must be called <strong>before</strong> you build the mesh.</p></div><div class="rulebox"><span class="tag">The cardinal rule, first statement</span><p><strong><code>new_group</code> must be called by every process in the job, in the same order, with the same arguments &mdash; including ranks that will not be members of the resulting group.</strong></p><p>It is a collective call. Skipping it on non-members is a classic silent hang. Ranks outside the member list get <code>GroupMember.NON_GROUP_MEMBER</code> back rather than a usable handle.</p><p>Two more things before you reach for it. Each extra group costs a real NCCL communicator, which costs GPU memory &mdash; so <code>new_group</code> over <em>all</em> ranks is pure waste; that is what the default group already is, and you can name it explicitly with <code>group=None</code>. And the communicator is created lazily on first use, not by <code>new_group</code> itself, so a mistake here often surfaces at some later collective rather than at the call site.</p></div><p><code>init_process_group</code> has to run <strong>inside each worker</strong>, not in a parent that spawns them. With <code>mp.spawn</code> that means calling it in the spawned function:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+process_group_spawn.py
+"""
+import os
+import torch
+import torch.multiprocessing as mp
+import torch.distributed as dist
+
+# Runs concurrently in the subprocesses
+def fn(rank, world_size):
+    # rank is passed automatically; world_size is supplied by us.
+    # Single node, so local_rank == rank. Bind the device BEFORE init,
+    # or every rank binds to cuda:0 and the first collective hangs.
+    torch.cuda.set_device(rank)
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+
+    # Actually communicate - otherwise you have not shown the setup works.
+    t = torch.ones(1, device="cuda") * rank
+    dist.all_reduce(t)
+    print(f"rank {dist.get_rank()} of {dist.get_world_size()}: {t.item()}")
+
+    dist.destroy_process_group()
+
+if __name__ == "__main__":
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
+    # No need to set WORLD_SIZE/RANK in the environment: we pass them to
+    # init_process_group explicitly, and explicit arguments win.
+
+    mp.spawn(fn=fn, args=(4,), nprocs=4, join=True, daemon=False)
+</pre></div><div class="code shell"><div class="code-bar"><span>output</span><button class="copy" type="button">copy</button></div><pre><span class="p">$</span> python process_group_spawn.py
+rank 2 of 4: 6.0
+rank 0 of 4: 6.0
+rank 3 of 4: 6.0
+rank 1 of 4: 6.0
+</pre></div><div class="warn"><span class="tag">&#9888;&#65039; Two mistakes this example is written to avoid.</span><p>A very common version of this snippet omits <code>torch.cuda.set_device(rank)</code> and adds <code>group = dist.new_group(range(world_size))</code>. It prints a plausible-looking <code>ProcessGroupNCCL</code> object per rank and appears to work &mdash; but only because it never runs a collective. Both parts are wrong:</p><ul>
+<li>Without <code>set_device</code>, all four ranks default to <code>cuda:0</code>. Nothing fails until the first real collective, which then hangs or corrupts.</li>
+<li><code>new_group</code> over <em>every</em> rank duplicates the default group. It allocates a second communicator for no benefit; pass <code>group=None</code> instead.</li>
+</ul><p>The general lesson is worth keeping: <strong>if an example creates a process group and never communicates through it, it has not demonstrated that the setup is correct.</strong> That is why the <code>all_reduce</code> is in the code above &mdash; it is the assertion.</p></div><p>Under <code>torchrun</code> you do not pass <code>rank</code> or <code>world_size</code> at all &mdash; they come from the environment. Here is <code>new_group</code> earning its keep &mdash; two subgroups, with a collective scoped to one of them:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+process_groups.py  -  torchrun --standalone --nproc_per_node=4 process_groups.py
+"""
+import os
+import torch
+import torch.distributed as dist
+
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)          # BEFORE init
+dist.init_process_group("nccl")
+rank, world_size = dist.get_rank(), dist.get_world_size()
+
+# Every rank creates BOTH groups, in the same order - including the one it
+# will not belong to. new_group is a collective call.
+evens = dist.new_group([r for r in range(world_size) if r % 2 == 0])
+odds  = dist.new_group([r for r in range(world_size) if r % 2 == 1])
+my_group = evens if rank % 2 == 0 else odds
+
+tensor = torch.ones(1, device="cuda") * rank
+dist.all_reduce(tensor, group=my_group)
+# evens reduce among themselves: 0 + 2 = 2
+# odds  reduce among themselves: 1 + 3 = 4
+
+print(f"rank {rank}: {tensor.item()}")
+dist.destroy_process_group()
+</pre></div><div class="code shell"><div class="code-bar"><span>output</span><button class="copy" type="button">copy</button></div><pre><span class="p">$</span> torchrun --standalone --nproc_per_node=4 process_groups.py
+rank 0: 2.0
+rank 2: 2.0
+rank 1: 4.0
+rank 3: 4.0
+</pre></div><p>The all-reduce touched only half the ranks each time. That scoping is the entire mechanism behind multi-dimensional parallelism: one set of groups per axis, with every collective naming the group it belongs to.</p><h3 id="rendezvous">Rendezvous</h3><div class="note"><span class="tag">&#128221; Note &mdash; what "rendezvous" means and the three ways to do it.</span><p><code>MASTER_ADDR</code>/<code>MASTER_PORT</code> are how ranks <em>find each other</em>. Rank 0 opens a small key-value store (<code>TCPStore</code>) at that address; every other rank connects and exchanges the metadata needed to build NCCL communicators. It is used only for bootstrap &mdash; the actual tensor traffic does <strong>not</strong> flow through it.</p><div class="tablewrap"><table>
+<thead><tr><th><code>init_method</code></th><th>How it works</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>env://</code> (default)</td><td>Reads <code>MASTER_ADDR</code>, <code>MASTER_PORT</code>, <code>RANK</code>, <code>WORLD_SIZE</code> from the environment</td><td>What <code>torchrun</code> sets up</td></tr>
+<tr><td><code>tcp://10.0.0.1:29500</code></td><td>Address given explicitly in code</td><td>You must also pass <code>rank=</code> and <code>world_size=</code></td></tr>
+<tr><td><code>file:///shared/nfs/sync</code></td><td>Coordinate through a shared filesystem</td><td>Needs a genuinely shared FS; <strong>delete the file between runs</strong> or the next job hangs</td></tr>
+</tbody>
+</table></div><ul>
+<li><code>MASTER_ADDR</code> must be reachable <em>from every node</em> &mdash; <code>localhost</code> only works single-node.</li>
+<li>Port collisions are a real and confusing failure mode. <code>torchrun --standalone</code> picks a free port for you.</li>
+<li><strong>Always tear down:</strong> call <code>dist.destroy_process_group()</code> before exit. Skipping it leaves NCCL communicators dangling and produces warnings or hangs at shutdown.</li>
+<li>Pass <code>device_id=torch.device(f"cuda:{local_rank}")</code> to <code>init_process_group</code> to make NCCL initialize eagerly rather than lazily on first collective. Init failures then surface immediately instead of much later at a confusing call site.</li>
+</ul></div><div class="note"><span class="tag">&#128221; Note &mdash; the boilerplate worth memorizing.</span><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import os
+import torch
+import torch.distributed as dist
+
+def setup():
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)                  # BEFORE init
+    dist.init_process_group(
+        backend="nccl",
+        device_id=torch.device(f"cuda:{local_rank}"),  # eager init, clearer errors
+    )
+    return local_rank, dist.get_rank(), dist.get_world_size()
+
+def cleanup():
+    dist.barrier()
+    dist.destroy_process_group()
+
+if __name__ == "__main__":
+    local_rank, rank, world_size = setup()
+    try:
+        ...   # training
+    finally:
+        cleanup()
+</pre></div><p>Two details that matter: call <code>torch.cuda.set_device()</code> <strong>before</strong> <code>init_process_group</code> (otherwise every rank may bind to device 0, and you get a hang or an OOM on GPU 0), and put teardown in a <code>finally</code> so a crashing rank does not leave the others waiting.</p></div></div></section>
+<section class="panel" id="pan-4-point-to-point-communication" role="tabpanel" aria-labelledby="t-4-point-to-point-communication" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 11</p><h2 id="4-point-to-point-communication">4. Point-to-point communication</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv4" href="#blocking-send-and-recv">Blocking: send / recv</a><a class="lv4" href="#non-blocking-isend-and-irecv">Non-blocking: isend / irecv</a><a class="lv4" href="#scaling-past-two-ranks">Who has to participate?</a></nav><div class="body"><p>P2P communication sends data from one specific process to another, with <code>send</code> and <code>recv</code>.</p><h4 id="blocking-send-and-recv">Blocking: <code>send</code> and <code>recv</code></h4><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+p2p.py  -  torchrun --standalone --nproc_per_node=2 p2p.py
+"""
+import os
+import torch
+import torch.distributed as dist
+
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)
+dist.init_process_group("nccl")
+rank = dist.get_rank()
+
+if rank == 0:
+    tensor = torch.randn(2, 2, device="cuda")
+    dist.send(tensor, dst=1)
+elif rank == 1:
+    tensor = torch.zeros(2, 2, device="cuda")   # pre-allocated, right shape
+    print(f"rank 1 before: {tensor}")
+    dist.recv(tensor, src=0)
+    print(f"rank 1 after: {tensor}")
+
+dist.destroy_process_group()
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; P2P is what pipeline parallelism runs on.</span><p>Every activation handed from one pipeline stage to the next is a <code>send</code>/<code>recv</code> pair. That is why native NCCL support matters so much: doing it over GLOO would stage every activation through host memory.</p></div><div class="warn"><span class="tag">&#9888;&#65039; <code>recv</code> needs a pre-allocated tensor of exactly the right shape.</span><p>Notice rank 1 creates <code>torch.zeros(2, 2)</code> <em>first</em>. <code>recv</code> fills an existing buffer; it does not allocate or infer shape. If the shapes disagree between sender and receiver you get corruption or a hang, not a friendly error.</p><p>This is a live constraint in pipeline parallelism, where activation shapes vary with sequence length. Implementations either exchange shape metadata first or pad to fixed shapes by construction &mdash; which is why pipeline examples so often pad every sequence to <code>max_length</code>.</p></div><h4 id="non-blocking-isend-and-irecv">Non-blocking: <code>isend</code> and <code>irecv</code></h4><p><code>send</code> and <code>recv</code> are synchronous. For non-blocking communication use <code>isend</code>/<code>irecv</code>, and <code>wait()</code> before touching the data.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>if rank == 0:
+    tensor = torch.randn(2, 2, device="cuda")
+    request = dist.isend(tensor, dst=1)
+elif rank == 1:
+    tensor = torch.zeros(2, 2, device="cuda")
+    request = dist.irecv(tensor, src=0)
+
+request.wait()
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; "asynchronous" means something different on GPU than on CPU.</span><p>This is subtle and worth internalizing:</p><ul>
+<li><strong>GLOO (CPU):</strong> <code>wait()</code> genuinely blocks the calling thread until the transfer completes. Straightforward.</li>
+<li><strong>NCCL (GPU):</strong> collectives are enqueued onto a CUDA stream, so the Python call returns almost immediately regardless of <code>async_op</code>. <code>work.wait()</code> does <strong>not</strong> block the CPU &mdash; it inserts a wait on the CUDA stream so subsequent kernels are ordered after the communication. The CPU races ahead.</li>
+</ul><p>Consequence: with NCCL the CPU can be many iterations ahead of the GPU, so when something goes wrong the Python traceback often points at a line unrelated to the real fault. Set <code>CUDA_LAUNCH_BLOCKING=1</code> when debugging to force synchronous behaviour and get honest stack traces &mdash; at a large performance cost, so never leave it on.</p><p>The real payoff of <code>async_op=True</code> is <strong>overlapping communication with computation</strong>:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>work = dist.all_reduce(grad_bucket, async_op=True)
+compute_something_unrelated()   # GPU does useful work while the network is busy
+work.wait()                     # now safe to read grad_bucket
+</pre></div><p>This is exactly what DDP does under the hood: it buckets gradients and launches all-reduce for early buckets while later layers are still computing their backward pass. Chapter 05 covers it in detail.</p></div><h4 id="scaling-past-two-ranks">Scaling past two ranks: who has to participate?</h4><p>Both examples above are written for exactly two processes. Run either with <code>--nproc_per_node=4</code> and it breaks in two places &mdash; and only one of them is the <code>wait()</code>:</p><ol>
+<li>An <code>else: raise</code> branch, if you wrote one &mdash; ranks 2 and 3 fall straight into it.</li>
+<li><code>request.wait()</code> at module level &mdash; a rank that took no branch never bound <code>request</code>, so it dies with <code>NameError</code>.</li>
+</ol><p>Say you want only ranks 1 and 2 to exchange a tensor while ranks 0 and 3 sit the round out. The rule for <code>wait()</code> is not about <em>where</em> you put it, but about <em>who</em> calls it: <strong>only a rank that actually issued an operation may wait on the handle it got back.</strong> That admits two idioms &mdash; wait inside each branch, or initialise the handle to <code>None</code> and guard the call afterwards.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>"""
+p2p_selective.py - only ranks 1 and 2 talk; 0 and 3 sit it out.
+"""
+import os
+import torch
+import torch.distributed as dist
+
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)
+dist.init_process_group("nccl")     # ALL four ranks call this
+rank = dist.get_rank()
+
+SRC, DST = 1, 2
+request, tensor = None, None
+
+if rank == SRC:
+    tensor = torch.randn(2, 2, device="cuda")
+    request = dist.isend(tensor, dst=DST)
+elif rank == DST:
+    tensor = torch.zeros(2, 2, device="cuda")
+    request = dist.irecv(tensor, src=SRC)
+# ranks 0 and 3: nothing at all. No matching call, no barrier,
+# no placeholder - and that is correct, not an omission.
+
+if request is not None:
+    request.wait()
+    print(f"rank {rank}: {tensor}")
+else:
+    print(f"rank {rank}: not involved")
+
+dist.destroy_process_group()        # ALL four ranks again
+</pre></div><div class="code shell"><div class="code-bar"><span>output</span><button class="copy" type="button">copy</button></div><pre><span class="p">$</span> torchrun --standalone --nproc_per_node=4 p2p_selective.py
+rank 0: not involved
+rank 3: not involved
+rank 1: tensor([[-0.7049,  0.8836],
+        [-0.4996,  0.4550]], device='cuda:1')
+rank 2: tensor([[-0.7049,  0.8836],
+        [-0.4996,  0.4550]], device='cuda:2')
+</pre></div><p>Hoisting the wait out of the branch is the better habit, because it leaves somewhere to put real work <em>between</em> issuing the operation and waiting on it &mdash; which is the entire point of <code>isend</code>/<code>irecv</code>. Waiting inside the branch collapses straight back to synchronous behaviour.</p><p>With NCCL the difference is smaller than it looks, though, for the reason given just above: <code>wait()</code> inserts a stream dependency rather than blocking the CPU. On GLOO, where it genuinely blocks the calling thread, placement matters a great deal.</p><div class="rulebox"><span class="tag">The distinction that makes this work</span><p><strong>Point-to-point is not a collective.</strong> Ranks 0 and 3 do nothing, and that is complete and correct &mdash; not a gap to paper over with a barrier or a no-op.</p><p>This is the exact inverse of <a href="#the-cardinal-rule">the cardinal rule</a> in section 9. That rule governs <code>all_reduce</code>, <code>broadcast</code>, <code>barrier</code>, <code>new_group</code> &mdash; operations every rank must enter together. <code>send</code>/<code>recv</code> bind only the two ranks named in the call.</p><p>What all four ranks <em>do</em> still share is <code>init_process_group</code> and <code>destroy_process_group</code>. Under the hood PyTorch builds a dedicated two-rank NCCL communicator for the <code>(1, 2)</code> pair, lazily, on first use; ranks 0 and 3 take no part in creating it.</p></div><div class="warn"><span class="tag">&#9888;&#65039; Two follow-on traps.</span><p><strong>Do not reach for <code>new_group([1, 2])</code> here.</strong> A subgroup buys you nothing for P2P and costs a communicator. And if you do have one for other reasons, note the signature carefully: <code>dst</code> is a <strong>global</strong> rank <em>regardless of the <code>group</code> argument</em>. The group-relative form is a separate keyword, and passing both is an error:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>dist.isend(tensor, dst=2)                    # global rank 2
+dist.isend(tensor, group=g, group_dst=1)     # rank 1 *within* g
+dist.isend(tensor, group=g, dst=2)           # also fine - dst stays global
+# dist.isend(tensor, dst=2, group_dst=1)     # invalid: pick one
+</pre></div><p><strong>Two pairs at once need subgroups, not tags.</strong> If you want 0&harr;1 and 2&harr;3 exchanging in the same phase, you cannot disambiguate them with the <code>tag</code> argument &mdash; <code>tag</code> is <em>not supported by the NCCL backend</em>. Use a separate process group per pair, or batch the operations as below.</p></div><div class="warn"><span class="tag">&#9888;&#65039; <code>batch_isend_irecv</code> prevents a classic deadlock.</span><p>If every rank in a ring does <code>send(right)</code> then <code>recv(left)</code> synchronously, and the transport buffers are full, everyone blocks on <code>send</code> and nobody reaches <code>recv</code>. Deadlock. Use:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>ops = [
+    dist.P2POp(dist.isend, send_buf, dst=(rank + 1) % world_size),
+    dist.P2POp(dist.irecv, recv_buf, src=(rank - 1) % world_size),
+]
+for req in dist.batch_isend_irecv(ops):
+    req.wait()
+</pre></div><p>NCCL groups these into a single operation so ordering cannot deadlock. Pipeline-parallel implementations rely on this heavily.</p></div></div></section>
+<section class="panel" id="pan-5-collective-communication" role="tabpanel" aria-labelledby="t-5-collective-communication" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 11</p><h2 id="5-collective-communication">5. Collective communication</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#1-broadcast">1) Broadcast</a><a class="lv3" href="#2-reduce">2) Reduce</a><a class="lv3" href="#3-scatter">3) Scatter</a><a class="lv3" href="#4-gather">4) Gather</a><a class="lv3" href="#5-all-reduce">5) All-reduce</a><a class="lv3" href="#6-all-gather">6) All-gather</a><a class="lv3" href="#7-reduce-scatter">7) Reduce-scatter</a><a class="lv3" href="#8-barrier">8) Barrier</a><a class="lv3" href="#9-all-to-all">9) All-to-all</a><a class="lv3" href="#summary-the-whole-vocabulary">Summary</a><a class="lv3" href="#when-async-op-actually-helps">When async_op helps</a></nav><div class="body"><p>Collective communication involves multiple processes. Four are fundamental &mdash; <code>broadcast</code>, <code>scatter</code>, <code>gather</code>, <code>reduce</code> &mdash; and the rest are built from them.</p><div class="note"><span class="tag">&#128221; Note &mdash; the two axes that organize all of them.</span><p>Rather than memorizing unrelated functions, note they are generated by two independent choices:</p><div class="tablewrap"><table>
+<thead><tr><th></th><th><strong>One &rarr; Many</strong></th><th><strong>Many &rarr; One</strong></th></tr></thead>
+<tbody>
+<tr><td><strong>Data copied whole</strong></td><td><code>broadcast</code></td><td><code>gather</code></td></tr>
+<tr><td><strong>Data split/combined</strong></td><td><code>scatter</code></td><td><code>reduce</code></td></tr>
+</tbody>
+</table></div><p>Then:</p><ul>
+<li>Prefix <strong><code>all-</code></strong> = "&hellip;and then everyone gets the result" (i.e. append a broadcast).</li>
+<li><strong><code>reduce-scatter</code></strong> = reduce, then hand each rank one slice instead of giving one rank everything.</li>
+<li><strong><code>all-to-all</code></strong> = every rank sends a distinct piece to every other rank (a distributed transpose).</li>
+<li><strong><code>barrier</code></strong> = no data, pure synchronization.</li>
+</ul><p>That is the entire vocabulary.</p></div><h3 id="1-broadcast">1) Broadcast</h3><p>Copies data from one process to all processes in the group.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>tensor = torch.randn(2, 2, device="cuda") if rank == 0 else torch.zeros(2, 2, device="cuda")
+dist.broadcast(tensor, src=0)
+# every rank now holds rank 0's values
+</pre></div><div class="warn"><span class="tag">&#9888;&#65039; Broadcast is in-place, and <em>every</em> rank must call it.</span><p>Non-source ranks must pass a tensor of the <em>same shape and dtype</em>; it gets overwritten. The <code>torch.zeros</code> on other ranks is a buffer, not data.</p><p>Note that all ranks call <code>dist.broadcast</code> &mdash; the source and the destinations run the same line. Never write <code>if rank == 0: dist.broadcast(...)</code>; that hangs. This is the cardinal rule from &sect;3 in its simplest form.</p></div><div class="note"><span class="tag">&#128221; Note &mdash; where you will actually use it.</span><p>Broadcasting model weights from rank 0 at startup so all replicas begin identically. DDP does this for you at construction, which is why you can initialize the model with a different seed per rank and still end up consistent.</p></div><h3 id="2-reduce">2) Reduce</h3><p>Combines data from all processes with an operation, collecting the output on one device.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>tensor = torch.ones(2, 2, device="cuda") * rank
+dist.reduce(tensor, op=dist.ReduceOp.SUM, dst=0)
+# rank 0 holds [[6,6],[6,6]]  since 0+1+2+3 = 6
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; the full ReduceOp menu.</span><div class="tablewrap"><table>
+<thead><tr><th>Op</th><th>Meaning</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>SUM</code></td><td>Elementwise sum</td><td>The workhorse</td></tr>
+<tr><td><code>PRODUCT</code></td><td>Elementwise product</td><td>Rare</td></tr>
+<tr><td><code>MIN</code> / <code>MAX</code></td><td>Elementwise min/max</td><td>Global norms and statistics</td></tr>
+<tr><td><code>AVG</code></td><td>Elementwise mean</td><td>NCCL only; <strong>prefer over SUM-then-divide</strong> &mdash; one fewer kernel and better numerics</td></tr>
+<tr><td><code>BAND</code>/<code>BOR</code>/<code>BXOR</code></td><td>Bitwise</td><td>Integer masks; not on all backends</td></tr>
+<tr><td><code>PREMUL_SUM</code></td><td>Scale, then sum</td><td>Fuses scaling into the collective</td></tr>
+</tbody>
+</table></div></div><div class="note"><span class="tag">&#128221; Note &mdash; what the tensor holds on non-dst ranks.</span><p><code>reduce</code> is in-place: PyTorch hands the backend the same buffer as both source and destination. On rank <code>dst</code> that buffer comes back holding the result. What happens on <em>every other</em> rank is backend-specific, and PyTorch deliberately declines to promise anything &mdash; its API contract is only that <em>"only the process with rank <code>dst</code> is going to receive the final result."</em></p><p>The two backends really do differ:</p><div class="tablewrap"><table>
+<thead><tr><th>Backend</th><th>Non-dst tensor afterwards</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>nccl</code></td><td><strong>Untouched</strong> &mdash; still <code>ones(2,2) * rank</code></td><td><code>ncclReduce</code> specifies that <code>recvbuff</code> may be <code>NULL</code> on every call except the root's, so it cannot be writing there</td></tr>
+<tr><td><code>gloo</code></td><td><strong>Clobbered</strong> with partial sums</td><td><code>gloo::reduce</code> is a reduce-scatter followed by a gather to root, and the reduce-scatter accumulates into the user's buffer on <em>every</em> rank</td></tr>
+</tbody>
+</table></div><p>So on NCCL your own contribution really is still sitting there afterwards. Leaning on that is still a bad habit: it is a property of the backend rather than of <code>torch.distributed</code>, and the same code quietly changes meaning the moment you fall back to <code>gloo</code> to <a href="#hang-checklist">isolate a NCCL hang</a> &mdash; exactly the moment you can least afford a second mystery.</p><p>If you need your contribution after the call, say so in the code:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>mine = tensor.clone()                          # survives on every rank
+dist.reduce(tensor, dst=0, op=dist.ReduceOp.SUM)
+# `tensor` now holds the sum on rank 0, and nothing you should read elsewhere
+</pre></div><p>Or reach for <code>all_reduce</code> instead and let every rank keep a usable result &mdash; usually the better answer if you found yourself wanting one.</p></div><div class="warn"><span class="tag">&#9888;&#65039; Reduce is not bitwise-deterministic.</span><p>Floating-point addition is not associative, so <code>(a+b)+c &ne; a+(b+c)</code> in general. NCCL may choose different reduction orders across runs depending on topology and message size. Two "identical" runs will diverge after a few thousand steps. For ordinary training this is harmless; if you need run-to-run reproducibility it is a real obstacle, requiring deterministic algorithms and a fixed communication schedule &mdash; and you will pay for it in speed.</p></div><h3 id="3-scatter">3) Scatter</h3><p>Splits a tensor and distributes the pieces.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>output = torch.zeros(1, device="cuda")
+
+if rank == 0:
+    inputs = torch.tensor([10.0, 20.0, 30.0, 40.0], device="cuda")
+    chunks = torch.split(inputs, 1)
+    # torch.split returns VIEWS; NCCL needs contiguous buffers
+    dist.scatter(output, scatter_list=[c.contiguous() for c in chunks], src=0)
+else:
+    dist.scatter(output, src=0)
+# rank i receives element i
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; the rules the signature doesn't show you.</span><p>Several things about <code>scatter</code> are enforced at runtime rather than being conventions you could deviate from:</p><div class="tablewrap"><table>
+<thead><tr><th>Rule</th><th>What happens if you break it</th></tr></thead>
+<tbody>
+<tr><td><code>scatter_list</code> on the source rank and <em>only</em> there</td><td><code>ValueError: Argument scatter_list must NOT be specified on non-source ranks</code>, and the mirror-image error if you omit it on the source</td></tr>
+<tr><td><code>len(scatter_list) == world_size</code></td><td><code>ValueError</code> from <code>ProcessGroupNCCL::scatter</code></td></tr>
+<tr><td>every element matches the output tensor's <strong>size and dtype</strong></td><td><code>ValueError</code> &mdash; this is the docs' "all Tensors in <code>scatter_list</code> must have the same size"</td></tr>
+<tr><td>every element is <strong>contiguous</strong></td><td><em>nothing at all</em> &mdash; see below</td></tr>
+</tbody>
+</table></div><p>So the asymmetry in the code &mdash; source provides the list, everyone provides an output &mdash; is checked, not merely idiomatic; <code>gather_list</code> carries the identical pair of errors, inverted. Note also that <code>src</code> is a <strong>global</strong> rank regardless of the <code>group</code> argument, with <code>group_src</code> as the group-relative alternative, exactly as with <a href="#scaling-past-two-ranks">send/recv</a>. Pass neither and <code>src</code> defaults to global rank 0.</p><p><strong>Contiguity is the one that bites</strong>, precisely because it is the one nobody checks. <code>ProcessGroupNCCL::scatter</code> validates list length, dtype and shape, then hands each element straight to <code>ncclSend</code> as a raw <code>data_ptr()</code> plus a <code>numel()</code> count. Strides are never consulted. A non-contiguous view therefore transmits whatever happens to sit beside it in storage &mdash; no error, wrong numbers.</p><p>Whether <code>torch.split</code> hands you that hazard depends entirely on <em>which dimension</em> you split along:</p><div class="ascii-card"><pre>a = torch.tensor([10., 20., 30., 40.])     # 1-D
+torch.split(a, 1, dim=0)[0]                # shape (1,)   stride (1,)   contiguous OK
+                                           #   -&gt; .contiguous() is a no-op
+
+b = torch.arange(16.).reshape(4, 4)        # 2-D
+torch.split(b, 1, dim=-1)[0]               # shape (4, 1) stride (4, 1) NOT contiguous
+                                           #   -&gt; would send  [0, 1, 2,  3]
+                                           #      instead of  [0, 4, 8, 12]
+</pre></div><p>The example above is the harmless first case, so its <code>.contiguous()</code> costs nothing and does nothing. Megatron's <code>split_tensor_along_last_dim</code>, further down this section, is the second case &mdash; which is why its source carries the terse warning <em>"torch.split does not create contiguous tensors by default."</em> There the call is load-bearing. Since <code>.contiguous()</code> returns <code>self</code> when the tensor already qualifies, calling it unconditionally before any collective is free insurance.</p></div><div class="note"><span class="tag">&#128221; Note &mdash; on NCCL there is a faster way, involving no communication at all.</span><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>inputs = torch.tensor([10.0, 20.0, 30.0, 40.0], device="cuda")
+output = torch.split(inputs, 1)[rank].contiguous()
+</pre></div><p>Every rank already has the full tensor (it was computed identically, or replicated earlier), so "scattering" is just <em>each rank slicing out its own piece locally</em>. Zero bytes cross the wire. When the data is already replicated, a local slice beats a real scatter every time &mdash; and this trick is everywhere in tensor-parallel code.</p></div><p>Megatron-LM does exactly this, wrapped in an <code>autograd.Function</code> so gradients flow correctly:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>class _ScatterToModelParallelRegion(torch.autograd.Function):
+    """Split the input and keep only the chunk belonging to this rank."""
+
+    @staticmethod
+    def forward(ctx, input_):
+        return _split(input_)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return _gather(grad_output)
+</pre></div><div class="rulebox"><span class="tag">The most conceptually important idea in this chapter</span><p>Look at that <code>forward</code>/<code>backward</code> pair:</p><div class="ascii-card"><pre>forward:  _split          backward:  _gather
+</pre></div><p><strong>Communication operations come in adjoint pairs.</strong> If the forward pass scatters, the backward must gather, because gradients flow the opposite direction through the same data movement. Megatron defines four such functions, conventionally called <em>f</em> and <em>g</em>:</p><div class="tablewrap"><table>
+<thead><tr><th>Forward</th><th>Backward</th></tr></thead>
+<tbody>
+<tr><td><code>_split</code> (scatter)</td><td><code>_gather</code></td></tr>
+<tr><td><code>_gather</code></td><td><code>_split</code></td></tr>
+<tr><td><code>identity</code></td><td><code>all_reduce</code></td></tr>
+<tr><td><code>all_reduce</code></td><td><code>identity</code></td></tr>
+</tbody>
+</table></div><p>Once you see this, tensor parallelism (chapter 07) stops being mysterious: you split a weight matrix column-wise or row-wise, and insert whichever f/g pair makes the math work out. Everything else is bookkeeping.</p><p>Note that the third row is a no-op in the forward pass whose <em>only</em> job is to install an all-reduce on the backward &mdash; so half of tensor parallelism's communication is invisible when you read the forward code. Since PyTorch 2.11 there are also native <strong>differentiable collectives</strong>, which give you this behaviour without writing the wrapper class yourself.</p></div><h3 id="4-gather">4) Gather</h3><p>Collects tensors from all devices onto one.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>inp = torch.ones(1, device="cuda") * rank
+
+if rank == 0:
+    buf = [torch.zeros(1, device="cuda") for _ in range(world_size)]
+    dist.gather(inp, gather_list=buf, dst=0)
+    print(buf)     # [tensor([0.]), tensor([1.]), tensor([2.]), tensor([3.])]
+else:
+    dist.gather(inp, dst=0)
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; the gather list is ordered by rank.</span><p><code>buf[i]</code> always holds rank <code>i</code>'s contribution. That ordering guarantee is what makes gather/all-gather useful for reassembling a sharded tensor: <code>torch.cat(buf, dim=0)</code> reconstructs the original. The destination must pre-allocate exactly <code>world_size</code> correctly-shaped tensors.</p><p>If you are ever on a backend that lacks <code>gather</code>, the standard fallback is <code>all_gather</code> &mdash; supported nearly everywhere &mdash; followed by discarding the result on non-destination ranks. More bandwidth, but it always works.</p></div><h3 id="5-all-reduce">5) All-reduce</h3><p>Reduce, then give the result to every device.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>tensor = torch.ones(2, 2, device="cuda") * rank
+dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+# EVERY rank now holds [[6,6],[6,6]]
+</pre></div><div class="rulebox"><span class="tag">The single most important operation in distributed training</span><p>Every step of data-parallel training ends with an all-reduce of gradients:</p><div class="ascii-card"><pre>Each rank computes grad L on its own minibatch shard
+        |
+all_reduce(grads, op=SUM)   &lt;- every rank now has the summed gradient
+        |
+divide by world_size (or use ReduceOp.AVG)
+        |
+Every rank applies the IDENTICAL optimizer update -&gt; weights stay in sync
+</pre></div><p>Because the update is identical everywhere, replicas never drift. That invariant &mdash; <em>all ranks hold identical weights at the start of every step</em> &mdash; is what data parallelism rests on, and all-reduce is what maintains it.</p></div><div class="note"><span class="tag">&#128221; Note &mdash; all-reduce is not implemented as reduce-then-broadcast.</span><p>The naive version would push all data through one rank, making it a bandwidth bottleneck that gets worse with scale. Real implementations use <strong>ring all-reduce</strong> = <code>reduce_scatter</code> followed by <code>all_gather</code>.</p><p>It is easy to overstate what that buys you, because <em>two different costs scale differently</em> and the ring only tames one of them:</p><div class="tablewrap"><table>
+<thead><tr><th><code>N</code> ranks</th><th>Ring bytes per rank <code>2(N-1)D/N</code></th><th>Naive bytes at the root <code>(N-1)D</code></th><th>Ring steps <code>2(N-1)</code></th></tr></thead>
+<tbody>
+<tr><td>2</td><td>1.000 D</td><td>1 D</td><td>2</td></tr>
+<tr><td>8</td><td>1.750 D</td><td>7 D</td><td>14</td></tr>
+<tr><td>64</td><td>1.969 D</td><td>63 D</td><td>126</td></tr>
+<tr><td>512</td><td>1.996 D</td><td>511 D</td><td>1,022</td></tr>
+<tr><td>&rarr; &infin;</td><td><strong>always under 2 D</strong></td><td>unbounded</td><td>unbounded</td></tr>
+</tbody>
+</table></div><p>The <strong>volume</strong> each rank moves is <em>bounded</em>: it climbs from <code>D</code> at two ranks and never reaches <code>2D</code> however many GPUs you add. Note the careful word &mdash; it does still vary with <code>N</code>; it is simply capped instead of growing with the job. What makes that worth remarking on is the column beside it, where the naive root is moving 511 tensors' worth at the same scale.</p><p>That bound is also what <strong>bandwidth-optimal</strong> means here, in the strict sense: <code>2(N-1)D/N</code> is the known lower bound for all-reduce, and the ring achieves it exactly rather than merely approaching it.</p><p>The <strong>latency</strong> is another matter &mdash; <code>2(N-1)</code> sequential steps, growing without limit. Total time runs roughly <code>2(N-1)&alpha; + 2(N-1)D/(N&beta;)</code>: the second term saturates at <code>2D/&beta;</code> while the first keeps climbing, so nothing here is independent of world size in wall-clock terms. That surviving latency term is precisely why NCCL keeps trees in reserve. <a href="#what-it-costs">Section 6 derives both costs</a> and then <a href="#when-the-ring-loses-trees">works through the tree tradeoff</a>.</p></div><h3 id="6-all-gather">6) All-gather</h3><p>Gather, then give the collected result to everyone.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>buf = [torch.zeros(1, device="cuda") for _ in range(world_size)]
+dist.all_gather(buf, torch.ones(1, device="cuda") * rank)
+# every rank holds [0., 1., 2., 3.]
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; prefer the flat-tensor form in new code.</span><p>The list-of-tensors form requires the backend to handle <code>world_size</code> separate buffers. The flat variant is faster and cleaner:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>output = torch.empty(world_size * inp.numel(), dtype=inp.dtype, device=inp.device)
+dist.all_gather_single(output, inp)            # PyTorch &gt;= 2.13
+# dist.all_gather_into_tensor(output, inp)     # the 1.13 - 2.12 name
+output = output.view(world_size, *inp.shape)
+</pre></div><p><strong>These have been renamed twice.</strong> They began as private <code>_all_gather_base</code>/<code>_reduce_scatter_base</code>, became public as <code>all_gather_into_tensor</code>/<code>reduce_scatter_tensor</code> in PyTorch 1.13, and were renamed again in <strong>2.13</strong> to <code>all_gather_single</code>/<code>reduce_scatter_single</code> to align with torchcomms. Older names still resolve for now. You will meet all three spellings in the wild.</p></div><div class="note"><span class="tag">&#128221; Note &mdash; where all-gather shows up.</span><p>FSDP/ZeRO-3: each rank stores only a shard of each layer's parameters, and all-gathers the full layer <em>just before</em> using it in forward, then frees it. This trades communication for memory &mdash; the reason a 70B model can train on GPUs that could never hold it whole. Chapter 08 covers it.</p><p>There is also <code>all_gather_object</code>, which pickles arbitrary Python objects. Convenient for metrics and metadata, but slow (CPU-side serialization) &mdash; never put it in your training inner loop.</p></div><h3 id="7-reduce-scatter">7) Reduce-scatter</h3><p>Reduce, then give each rank one slice of the result.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>chunks = torch.split(torch.tensor([1, 10, 100, 1000], device="cuda") * rank, 1)
+output = torch.zeros(1, dtype=torch.int64, device="cuda")
+dist.reduce_scatter(output, [c.contiguous() for c in chunks], op=dist.ReduceOp.SUM)
+# rank0: 6   rank1: 60   rank2: 600   rank3: 6000
+</pre></div><div class="note"><span class="tag">&#128221; Note &mdash; reading the arithmetic.</span><p>Line up the inputs as a matrix, rows = ranks, columns = slices:</p><div class="ascii-card"><pre>            slice0  slice1  slice2  slice3
+  rank0        0       0       0       0
+  rank1        1      10     100    1000
+  rank2        2      20     200    2000
+  rank3        3      30     300    3000
+            ------  ------  ------  ------
+  column sum:    6      60     600    6000
+                 |       |       |       |
+                 v       v       v       v
+              rank0   rank1   rank2   rank3
+</pre></div><p>Reduce-scatter sums <strong>down the columns</strong> and gives column <em>i</em> to rank <em>i</em>. Each rank ends up with <code>1/world_size</code> of the reduced result &mdash; which is precisely why it is the memory-saving alternative to all-reduce.</p><p>Flat form: <code>dist.reduce_scatter_single(out, flat_in, op=dist.ReduceOp.SUM)</code>.</p></div><div class="note"><span class="tag">&#128221; Note &mdash; where reduce-scatter matters.</span><p>ZeRO stage 2 and FSDP replace the gradient all-reduce with a gradient <strong>reduce-scatter</strong>: each rank keeps only the gradient slice matching its optimizer-state shard. Half the communication volume of all-reduce, and a <code>1/N</code> reduction in gradient memory. It is the single change that makes ZeRO-2 worth the complexity.</p></div><h3 id="8-barrier">8) Barrier</h3><p>Pure synchronization &mdash; early arrivals wait until everyone reaches the same point.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>dist.barrier(device_ids=[local_rank])
+</pre></div><div class="warn"><span class="tag">&#9888;&#65039; Pass <code>device_ids</code>, and do not sprinkle barriers "to be safe".</span><p><strong>Why <code>device_ids</code>:</strong> on NCCL, <code>barrier()</code> is implemented as an all-reduce on a dummy tensor, so it must pick a device. If the current device is not what you expect, ranks can pick <em>different</em> devices and the barrier hangs.</p><p><strong>Good use:</strong> letting one rank do something exclusive while others wait.</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>if rank == 0:
+    download_dataset()      # only one process should do this
+dist.barrier()              # everyone waits
+data = load_dataset()       # now safe for all ranks
+</pre></div><p><strong>Misuse:</strong> adding barriers around collectives. Every barrier forces the fastest rank to idle until the slowest arrives, converting straggler variance into wall-clock loss. Collectives are <em>already</em> synchronizing &mdash; an all-reduce cannot complete until every rank participates. A barrier next to one buys nothing and costs real time.</p><p><strong>Genuinely useful:</strong> barriers for <em>localizing a hang</em>. Insert them between phases and see which is the last one reached; the deadlock is between that barrier and the next.</p></div><h3 id="9-all-to-all">9) All-to-all</h3><p>Every rank sends a <em>different</em> chunk to every other rank &mdash; effectively a distributed transpose:</p><div class="ascii-card"><pre>before:  rank0:[A0 A1 A2 A3]   rank1:[B0 B1 B2 B3]   rank2:[C0 ...]   rank3:[D0 ...]
+after:   rank0:[A0 B0 C0 D0]   rank1:[A1 B1 C1 D1]   rank2:[A2 ...]   rank3:[A3 ...]
+</pre></div><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>dist.all_to_all_single(output, input)   # flat version, most common
+</pre></div><p>This is the backbone of <strong>Mixture-of-Experts</strong> training: tokens are routed to whichever expert lives on whichever GPU, which is exactly an all-to-all. It also appears in sequence and context parallelism (DeepSpeed-Ulysses) to switch between sharding over sequence and sharding over attention heads. Given how central MoE has become, it belongs alongside the other eight rather than as a footnote.</p><h3 id="summary-the-whole-vocabulary">Summary: the whole vocabulary</h3><div class="ascii-card"><pre>                 ONE rank has it          ALL ranks have it
+                 -----------------        ------------------
+  whole copy     broadcast  --------&gt;     (source -&gt; everyone)
+                 gather     &lt;--------     all_gather
+  split pieces   scatter    --------&gt;     (one -&gt; slices)
+                 reduce     &lt;--------     all_reduce
+                                          reduce_scatter  (reduce, keep 1/N each)
+                                          all_to_all      (everyone &lt;-&gt; everyone)
+  no data                                 barrier
+</pre></div><p>Two identities worth remembering:</p><div class="ascii-card"><pre>all_reduce      =  reduce_scatter  +  all_gather
+all_gather      =  gather          +  broadcast
+</pre></div><p>The first is not a curiosity &mdash; it is how all-reduce is actually implemented, and it is the reason ZeRO-2 can halve gradient communication. It reappears in chapters 07 and 08.</p><h3 id="when-async-op-actually-helps">When <code>async_op</code> actually helps</h3><p>Every collective above takes <code>async_op=True</code>. It is worth being precise about what that flag does, because the obvious reading &mdash; "it makes the call return without blocking" &mdash; is wrong on NCCL. As <a href="#non-blocking-isend-and-irecv">section 4 explains</a>, the call returns almost immediately either way; the CPU is never the thing being blocked.</p><p>What the flag actually selects is <strong>which CUDA stream the collective runs on</strong>. From <code>ProcessGroupNCCL.cpp</code>:</p><div class="ascii-card"><pre>// in asyncOp=false [default] mode, we use currentStream as ncclStream
+// otherwise, we use separate ncclStream and let it sync on currentStream
+auto ncclStream = asyncOp ? ncclStreams_.at(key)
+                          : at::cuda::getCurrentCUDAStream(device.index());
+</pre></div><p>So the two modes differ in a way that has nothing to do with blocking:</p><div class="tablewrap"><table>
+<thead><tr><th></th><th><code>async_op=False</code></th><th><code>async_op=True</code></th></tr></thead>
+<tbody>
+<tr><td>Runs on</td><td>your current compute stream</td><td>a separate NCCL stream</td></tr>
+<tr><td>Overlap with compute</td><td><strong>impossible</strong> &mdash; same stream, so kernels are strictly ordered</td><td><strong>possible</strong> &mdash; two streams progress concurrently</td></tr>
+<tr><td>Returns</td><td><code>None</code> &mdash; there is no handle, and none needed</td><td>a <code>Work</code> handle you must <code>wait()</code> on</td></tr>
+</tbody>
+</table></div><p>That reframes the whole feature. <code>async_op=True</code> does not make anything faster by itself; it <em>moves the collective off the critical path</em> so that something else can occupy the GPU while it runs. If nothing else is queued, you have added an extra stream and a synchronisation event for no gain.</p><div class="rulebox"><span class="tag">The rule that follows from this</span><p>The gap between issuing and waiting must contain <strong>GPU work</strong> &mdash; kernels queued on the compute stream. Python statements do not count.</p><p>The CPU already runs far ahead of the GPU, so filling the gap with host-side code buys nothing. It is queued kernels that overlap, not lines of source.</p></div><p>Which collectives are worth the trouble, and what real systems overlap them with:</p><div class="tablewrap"><table>
+<thead><tr><th>Collective</th><th>Overlapped with</th><th>Where you have seen it</th></tr></thead>
+<tbody>
+<tr><td><code>all_reduce</code></td><td>the remainder of the backward pass</td><td><strong>DDP.</strong> Gradients are bucketed at ~25 MiB; the all-reduce for early buckets is launched while later layers are still computing their backward</td></tr>
+<tr><td><code>all_gather_single</code></td><td>the current layer's compute</td><td><strong>FSDP / ZeRO-3 prefetch.</strong> Layer <code>N+1</code>'s parameters are gathered while layer <code>N</code> is still running</td></tr>
+<tr><td><code>reduce_scatter_single</code></td><td>earlier layers' backward</td><td><strong>FSDP / ZeRO-2.</strong> Each layer's gradient shard is reduced as soon as that layer's backward finishes</td></tr>
+<tr><td><code>all_to_all_single</code></td><td>expert compute</td><td><strong>MoE.</strong> Dispatch and combine are the two halves the expert FFN hides behind</td></tr>
+<tr><td><code>isend</code> / <code>irecv</code></td><td>other microbatches</td><td><strong>Pipeline parallelism.</strong> Activations for microbatch <em>k</em> move while microbatch <em>k+1</em> computes</td></tr>
+<tr><td><code>broadcast</code></td><td>&mdash; rarely worth it</td><td>Almost always init-time weight sync, where there is nothing to hide it behind</td></tr>
+<tr><td><code>barrier</code></td><td>&mdash; nearly a contradiction</td><td>Its entire purpose is to stop progress; see the <a href="#8-barrier">misuse note above</a></td></tr>
+</tbody>
+</table></div><p>A worked shape, the pattern all of the above reduce to:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># NO overlap: the collective sits on the compute stream,
+#             so `more_compute` cannot start until it finishes
+dist.all_reduce(grad_bucket)
+more_compute(activations)
+
+# OVERLAP: collective on its own stream, compute proceeds beside it
+work = dist.all_reduce(grad_bucket, async_op=True)
+more_compute(activations)          # real GPU kernels - this is what hides the latency
+work.wait()                        # compute stream now waits on the NCCL event
+optimizer_step(grad_bucket)        # safe to read only after wait()
+</pre></div><h4 id="async-op-pitfalls">Four ways to get it wrong</h4><ul>
+<li><strong>Reading the buffer before <code>wait()</code>.</strong> You get a partially reduced tensor and no error whatsoever. This is the most common async bug and it corrupts results silently.</li>
+<li><strong>Letting the tensor die before <code>wait()</code>.</strong> NCCL is still reading that memory from another stream. PyTorch stashes tensors to mitigate this, but keeping a reference is your job.</li>
+<li><strong>Expecting two collectives on the same group to overlap each other.</strong> One process group means one NCCL stream, so its collectives serialise in issue order. They overlap with <em>compute</em>, not with one another. To overlap two collectives, put them on <a href="#process-groups">separate process groups</a>.</li>
+<li><strong>Forgetting <code>wait()</code> entirely.</strong> Nothing raises. The dependency is simply never inserted, and results are non-deterministically wrong.</li>
+</ul><p>Finally, overlap is not free even when it works. NCCL's kernels occupy SMs and consume HBM bandwidth while they run, so a collective hidden behind compute still <a href="#switch-arithmetic">slows that compute down</a> &mdash; it is cheaper than serialising, not costless. This is part of why switch-side reduction is attractive: it hands those SMs back.</p></div></section>
+<section class="panel" id="pan-6-how-ring-all-reduce-actually-works" role="tabpanel" aria-labelledby="t-6-how-ring-all-reduce-actually-works" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 11</p><h2 id="6-how-ring-all-reduce-actually-works">6. How ring all-reduce actually works</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#the-goal">The goal</a><a class="lv3" href="#the-obvious-way-and-why-it-fails">The obvious way, and why it fails</a><a class="lv3" href="#why-split-into-n-chunks">Why split into N chunks</a><a class="lv3" href="#phase-1-reduce-scatter">Phase 1 &mdash; reduce-scatter</a><a class="lv3" href="#phase-2-all-gather">Phase 2 &mdash; all-gather</a><a class="lv3" href="#why-2n-1-steps">Why 2(N&minus;1) steps</a><a class="lv3" href="#what-it-costs">What it costs</a><a class="lv4" href="#two-worked-examples">Two worked examples</a><a class="lv3" href="#when-the-ring-loses-trees">When the ring loses: trees</a></nav><div class="body"><p>Section 5 described <em>what</em> each collective does. All-reduce is worth opening up to see <em>how</em>, because the algorithm explains the performance numbers you will measure, and it explains the design of every memory-saving strategy in chapter 08.</p><h3 id="the-goal">The goal</h3><p>Four GPUs have just finished a backward pass, each on its own slice of the batch. Each holds a <strong>different</strong> gradient tensor. To keep the arithmetic readable, say the tensor is four numbers long:</p><div class="ascii-card"><pre>rank 0:  [ 1,  2,  3,  4 ]
+rank 1:  [10, 20, 30, 40 ]
+rank 2:  [ 5,  5,  5,  5 ]
+rank 3:  [ 2,  2,  2,  2 ]
+</pre></div><p>We want <strong>every</strong> rank to end up holding the elementwise sum <code>[18, 29, 40, 51]</code>. That is all-reduce: add up four tensors, give the answer to all four ranks.</p><h3 id="the-obvious-way-and-why-it-fails">The obvious way, and why it fails</h3><p>Rank 0 could collect the other three tensors, add them, and send the answer back out. But then rank 0 receives 3 tensors and sends 3 tensors, while every other rank sends 1 and receives 1. One link does all the work while the rest sit idle, and it gets worse as you add GPUs &mdash; on 64 GPUs, rank 0 would move 63 tensors' worth of data through a single port.</p><p>What we want instead: <strong>every link busy at every moment, and no rank doing more work than any other.</strong></p><h3 id="why-split-into-n-chunks">Why split into N chunks</h3><p>Here is the move that makes it possible. The sum of element 0 does not depend on elements 1, 2, or 3 at all. Laid out as a grid, the four column-sums are four completely independent problems:</p><div class="ascii-card"><pre>        col 0    col 1    col 2    col 3
+r0        1        2        3        4
+r1       10       20       30       40
+r2        5        5        5        5
+r3        2        2        2        2
+        -----    -----    -----    -----
+sum      18       29       40       51
+</pre></div><p>So instead of one big job there are <strong>N independent small jobs</strong> &mdash; and there happen to be N ranks. Give each rank responsibility for one column and everybody has something to do. That is the entire reason for chunking: it converts one contended job into N parallel ones.</p><h3 id="phase-1-reduce-scatter">Phase 1 &mdash; reduce-scatter, step by step</h3><p>Each step, every rank sends one number to its right neighbour, receives one from its left, and <strong>adds</strong> it in. The column a rank works on <strong>rotates</strong> every step &mdash; this is the part that is easy to get wrong. Nothing stays put, which is exactly what lets rank 2's contribution eventually reach rank 0.</p><p><strong>Step 1.</strong> Rank <em>i</em> sends its own column <em>i</em> to the right.</p><div class="tablewrap"><table>
+<thead><tr><th></th><th>sends right</th><th>receives</th><th>result</th></tr></thead>
+<tbody>
+<tr><td>rank 0</td><td>col0: <code>1</code> &rarr; r1</td><td>col3: <code>2</code> from r3</td><td>col3 = 4+2 = <strong>6</strong></td></tr>
+<tr><td>rank 1</td><td>col1: <code>20</code> &rarr; r2</td><td>col0: <code>1</code> from r0</td><td>col0 = 10+1 = <strong>11</strong></td></tr>
+<tr><td>rank 2</td><td>col2: <code>5</code> &rarr; r3</td><td>col1: <code>20</code> from r1</td><td>col1 = 5+20 = <strong>25</strong></td></tr>
+<tr><td>rank 3</td><td>col3: <code>2</code> &rarr; r0</td><td>col2: <code>5</code> from r2</td><td>col2 = 2+5 = <strong>7</strong></td></tr>
+</tbody>
+</table></div><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0    1     2     3   [ 6]   &lt;- 2 of 4 contributions
+rank 1  [11]   20    30    40    &lt;- 2 of 4
+rank 2    5   [25]    5     5    &lt;- 2 of 4
+rank 3    2     2   [ 7]    2    &lt;- 2 of 4
+</pre></div><p><strong>Step 2.</strong> Each rank forwards the partial sum it just built, and starts on a new column.</p><div class="tablewrap"><table>
+<thead><tr><th></th><th>sends right</th><th>receives</th><th>result</th></tr></thead>
+<tbody>
+<tr><td>rank 0</td><td>col3: <code>6</code> &rarr; r1</td><td>col2: <code>7</code> from r3</td><td>col2 = 3+7 = <strong>10</strong></td></tr>
+<tr><td>rank 1</td><td>col0: <code>11</code> &rarr; r2</td><td>col3: <code>6</code> from r0</td><td>col3 = 40+6 = <strong>46</strong></td></tr>
+<tr><td>rank 2</td><td>col1: <code>25</code> &rarr; r3</td><td>col0: <code>11</code> from r1</td><td>col0 = 5+11 = <strong>16</strong></td></tr>
+<tr><td>rank 3</td><td>col2: <code>7</code> &rarr; r0</td><td>col1: <code>25</code> from r2</td><td>col1 = 2+25 = <strong>27</strong></td></tr>
+</tbody>
+</table></div><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0    1     2   [10]    6    &lt;- 3 of 4
+rank 1   11    20    30   [46]   &lt;- 3 of 4
+rank 2  [16]   25     5     5    &lt;- 3 of 4
+rank 3    2   [27]    7     2    &lt;- 3 of 4
+</pre></div><p><strong>Step 3.</strong></p><div class="tablewrap"><table>
+<thead><tr><th></th><th>sends right</th><th>receives</th><th>result</th></tr></thead>
+<tbody>
+<tr><td>rank 0</td><td>col2: <code>10</code> &rarr; r1</td><td>col1: <code>27</code> from r3</td><td>col1 = 2+27 = <strong>29</strong> &#10003;</td></tr>
+<tr><td>rank 1</td><td>col3: <code>46</code> &rarr; r2</td><td>col2: <code>10</code> from r0</td><td>col2 = 30+10 = <strong>40</strong> &#10003;</td></tr>
+<tr><td>rank 2</td><td>col0: <code>16</code> &rarr; r3</td><td>col3: <code>46</code> from r1</td><td>col3 = 5+46 = <strong>51</strong> &#10003;</td></tr>
+<tr><td>rank 3</td><td>col1: <code>27</code> &rarr; r0</td><td>col0: <code>16</code> from r2</td><td>col0 = 2+16 = <strong>18</strong> &#10003;</td></tr>
+</tbody>
+</table></div><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0    1   [29]   10     6
+rank 1   11    20   [40]   46
+rank 2   16    25     5   [51]
+rank 3  [18]   27     7     2
+</pre></div><p>Three steps, and each rank owns exactly one finished value &mdash; <code>29, 40, 51, 18</code>. Between them they hold the whole answer, but nobody has all of it. <strong>That is reduce-scatter</strong>: the result exists, scattered one piece per rank.</p><p>Note the offset: rank <em>i</em> ends up owning column <em>i+1</em>, not column <em>i</em>. That is the rotation showing up in the final state.</p><div class="note"><span class="tag">&#128221; Note &mdash; "reduce-scatter" is one operation, not a reduce followed by a scatter.</span><p>The name misleads almost everyone once. Nothing here performs a <code>scatter</code>; no such call exists anywhere in ring all-reduce. The word describes <em>where the answer lands</em> &mdash; scattered, one piece per rank. Phase 1 <strong>is</strong> the reduce-scatter, in a single pass.</p><p>Which raises the obvious question: if the ring is set up properly, why don't all the workers simply end up with the full reduced tensor, making phase 2 unnecessary? Look at what each rank holds after phase 1, annotated with how many of the four contributions each cell has absorbed:</p><div class="ascii-card"><pre>            col0        col1        col2        col3
+  rank 0      1(1/4)    29(4/4)    10(3/4)     6(2/4)
+  rank 1     11(2/4)    20(1/4)    40(4/4)    46(3/4)
+  rank 2     16(3/4)    25(2/4)     5(1/4)    51(4/4)
+  rank 3     18(4/4)    27(3/4)     7(2/4)     2(1/4)
+                ^
+      rank 0 holds only its OWN value here - 1 of 4
+</pre></div><p>Every rank finishes with exactly <strong>one</strong> complete column. Take rank 0 and <code>col0</code>: it still holds <code>1</code>, its own contribution and nothing else. The answer for that column, <code>18</code>, was assembled somewhere else entirely:</p><div class="ascii-card"><pre>rank 0  -&gt;  rank 1  -&gt;  rank 2  -&gt;  rank 3
+   1          11          16          18  OK
+</pre></div><p>It travelled <em>away</em> from rank 0, which never received a single byte of <code>col0</code> data. No amount of clever setup changes that, because the diagonal staircase in the matrix above is forced by the budget: a rank sends one chunk per step, and that is the whole reason the ring is cheap. For every rank to fully reduce every column locally, each would have to receive <code>(N-1)</code> contributions across all <code>N</code> columns &mdash; <code>(N-1)D</code> bytes, the naive cost, <code>N/2</code> times worse. <strong>Dividing the reduction work is what makes it affordable, and a divided answer is the shadow of that division.</strong></p><p>Formally there is no way around it: all-reduce has a lower bound of <code>2D(N-1)/N</code> bytes per rank, while reduce-scatter alone costs <code>D(N-1)/N</code>. You cannot buy all-reduce at reduce-scatter's price, so phase 2 is not a wart in the design &mdash; it is the other half of a proven minimum.</p><p>Two footnotes. NCCL does not literally call two APIs here; it is one fused schedule, and the two-phase decomposition is the algorithm's structure rather than a sequence of operations. And there is a real case where you <em>should</em> stop after phase 1: if a rank only needs its own shard of the result, the second half is wasted work. That is exactly <a href="#8-what-the-primitives-build">ZeRO-2 and FSDP</a> &mdash; each rank owns <code>1/N</code> of the optimizer state, so it only wants <code>1/N</code> of the gradient. Half the traffic, and gradient memory down by a factor of <code>N</code>.</p></div><h3 id="phase-2-all-gather">Phase 2 &mdash; all-gather, step by step</h3><p>Now just circulate the finished values. No addition here &mdash; each rank <strong>overwrites</strong> with what it receives, and forwards the newest finished value it holds.</p><p><strong>Step 4.</strong> r0 &rarr; <code>29</code>, r1 &rarr; <code>40</code>, r2 &rarr; <code>51</code>, r3 &rarr; <code>18</code></p><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0  [18]  [29]   10     6
+rank 1   11   [29]  [40]   46
+rank 2   16    25   [40]  [51]
+rank 3  [18]   27     7   [51]
+</pre></div><p><strong>Step 5.</strong> r0 &rarr; <code>18</code>, r1 &rarr; <code>29</code>, r2 &rarr; <code>40</code>, r3 &rarr; <code>51</code></p><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0  [18]  [29]   10   [51]
+rank 1  [18]  [29]  [40]   46
+rank 2   16   [29]  [40]  [51]
+rank 3  [18]   27   [40]  [51]
+</pre></div><p><strong>Step 6.</strong> r0 &rarr; <code>51</code>, r1 &rarr; <code>18</code>, r2 &rarr; <code>29</code>, r3 &rarr; <code>40</code></p><div class="ascii-card"><pre>        col0  col1  col2  col3
+rank 0   18    29    40    51  &#10003;
+rank 1   18    29    40    51  &#10003;
+rank 2   18    29    40    51  &#10003;
+rank 3   18    29    40    51  &#10003;
+</pre></div><p>Every rank now holds <code>[18, 29, 40, 51]</code>. Done.</p><h3 id="why-2n-1-steps">Why 2(N&minus;1) steps</h3><p>Six steps for four GPUs. In general it is <code>(N-1)</code> to accumulate plus <code>(N-1)</code> to distribute:</p><ul>
+<li><strong>N&minus;1 to accumulate</strong> (reduce-scatter) &mdash; each step <em>adds</em> the incoming partial into what you have.</li>
+<li><strong>N&minus;1 to distribute</strong> (all-gather) &mdash; each step <em>copies</em> a finished value onward.</li>
+</ul><p>The two phases differ only in whether incoming data is added or stored. Both are N&minus;1 for the same reason: <strong>a value moves exactly one rank per step, and it has to reach the N&minus;1 ranks that are not itself.</strong> Algebraically, after <code>k</code> steps a chunk carries <code>k+1</code> contributions; you want all <code>N</code>, so <code>k = N-1</code>.</p><p>An N-th step would carry each value back to where it started &mdash; pure waste. N&minus;1 is exactly the ring's <strong>diameter</strong>.</p><p>One thing worth keeping straight: it is not that a single chunk is passed around three times in phase 2. All four finished values move simultaneously, each needing three hops. Every link stays busy on every step of both phases, which was the point.</p><h3 id="what-it-costs">What it costs</h3><p>The formula below uses four symbols, so it is worth pinning them down before deriving anything:</p><div class="tablewrap"><table>
+<thead><tr><th>Symbol</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>N</code></td><td>Number of ranks &mdash; the GPUs in the ring. The world size.</td></tr>
+<tr><td><code>D</code></td><td>Size of the tensor being all-reduced, in bytes. In training this is the gradient buffer. Just "data".</td></tr>
+<tr><td><code>D/N</code></td><td>One <strong>chunk</strong> &mdash; the tensor cut into <code>N</code> pieces, one per rank, exactly as in <a href="#why-split-into-n-chunks">the section above</a>.</td></tr>
+<tr><td><code>2(N-1)</code></td><td>Number of <strong>steps</strong>: <code>N-1</code> to accumulate, then <code>N-1</code> to distribute.</td></tr>
+</tbody>
+</table></div><p>Each step, a rank sends exactly one chunk &mdash; <code>D/N</code> bytes, never the whole tensor. That is the entire trick, and the cost is just those two quantities multiplied:</p><div class="ascii-card"><pre>bytes per rank = steps x bytes per step
+               = 2(N-1) x D/N
+               = 2(N-1)D/N
+</pre></div><p>The step count and the byte count are the same calculation read twice. The shape of the formula decodes cleanly: the <code>2</code> is the two phases, the <code>(N-1)</code> is the ring diameter, the <code>/N</code> is chunking.</p><p>As <code>N</code> grows, <code>2(N-1)D/N</code> climbs toward <code>2D</code> but never reaches it &mdash; <strong>bounded</strong> however many GPUs you add, rather than growing with them. Read that as a statement about <em>volume only</em>: the <code>2(N-1)</code> step count in the very same formula still grows linearly, which is the subject of the end of this section.</p><div class="tablewrap"><table>
+<thead><tr><th></th><th>Bytes per rank</th><th>Latency steps</th></tr></thead>
+<tbody>
+<tr><td>Naive reduce + broadcast</td><td><code>(N-1)&middot;D</code> on the root</td><td><code>O(N)</code></td></tr>
+<tr><td>Ring all-reduce</td><td><code>2(N-1)D/N</code> &asymp; <code>2D</code></td><td><code>2(N-1)</code></td></tr>
+<tr><td>Tree all-reduce</td><td>&asymp; <code>2D</code></td><td><code>O(log N)</code></td></tr>
+<tr><td><code>all_gather</code> alone</td><td><code>(N-1)D/N</code> &asymp; <code>D</code></td><td><code>N-1</code></td></tr>
+<tr><td><code>reduce_scatter</code> alone</td><td><code>(N-1)D/N</code> &asymp; <code>D</code></td><td><code>N-1</code></td></tr>
+</tbody>
+</table></div><div class="rulebox"><span class="tag">The line that explains ZeRO</span><p><strong>All-reduce costs exactly twice reduce-scatter or all-gather alone</strong> &mdash; because it <em>is</em> those two operations run back to back.</p><p>That single fact is the design basis of ZeRO. By keeping only a shard of the gradients, ZeRO stage 2 replaces the all-reduce with a reduce-scatter and halves communication <em>while also</em> cutting memory. Chapter 08 works through the consequences.</p></div><h4 id="two-worked-examples">Two worked examples</h4><p>Before trusting the formula on real hardware, check it against the toy walkthrough above, where <code>D</code> = 4 numbers and <code>N</code> = 4, so a chunk is a single number:</p><div class="ascii-card"><pre>steps  = 2(N-1)     = 2(4-1) = 6        &lt;- the walkthrough has exactly 6 steps
+volume = 2(N-1)D/N  = 6 x 1  = 6 numbers
+                             = 1.5 x D  &lt;- the N=4 row of the table above
+</pre></div><p><strong>Example A &mdash; a 1B-parameter model on one 8-GPU NVLink node.</strong> Gradients in bf16, so two bytes per parameter:</p><div class="ascii-card"><pre>D      = 1e9 params x 2 bytes  = 2 GB
+chunk  = D/N = 2 GB / 8        = 250 MB
+steps  = 2(8-1)                = 14
+volume = 14 x 250 MB           = 3.5 GB      = 1.75 x D  OK
+
+transfer   3.5 GB / 450 GB/s   ~ 7.8 ms
+latency    14 x ~5 us          ~ 0.07 ms     &lt;- under 1% of the total
+</pre></div><p>Squarely bandwidth-bound, which is the regime the ring is built for. The naive alternative pushes <code>(N-1)D</code> = 14 GB through the root's single link, about 31 ms &mdash; four times slower. That ratio is not a coincidence of these numbers: dividing <code>(N-1)D</code> by <code>2(N-1)D/N</code> leaves <strong><code>N/2</code></strong> exactly, whatever the tensor size. At 512 ranks the ring wins by 256&times;.</p><p><strong>Example B &mdash; one small 100 KB gradient bucket across 512 GPUs.</strong> Same formula, opposite outcome:</p><div class="ascii-card"><pre>chunk  = 100 KB / 512   ~ 200 bytes   &lt;- smaller than a network packet
+steps  = 2(511)         = 1022
+volume ~ 200 KB         = 1.996 x D   &lt;- the bound still holds perfectly
+
+transfer   ~0.4 us
+latency    1022 x ~5 us ~ 5.1 ms      &lt;- essentially 100% of the total
+</pre></div><p>The volume bound did everything it promised and bought nothing at all, because you are paying 1,022 round trips to move 200 KB. This is the concrete version of the warning that the <code>2(N-1)</code> term never stops growing. A tree needs roughly <code>2&middot;log&#8322;(512)</code> = 18 steps, about 0.09 ms &mdash; <strong>57&times; faster on identical hardware</strong>, which is what the next part of this section is about, and why DDP batches gradients into ~25 MiB buckets to push you back toward Example A.</p><h3 id="when-the-ring-loses-trees">When the ring loses: trees</h3><p>The ring's weakness is latency: <code>2(N-1)</code> sequential steps. On 512 GPUs that is 1,022 steps. For a small tensor, where <code>D/N</code> is tiny and per-step overhead dominates, that is terrible. So NCCL keeps a second shape in reserve:</p><div class="ascii-card"><pre>Ring   -  bandwidth-optimal, 2(N-1) steps
+          +---+   +---+   +---+   +---+   +---+   +---+
+          | 0 |--&gt;| 1 |--&gt;| 2 |--&gt;| 3 |--&gt;| 4 |--&gt;| 5 |
+          +---+   +---+   +---+   +---+   +---+   +---+
+            ^                                       |
+            +---------------------------------------+
+
+Tree   -  latency-optimal, ~log N steps
+                        +---+
+                        | 0 |        reduce ^ up the tree
+                        +---+        bcast  v down the tree
+                     +----+----+
+                   +---+     +---+
+                   | 1 |     | 2 |
+                   +---+     +---+
+                  +--+--+   +--+--+
+               +---+ +---+ +---+ +---+
+               | 3 | | 4 | | 5 | | 6 |
+               +---+ +---+ +---+ +---+
+</pre></div><p>Total time for either is roughly <code>steps x (alpha + bytes_per_step / beta)</code>, where <code>alpha</code> is per-step latency and <code>beta</code> is link bandwidth. For the ring the bandwidth term settles at <code>2D/beta</code> but the latency term <code>2(N-1)alpha</code> grows linearly. The tree flips the tradeoff: <code>O(log N)</code> depth, slightly worse bandwidth efficiency. NCCL chooses per call based on message size and world size. At large scale it uses a <strong>double binary tree</strong> &mdash; two overlapping trees where each rank is a leaf in one and an interior node in the other, so no link sits idle.</p><p>This is also why DDP <strong>buckets</strong> gradients rather than all-reducing each parameter separately: many small collectives are latency-bound, so it batches them into roughly 25 MiB buckets first. Chapter 05 covers bucketing properly.</p><div class="note"><span class="tag">&#128221; Note &mdash; these are logical orderings, not physical wiring.</span><p>On an 8-GPU NVSwitch node every GPU is physically connected to every other. The ring is only the <em>order</em> NCCL decided to pass data around, chosen so consecutive ranks are neighbours on the fastest available link. Section 7 covers how it works that out, and what happens when the switch itself can do the arithmetic.</p></div></div></section>
+<section class="panel" id="pan-7-the-hardware-underneath" role="tabpanel" aria-labelledby="t-7-the-hardware-underneath" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 11</p><h2 id="7-the-hardware-underneath">7. The hardware underneath</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#two-networks-in-one-box">Two networks in one box</a><a class="lv3" href="#the-components">The components</a><a class="lv3" href="#discovering-the-topology">Discovering the topology</a><a class="lv3" href="#three-routes">Three routes a copy can take</a><a class="lv3" href="#switch-arithmetic">When the switch does the arithmetic</a><a class="lv3" href="#why-gloo-is-slower">Why GLOO over TCP is slower</a><a class="lv3" href="#practical-consequences">Practical consequences</a></nav><div class="body"><p>We said NCCL is "topology-aware," and that on an NVLink node an all-reduce "may never touch the PCIe bus or host memory." Both claims deserve unpacking, because together they explain why the backend choice is a <em>performance regime</em> rather than a preference.</p><h3 id="two-networks-in-one-box">Two networks in one box</h3><p>The single most useful thing to understand about a GPU server is that the GPUs sit between <strong>two separate networks</strong>. One exists only to move tensors between GPUs and is very fast. The other is the ordinary general-purpose bus shared with every other device in the machine, and is much slower.</p><div class="ascii-card"><pre>                +------------------------------------------+
+                |  NVLink fabric  (via NVSwitch)           |
+                |  ~900 GB/s per GPU, any-to-any           |
+                +--+--------+--------+--------+------------+
+                   |        |        |        |
+                +--+--+  +--+--+  +--+--+  +--+--+
+                |GPU 0|  |GPU 1|  |GPU 2|  |GPU 3|  ...
+                | HBM |  | HBM |  | HBM |  | HBM |
+                +--+--+  +--+--+  +--+--+  +--+--+
+                   |        |        |        |
+                +--+--------+--------+--------+------------+
+                |  PCIe switch complex                     |
+                |  ~64 GB/s per GPU                        |
+                +--+---------------+---------------+-------+
+                   |               |               |
+                +--+--+     +------+-----+   +-----+--------+
+                | CPU |     | Host memory|   | InfiniBand   |
+                |     |     |   (DRAM)   |   | HCA -&gt; network|
+                +-----+     +------------+   +--------------+
+</pre></div><p>Everything above the GPU row is proprietary silicon that exists for one job: moving tensors between GPUs. Everything below it is the plumbing of an ordinary PC, scaled up.</p><h3 id="the-components">The components</h3><div class="tablewrap"><table>
+<thead><tr><th>Component</th><th>What it is</th><th>Rough bandwidth</th></tr></thead>
+<tbody>
+<tr><td>HBM</td><td>Memory on the GPU package itself</td><td>2&ndash;3 TB/s</td></tr>
+<tr><td>NVLink</td><td>GPU-to-GPU links, physically separate from PCIe</td><td>600 GB/s (A100) &ndash; 900 GB/s (H100), bidirectional</td></tr>
+<tr><td>NVSwitch</td><td>Crossbar chip making every GPU pair equally fast</td><td>&mdash; (removes a bottleneck rather than adding bandwidth)</td></tr>
+<tr><td>PCIe Gen4 &times;16</td><td>General-purpose bus, CPU &harr; devices</td><td>~32 GB/s each direction</td></tr>
+<tr><td>PCIe Gen5 &times;16</td><td>Same, newer generation</td><td>~64 GB/s each direction</td></tr>
+<tr><td>Host memory</td><td>Ordinary system DRAM</td><td>On this path, capped by PCIe</td></tr>
+<tr><td>InfiniBand HCA (NDR)</td><td>Network card for reaching other nodes</td><td>400 Gb/s = 50 GB/s</td></tr>
+</tbody>
+</table></div><p><strong>HBM</strong> is the memory on the GPU card itself &mdash; the "80 GB" in an 80 GB A100. It sits next to the compute die and is the fastest memory in the machine by a wide margin. Your tensors live here.</p><p><strong>PCIe</strong> is the general-purpose expansion bus every server has &mdash; how the CPU talks to <em>any</em> plug-in device: GPUs, NICs, NVMe drives. Note the ratio: PCIe is roughly <strong>50&times; slower than the HBM it feeds</strong>. That gap is the whole reason NVLink exists.</p><p><strong>NVLink</strong> is NVIDIA's GPU-to-GPU link &mdash; physically a separate set of wires with its own pins and protocol, not part of the PCIe tree. An A100 has 12 links (~600 GB/s bidirectional total), an H100 has 18 (~900 GB/s). So NVLink is roughly <strong>10&ndash;15&times; faster than PCIe</strong> for the same GPU-to-GPU copy.</p><p><strong>NVSwitch</strong> solves a problem NVLink alone has. Each GPU has a fixed number of links, so in an 8-GPU box you cannot give every pair a full-width direct connection &mdash; that would need 7 links fanning out of every GPU, and each would sit idle whenever that pair was not talking. Without a switch you get a partial mesh where achievable bandwidth depends on <em>which</em> two GPUs are talking. NVSwitch is a physical crossbar: every GPU plugs its links into the switch, and any GPU reaches any other at full speed, simultaneously. A DGX H100 contains four of these chips.</p><div class="warn"><span class="tag">&#9888;&#65039; The units trap.</span><p>Networking is quoted in giga<strong>bits</strong> per second; interconnects in giga<strong>bytes</strong> per second. A 400 Gb/s InfiniBand link is 50 GB/s. Divide by eight before comparing a NIC to NVLink, or you will overestimate your network by an order of magnitude.</p></div><h3 id="discovering-the-topology">What "discovering the topology" actually means</h3><p>When you call <code>dist.init_process_group("nccl")</code>, before a single byte of your data moves, NCCL reads the machine's wiring diagram:</p><ul>
+<li>It walks the PCI device tree in <code>/sys</code> to see which GPUs hang off which PCIe switch, and which CPU socket each is attached to.</li>
+<li>It queries NVML to ask each GPU which peers it has NVLink connections to, and how many links.</li>
+<li>It detects whether NVSwitch is present.</li>
+<li>It enumerates network cards and works out which NIC is physically closest to which GPU.</li>
+</ul><p>From that it builds a weighted graph &mdash; nodes are GPUs, edges are links, weights are bandwidth and latency &mdash; and then <em>searches</em> over candidate communication schedules for the one that keeps the most links busy. That search is the real work: not "which library am I," but "given this specific machine, what is the fastest arrangement?"</p><p>You can watch it happen. Run with <code>NCCL_DEBUG=INFO</code> and you will see:</p><div class="ascii-card"><pre>NCCL INFO Channel 00/12 :    0   1   2   3   4   5   6   7
+NCCL INFO Channel 01/12 :    0   3   2   1   4   7   6   5
+</pre></div><p>That is NCCL reporting the exact ring orderings it chose, and that it is running twelve of them in parallel.</p><h3 id="three-routes">The three routes a GPU-to-GPU copy can take</h3><div class="ascii-card"><pre>Route 1 - staged through host memory   (no peer-to-peer support)
+  GPU0 HBM --PCIe--&gt; host DRAM --PCIe--&gt; GPU1 HBM        ~10-15 GB/s
+
+Route 2 - PCIe peer-to-peer            (GPUDirect P2P)
+  GPU0 HBM --------PCIe switch--------&gt; GPU1 HBM         ~20-25 GB/s
+
+Route 3 - NVLink
+  GPU0 HBM ------NVLink / NVSwitch----&gt; GPU1 HBM         ~450 GB/s
+</pre></div><p><strong>Route 1</strong> crosses PCIe twice, consumes host memory bandwidth, and requires the CPU to manage a pinned staging buffer. <strong>Route 2</strong> hops across the PCIe switch directly between the two cards &mdash; host memory is skipped and the CPU is out of the data path, but the ceiling is still PCIe. <strong>Route 3</strong> leaves GPU 0 on the NVLink pins, crosses the NVSwitch, and lands in GPU 1's HBM, never entering the PCIe tree at all.</p><p>So "an all-reduce may never touch the PCIe bus or host memory" means: for the entire collective, the payload bytes travel exclusively on route 3. The gradients are never copied into system RAM, never cross the PCIe complex, and the CPU never sees them.</p><div class="note"><span class="tag">&#128221; Note &mdash; PCIe is still involved, just not for the data.</span><p>The CPU issues kernel launches and small control descriptors over PCIe throughout. What stays off it is the bulk payload &mdash; the gigabytes of gradients. That is the distinction that matters for throughput.</p></div><h3 id="switch-arithmetic">When the switch does the arithmetic</h3><p>Everything in section 6 assumes the addition happens <em>on GPUs</em>. That assumption is worth questioning: if all eight GPUs are wired into a switch, why not have everyone send once, let the switch add it up, and have the switch send the answer back? That would be one step instead of <code>2(N-1)</code>.</p><p>NVIDIA built exactly that: <strong>SHARP</strong> (Scalable Hierarchical Aggregation and Reduction Protocol). The in-node NVLink version is <strong>NVLink SHARP</strong>, which NCCL exposes as the <code>NVLS</code> algorithm.</p><div class="warn"><span class="tag">&#9888;&#65039; A crossbar alone does not help &mdash; the trap in the idea.</span><p>NVSwitch as described above is a <em>dumb</em> crossbar: it routes traffic, it has no arithmetic units. If you tried "everyone sends to GPU 0, GPU 0 adds and sends the answer back," the switch would deliver the traffic happily, but GPU 0 still has to receive N&minus;1 full tensors <strong>through its own single link</strong>. On 8 GPUs that is 7&times;D arriving at one port. The switch is not the bottleneck; the endpoint is. This is the naive algorithm from section 6 wearing a different hat.</p><p>A full crossbar solves <em>connectivity</em>, not <em>aggregation</em>. The addition has to happen somewhere, and if that somewhere is a GPU, that GPU becomes the choke point. The ring's whole trick is spreading the reduction so no endpoint ever handles more than <code>D/N</code> at a time.</p></div><p>For the idea to work the switch must actually do arithmetic &mdash; and on Hopper-generation NVSwitch (3rd gen, as in DGX H100) it does. The switch silicon has reduction units and multicast support:</p><ol>
+<li>Each GPU sends its tensor into the fabric &mdash; <strong>D bytes out</strong>, once.</li>
+<li>The switch sums the incoming streams as they pass through.</li>
+<li>The switch <strong>multicasts</strong> the result back &mdash; each GPU receives <strong>D bytes in</strong>, once.</li>
+</ol><div class="tablewrap"><table>
+<thead><tr><th></th><th>Ring</th><th>NVLS (switch reduction)</th></tr></thead>
+<tbody>
+<tr><td>Steps</td><td><code>2(N-1)</code></td><td>constant, independent of N</td></tr>
+<tr><td>Bytes sent per GPU</td><td>&asymp; <code>2D</code></td><td>&asymp; <code>D</code></td></tr>
+<tr><td>Bytes received per GPU</td><td>&asymp; <code>2D</code></td><td>&asymp; <code>D</code></td></tr>
+<tr><td>Where the addition happens</td><td>GPU SMs</td><td>switch ASIC</td></tr>
+</tbody>
+</table></div><p>Two separate wins. The <strong>latency</strong> win is obvious &mdash; constant rather than growing with N, which matters enormously for small tensors at large scale.</p><p>The <strong>bandwidth</strong> win is the one people miss. Ring is bandwidth-optimal <em>among endpoint-only algorithms</em>: if all arithmetic happens on GPUs, you cannot beat ~2D per GPU, because the data must traverse the ring twice. Multicast breaks that floor &mdash; the switch replicates the result to all ports itself, so no GPU re-sends anything. Roughly a 2&times; reduction in wire traffic.</p><p>There is a third, quieter benefit: NCCL's ring kernels occupy GPU SMs and consume HBM bandwidth doing read-add-write. Push the arithmetic into the switch and those resources go back to your model.</p><p><strong>So why does the ring still exist?</strong></p><ul>
+<li><strong>Hardware.</strong> NVLS needs 3rd-gen NVSwitch or newer. A DGX A100's NVSwitch is a pure crossbar with no reduction units, and plenty of machines have no NVSwitch at all. Ring works everywhere.</li>
+<li><strong>Scope.</strong> NVSwitch spans one node. Across nodes you are on InfiniBand, where SHARP can do the same trick in the IB switches &mdash; but only if the fabric is SHARP-capable and the aggregation manager is configured. Hence NCCL's hybrid <code>NVLSTree</code>: switch reduction inside the node, tree between nodes.</li>
+<li><strong>Constraints.</strong> Switch ALUs support a fixed menu of operations and dtypes, and the multicast path needs specially registered memory with alignment requirements. Anything outside that falls back to ring or tree.</li>
+</ul><p>NCCL picks automatically per call. <code>NCCL_DEBUG=INFO</code> shows which algorithm it chose, and <code>NCCL_ALGO=NVLS</code> (or <code>Ring</code>, <code>Tree</code>) forces it if you want to measure the difference yourself.</p><h3 id="why-gloo-is-slower">Why GLOO over TCP is so much slower</h3><p>With the routes above in mind, the comparison is no longer mysterious. For GPU tensors, GLOO over TCP takes route 1 and then adds more:</p><ol>
+<li>Copy GPU &rarr; host memory (one PCIe crossing).</li>
+<li>Hand the buffer to the kernel's TCP/IP stack &mdash; syscalls, socket buffers, another memory copy, checksums, congestion control.</li>
+<li>Out through the NIC and across the wire.</li>
+<li>Reverse the entire sequence on the receiving side.</li>
+</ol><p>Every step involves the CPU, and none of it is topology-aware &mdash; GLOO does not know NVLink exists, so two GPUs six inches apart in the same chassis communicate as though they were in different buildings. Meanwhile NCCL with <strong>GPUDirect RDMA</strong> lets the NIC read GPU memory directly, skipping host memory even for cross-node traffic.</p><p>Within a single node the gap is closer to two orders of magnitude than one.</p><h3 id="practical-consequences">What this buys you in practice</h3><ul>
+<li>On GPUs, use <code>nccl</code>. Not as a default to be justified, but because <code>gloo</code> puts you in a different performance regime entirely.</li>
+<li>Keep tensor parallelism <strong>inside</strong> a node. It all-reduces several times per layer and needs NVLink; across nodes it will be network-bound. This is the placement rule chapters 07 and 09 keep returning to.</li>
+<li>If a job is slower than expected, <code>NCCL_DEBUG=INFO</code> will tell you which algorithm and ring ordering it picked. A ring that zig-zags across a PCIe boundary is a topology problem, not a code problem.</li>
+<li>On multi-NIC machines, <code>NCCL_SOCKET_IFNAME</code> matters. NCCL may otherwise pick a management interface or a Docker bridge and quietly run your job at 1 Gb/s.</li>
+</ul></div></section>
+<section class="panel" id="pan-8-what-the-primitives-build" role="tabpanel" aria-labelledby="t-8-what-the-primitives-build" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 11</p><h2 id="8-what-the-primitives-build">8. What the primitives build</h2></div><div class="body"><p>The whole point of this chapter is that every parallelism scheme in the rest of the series is a specific arrangement of the primitives above. Here is the map, with the chapter that covers each:</p><div class="tablewrap"><table>
+<thead><tr><th>Strategy</th><th>What is split</th><th>Communication used</th><th>When</th><th>Ch.</th></tr></thead>
+<tbody>
+<tr><td><strong>DDP</strong> (data parallel)</td><td>The batch</td><td><code>all_reduce</code> of gradients, bucketed and overlapped with backward</td><td>Model fits on one GPU</td><td>05</td></tr>
+<tr><td><strong>ZeRO-1</strong></td><td>Optimizer states</td><td><code>reduce_scatter</code> grads + <code>all_gather</code> updated params</td><td>Optimizer memory is the constraint</td><td>08</td></tr>
+<tr><td><strong>ZeRO-2</strong></td><td>+ gradients</td><td>same, with gradients kept sharded</td><td>Gradient memory too</td><td>08</td></tr>
+<tr><td><strong>ZeRO-3 / FSDP</strong></td><td>+ parameters</td><td><code>all_gather</code> params per layer (fwd &amp; bwd) + <code>reduce_scatter</code> grads</td><td>Model does not fit at all</td><td>08</td></tr>
+<tr><td><strong>Tensor parallel</strong></td><td>Individual weight matrices</td><td><code>all_reduce</code> at f/g boundaries within each layer</td><td>Layer too big; needs fast intra-node links</td><td>07</td></tr>
+<tr><td><strong>Pipeline parallel</strong></td><td>Layers across stages</td><td><code>send</code>/<code>recv</code> of activations between adjacent stages</td><td>Many layers, slower inter-node links</td><td>06</td></tr>
+<tr><td><strong>Sequence / context parallel</strong></td><td>The sequence dimension</td><td><code>all_gather</code> / <code>reduce_scatter</code>, or <code>all_to_all</code></td><td>Very long contexts</td><td>07, 09</td></tr>
+<tr><td><strong>MoE / expert parallel</strong></td><td>Experts across devices</td><td><code>all_to_all</code> for token routing</td><td>Sparse models</td><td>09</td></tr>
+</tbody>
+</table></div><p>Two corollaries worth carrying into the rest of the series:</p><ol>
+<li><p><strong>Match the operation to the interconnect.</strong> Tensor parallelism all-reduces several times <em>per layer</em> &mdash; it needs NVLink and is almost always confined within a node. Pipeline parallelism sends activations once per stage boundary &mdash; it tolerates slower inter-node links. This is why the standard 3-D layout is: tensor parallel <em>inside</em> a node, pipeline parallel <em>across</em> nodes, data parallel on top.</p></li>
+<li><p><strong>Each strategy is one set of process groups.</strong> A job with TP=2, PP=2, DP=2 across 8 GPUs creates three overlapping sets of groups, and each collective names the group it belongs to. That is all "3-D parallelism" is, mechanically &mdash; chapter 09 does the rank arithmetic.</p></li>
+</ol><div class="note"><span class="tag">&#128221; Note &mdash; the one-line summary of each remaining chapter.</span><div class="ascii-card"><pre>ch04  the map          which axis to split, what each costs, how to choose
+ch05  data parallel    all_reduce of gradients, bucketed, overlapped
+ch06  pipeline         send/recv between stages; the bubble and the schedules
+ch07  tensor           split weight matrices; f/g adjoint pairs; stay in-node
+ch08  memory           16 bytes/param, and four ways to stop replicating them
+ch09  combined         one process group per axis; TP innermost, PP outermost
+ch10  throughput       fusion, attention kernels, precision, what matters now
+</pre></div></div></div></section>
+<section class="panel" id="pan-9-pitfalls-and-debugging" role="tabpanel" aria-labelledby="t-9-pitfalls-and-debugging" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 11</p><h2 id="9-pitfalls-and-debugging">9. Pitfalls and debugging</h2></div><nav class="subnav" aria-label="Within this section"><a class="lv3" href="#the-cardinal-rule">The cardinal rule</a><a class="lv3" href="#environment-variables">Environment variables</a><a class="lv3" href="#hang-checklist">Checklist for "my job hangs"</a><a class="lv3" href="#correctness-gotchas">Correctness gotchas</a></nav><div class="body"><h3 id="the-cardinal-rule">The cardinal rule</h3><div class="rulebox"><p><strong>Every rank must call every collective, in the same order, with matching shapes and dtypes.</strong></p></div><p>Violating this hangs the job &mdash; usually with no error, just silence until the NCCL watchdog timeout fires (default 10 minutes; long enough that people assume the job is merely slow).</p><p>Common ways to violate it:</p><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># Rank-conditional collective - ranks 1..N-1 wait forever
+if rank == 0:
+    dist.all_reduce(x)
+
+# Data-dependent control flow that differs per rank
+if loss.item() &gt; threshold:        # crossed on some ranks only
+    dist.all_reduce(x)
+
+# Uneven dataloader lengths - some ranks exit the loop early
+for batch in my_loader:            # different len() per rank
+    dist.all_reduce(grad)
+
+# Shape mismatch - last batch is smaller on one rank
+dist.all_gather(out_list, features)
+
+# new_group called only by prospective members
+if rank in [0, 1]:
+    g = dist.new_group([0, 1])     # ranks 2,3 must call this too
+</pre></div><p>Fixes: use <code>DistributedSampler</code> with <code>drop_last=True</code> for even batches; make control flow rank-independent, or all-reduce the <em>condition</em> first so every rank agrees; call <code>new_group</code> unconditionally on all ranks.</p><h3 id="environment-variables">Environment variables worth knowing</h3><div class="tablewrap"><table>
+<thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>NCCL_DEBUG=INFO</code></td><td>Prints topology detection and algorithm choice at init. First thing to try for perf or hang issues</td></tr>
+<tr><td><code>TORCH_DISTRIBUTED_DEBUG=DETAIL</code></td><td>PyTorch validates collective consistency across ranks and reports mismatches</td></tr>
+<tr><td><code>CUDA_LAUNCH_BLOCKING=1</code></td><td>Forces synchronous CUDA so tracebacks point at the real line. Debug only</td></tr>
+<tr><td><code>TORCH_NCCL_ASYNC_ERROR_HANDLING=1</code></td><td>Crash on NCCL error instead of hanging indefinitely (was <code>NCCL_ASYNC_ERROR_HANDLING</code> before 2.2)</td></tr>
+<tr><td><code>NCCL_SOCKET_IFNAME=eth0</code></td><td>Pin NCCL to a specific interface &mdash; fixes multi-node hangs on machines with several NICs (Docker <code>docker0</code> bridges are a frequent culprit)</td></tr>
+<tr><td><code>NCCL_P2P_DISABLE=1</code></td><td>Disable peer-to-peer; a diagnostic for suspected NVLink issues</td></tr>
+<tr><td><code>NCCL_IB_DISABLE=1</code></td><td>Disable InfiniBand, fall back to sockets. Diagnostic</td></tr>
+<tr><td><code>NCCL_ALGO=Ring|Tree|NVLS</code></td><td>Force an algorithm, to measure the difference yourself</td></tr>
+<tr><td><code>OMP_NUM_THREADS=1</code></td><td>Prevents each of N processes spawning N OpenMP threads and thrashing the CPU</td></tr>
+</tbody>
+</table></div><h3 id="hang-checklist">A debugging checklist for "my job hangs"</h3><ol>
+<li>Is every rank actually alive? (<code>nvidia-smi</code> on each node, or check for a crashed rank whose peers are now waiting.)</li>
+<li>Insert <code>dist.barrier()</code> between phases to bisect <em>where</em> it hangs.</li>
+<li>Turn on <code>TORCH_DISTRIBUTED_DEBUG=DETAIL</code> &mdash; it will often name the mismatched collective directly.</li>
+<li>Try the same script with <code>backend="gloo"</code> on CPU tensors. If it works, the bug is NCCL/topology; if it still hangs, your program logic is asymmetric across ranks.</li>
+<li>Multi-node only: check <code>NCCL_SOCKET_IFNAME</code>, and that <code>MASTER_ADDR</code> resolves and the port is reachable from all nodes.</li>
+<li>Before requesting a cluster at all: <code>LocalTensor</code> (PyTorch 2.10+) simulates many SPMD ranks inside a <em>single</em> process, applying operations per-shard and faking collectives locally. It carries real overhead and is a debugging tool rather than a training path &mdash; but "did I get the rank arithmetic right" is exactly the question it answers cheaply. Useful before a chapter-09 multi-axis job.</li>
+</ol><h3 id="correctness-gotchas">Correctness gotchas</h3><ul>
+<li><strong>Device binding.</strong> Every rank must call <code>torch.cuda.set_device(local_rank)</code> before <code>init_process_group</code>. Skip it and all ranks on a node default to <code>cuda:0</code>; the symptom is an OOM on GPU 0, or a hang at the first collective, long after the actual mistake.</li>
+<li><strong>Seeds.</strong> For data-parallel training you want <em>different</em> data order per rank but <em>identical</em> weight init. <code>DistributedSampler</code> handles the former; DDP broadcasts params at construction for the latter. If you roll your own, be deliberate.</li>
+<li><strong>Checkpointing.</strong> Save from rank 0 only, and <code>dist.barrier()</code> afterwards so other ranks do not race ahead into a partially written file. Better still, use <code>torch.distributed.checkpoint</code> for sharded state &mdash; it also handles resharding to a different world size on load.</li>
+<li><strong>Logging metrics.</strong> Loss printed by rank 0 is that rank's local loss, not the global one. <code>all_reduce</code> with <code>ReduceOp.AVG</code> before logging if you want the true value.</li>
+<li><strong>Synchronizing calls in the loop.</strong> A <code>.item()</code> or <code>print(loss)</code> every step forces a device sync, which stops the CPU running ahead to enqueue the next iteration's kernels &mdash; and that destroys the compute/communication overlap the whole design depends on.</li>
+<li><strong>BatchNorm.</strong> Per-rank batch statistics differ. Use <code>nn.SyncBatchNorm</code> if it matters for your model (it rarely does for transformers, which use LayerNorm or RMSNorm).</li>
+</ul></div></section>
+<section class="panel" id="pan-10-quick-reference" role="tabpanel" aria-labelledby="t-10-quick-reference" tabindex="0" hidden><div class="panel-head short"><p class="kicker">Section 10 of 11</p></div><div class="body"><h2 class="sec" id="10-quick-reference">10. Quick reference</h2><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import os, torch, torch.distributed as dist
+
+# -- setup ----------------------------------------------------
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)                 # BEFORE init
+dist.init_process_group("nccl",
+    device_id=torch.device(f"cuda:{local_rank}")) # eager init, clearer errors
+rank, world = dist.get_rank(), dist.get_world_size()
+
+# -- subgroups ------------------------------------------------
+g = dist.new_group([0, 1])            # ALL ranks must call this
+                                      # (for "everyone", pass group=None)
+
+# -- point to point -------------------------------------------
+dist.send(t, dst=1);            dist.recv(t, src=0)
+req = dist.isend(t, dst=1);     req.wait()
+dist.batch_isend_irecv([dist.P2POp(dist.isend, t, 1), ...])
+
+# -- collectives ----------------------------------------------
+dist.broadcast(t, src=0)
+dist.reduce(t, dst=0, op=dist.ReduceOp.SUM)
+dist.all_reduce(t, op=dist.ReduceOp.AVG)
+dist.scatter(out, scatter_list=chunks, src=0)      # list only on src
+dist.gather(inp, gather_list=buf, dst=0)           # list only on dst
+dist.all_gather(buf_list, inp)
+dist.all_gather_single(flat_out, inp)              # preferred (2.13+)
+dist.reduce_scatter_single(out, flat_in)           # preferred (2.13+)
+dist.all_to_all_single(out, inp)
+dist.barrier(device_ids=[local_rank])
+
+# -- async ----------------------------------------------------
+work = dist.all_reduce(t, async_op=True)
+...                                    # overlap useful compute here
+work.wait()
+
+# -- teardown -------------------------------------------------
+dist.destroy_process_group()
+</pre></div><p><strong>Launch:</strong></p><div class="code"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>torchrun --standalone --nproc_per_node=4 train.py                 # single node
+torchrun --nnodes=2 --nproc_per_node=8 --node_rank=$R \
+         --rdzv_backend=c10d --rdzv_endpoint=$HEAD:29500 train.py # multi node
+</pre></div><p><strong>The two identities to memorize:</strong></p><div class="ascii-card"><pre>all_reduce  =  reduce_scatter  +  all_gather      (and costs 2x either half)
+all_gather  =  gather          +  broadcast
+
+ring all-reduce:  2(N-1) steps,  2(N-1)D/N bytes per rank  ->  ~2D, constant in N
+</pre></div><h3 id="exercises">Exercises</h3><ol>
+<li>Implement <code>all_reduce</code> using only <code>reduce</code> and <code>broadcast</code>. Then implement it using only <code>reduce_scatter</code> and <code>all_gather</code>. Compare the bytes each moves.</li>
+<li>Implement <code>scatter</code> on the NCCL backend using local slicing only &mdash; no real scatter call. Confirm no bytes cross the wire.</li>
+<li>Write a two-rank pipeline: rank 0 runs the first half of a small MLP, sends activations to rank 1, which runs the second half and sends gradients back. Use <code>batch_isend_irecv</code>. Then break it deliberately with blocking <code>send</code>/<code>recv</code> in the same order on both ranks, and observe the deadlock.</li>
+<li>Deliberately introduce a shape mismatch in an <code>all_gather</code> and observe the failure mode. Then set <code>TORCH_DISTRIBUTED_DEBUG=DETAIL</code> and observe how much better the error becomes.</li>
+<li>Time <code>all_reduce</code> on tensors from 1 KB to 1 GB across 2, 4, and 8 GPUs. Plot bytes/second. Identify where latency stops dominating and bandwidth takes over &mdash; and compare that crossover to the ring vs. tree discussion in &sect;6.</li>
+<li>Run the same all-reduce with <code>NCCL_ALGO=Ring</code> and <code>NCCL_ALGO=NVLS</code> (if your hardware supports it). Measure the difference and check it against the 2&times; wire-traffic prediction in &sect;7.</li>
+</ol><h2 class="sec" id="further-reading">Further reading</h2><ul>
+<li>PyTorch distributed docs &mdash; the backend support table lives here; check it against your version</li>
+<li>PyTorch "Writing Distributed Applications with PyTorch" tutorial</li>
+<li>NVIDIA NCCL documentation &mdash; algorithms, environment variables, tuning</li>
+<li>Baidu's original ring all-reduce write-up (2017) &mdash; still the clearest explanation of the two-phase algorithm</li>
+<li>Megatron-LM (Shoeybi et al., 2019) &mdash; the f/g operators, covered properly in chapter 07</li>
+<li>ZeRO (Rajbhandari et al., 2019) &mdash; the memory/communication trade-offs, covered in chapter 08</li>
+<li>GPipe (Huang et al., 2018) and PipeDream &mdash; pipeline parallelism, covered in chapter 06</li>
+<li><strong>torchcomms</strong> &mdash; the new communications backend layer, if you want to see where <code>c10d</code> is heading</li>
+</ul></div></section>
+<section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head short"><p class="kicker">Section 11 of 11</p></div><div class="body"><h2 class="sec" id="version-check">Version check</h2><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p><div class="tablewrap"><table>
+<thead><tr><th>Component</th><th>Verified version</th><th>Notes for this chapter</th></tr></thead>
+<tbody>
+<tr><td><strong>PyTorch</strong></td><td><strong>2.13.0</strong> (8 Jul 2026)</td><td>Renamed two collectives; see below</td></tr>
+<tr><td><strong>CUDA</strong></td><td>13.0 default on PyPI, 13.2 experimental</td><td>Volta/Pascal/Maxwell dropped from recent builds</td></tr>
+<tr><td><strong>NCCL</strong></td><td>Bundled with the PyTorch build</td><td>Ring / Tree / NVLS selection is automatic</td></tr>
+</tbody>
+</table></div><p><strong>Distributed changes worth knowing, in one place:</strong></p><div class="tablewrap"><table>
+<thead><tr><th>Change</th><th>Version</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>all_gather_into_tensor</code> &rarr; <strong><code>all_gather_single</code></strong></td><td>2.13</td><td>Renamed to align with torchcomms; old name still resolves for now</td></tr>
+<tr><td><code>reduce_scatter_tensor</code> &rarr; <strong><code>reduce_scatter_single</code></strong></td><td>2.13</td><td>Same</td></tr>
+<tr><td><strong>torchcomms</strong> lands as the new backend layer</td><td>2.13</td><td><code>c10d</code> is still the user-facing surface; torchcomms replaces the layer <em>beneath</em> it. Aimed at fault tolerance at 100k+ GPU scale, heterogeneous hardware, and one-sided communication</td></tr>
+<tr><td><code>torchrun</code> picks an <strong>OS-assigned free port</strong> by default</td><td>2.12</td><td>Only when neither <code>--standalone</code> nor <code>--master-port</code> is given. Fixes "Address already in use"</td></tr>
+<tr><td><code>torch.distributed.nn.functional</code> raises under <code>torch.compile</code></td><td>2.12</td><td>Use <code>torch.distributed._functional_collectives</code></td></tr>
+<tr><td><strong>Differentiable collectives</strong> added</td><td>2.11</td><td>Native autograd-aware collectives &mdash; the f/g adjoint pattern from &sect;5, built in</td></tr>
+<tr><td><code>DeviceMesh</code> requires PGs to exist at construction</td><td>2.11</td><td>Call <code>init_process_group</code> <strong>before</strong> building the mesh</td></tr>
+<tr><td><strong><code>LocalTensor</code></strong> for single-process rank simulation</td><td>2.10</td><td>Debug multi-rank logic without a cluster</td></tr>
+<tr><td><code>shrink_group</code> (wraps <code>ncclCommShrink</code>)</td><td>2.10</td><td>Drop failed ranks from a communicator instead of tearing down</td></tr>
+<tr><td><strong>XCCL</strong> backend for Intel XPU</td><td>2.8</td><td>Fourth backend alongside NCCL / Gloo / MPI</td></tr>
+</tbody>
+</table></div><p><strong>Specific to this chapter:</strong> the collective semantics, the ring all-reduce derivation, the <code>2(N&minus;1)D/N</code> cost model, and the hardware discussion are all stable &mdash; they describe algorithms and physics rather than APIs. The one thing to watch is the <code>_single</code> rename, because you will see all three historical spellings (<code>_all_gather_base</code>, <code>all_gather_into_tensor</code>, <code>all_gather_single</code>) in code written at different times.</p><p><em>Part of a practical series on large-scale model training. Verified against PyTorch 2.13, Megatron Core 0.18, transformers v5, and DeepSpeed 0.18 in July 2026. Distributed APIs move quickly &mdash; where this document and your installed docs disagree, trust the docs.</em></p></div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

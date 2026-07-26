@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory: Mixed Precision, ZeRO, and FSDP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Chapter 08</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <h1>Memory: Mixed Precision, ZeRO, and FSDP</h1>
+  <div class="ring-wrap">
+    <div class="pipe" aria-hidden="true">
+      <div class="pipe-row"><span class="pipe-lbl">gradients</span><div class="pipe-cells"><div class="pc on" style="--d:0.00s"><span>&#8711;8</span></div><div class="pc on" style="--d:0.34s"><span>&#8711;7</span></div><div class="pc on" style="--d:0.68s"><span>&#8711;6</span></div><div class="pc on" style="--d:1.02s"><span>&#8711;5</span></div><div class="pc on" style="--d:1.36s"><span>&#8711;4</span></div><div class="pc on" style="--d:1.70s"><span>&#8711;3</span></div><div class="pc on" style="--d:2.04s"><span>&#8711;2</span></div><div class="pc on" style="--d:2.38s"><span>&#8711;1</span></div></div></div>
+      <div class="pipe-row"><span class="pipe-lbl">reduce&#8209;scatter</span><div class="pipe-cells"><div class="pc on" style="--d:0.54s"><span>shard 0</span></div><div class="pc on" style="--d:1.22s"><span>shard 1</span></div><div class="pc on" style="--d:1.90s"><span>shard 2</span></div><div class="pc on" style="--d:2.58s"><span>shard 3</span></div></div></div>
+    </div>
+    <p class="ring-cap"><span>ZeRO &middot; gradients reduce-scattered so each rank owns one shard of the optimizer state</span><span>16 bytes/param &#8594; 16&#936;/N</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>Blocks marked <strong>📝 Note</strong> expand on something the main text assumes — the reasoning behind a design, a derivation, or a number worth internalizing.</li>
+<li>Blocks marked <strong>⚠️</strong> are traps: things that produce silently wrong results, silently slow results, or hangs. They are the parts most worth reading twice.</li>
+<li>Diagrams are ASCII so they survive copy-paste into a terminal, a code review, or a text editor.</li>
+<li>All code targets <strong>PyTorch 2.13</strong> (July 2026). See the <em>Version check</em> tab for exactly what was verified and when.
+<strong>Prerequisites:</strong> The identity <code>all_reduce = reduce_scatter + all_gather</code>, and chapter 05 (DDP, gradient bucketing).</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-1-mixed-precision" aria-controls="pan-1-mixed-precision" aria-selected="false" tabindex="-1"><span class="num">02</span>1 · Mixed precision</button><button class="tab" role="tab" id="t-2-zero-redundancy-optimization" aria-controls="pan-2-zero-redundancy-optimization" aria-selected="false" tabindex="-1"><span class="num">03</span>2 · ZeRO overview</button><button class="tab" role="tab" id="t-3-zero-data-parallelism" aria-controls="pan-3-zero-data-parallelism" aria-selected="false" tabindex="-1"><span class="num">04</span>3 · ZeRO-DP</button><button class="tab" role="tab" id="t-4-activation-checkpointing" aria-controls="pan-4-activation-checkpointing" aria-selected="false" tabindex="-1"><span class="num">05</span>4 · Act. checkpointing</button><button class="tab" role="tab" id="t-5-zero-r" aria-controls="pan-5-zero-r" aria-selected="false" tabindex="-1"><span class="num">06</span>5 · ZeRO-R</button><button class="tab" role="tab" id="t-6-zero-offload" aria-controls="pan-6-zero-offload" aria-selected="false" tabindex="-1"><span class="num">07</span>6 · Offload</button><button class="tab" role="tab" id="t-7-zero-infinity" aria-controls="pan-7-zero-infinity" aria-selected="false" tabindex="-1"><span class="num">08</span>7 · Infinity</button><button class="tab" role="tab" id="t-8-fsdp-the-pytorch-native-zero" aria-controls="pan-8-fsdp-the-pytorch-native-zero" aria-selected="false" tabindex="-1"><span class="num">09</span>8 · FSDP</button><button class="tab" role="tab" id="t-9-the-memory-ledger-worked" aria-controls="pan-9-the-memory-ledger-worked" aria-selected="false" tabindex="-1"><span class="num">10</span>9 · Memory ledger</button><button class="tab" role="tab" id="t-10-choosing-a-stage-and-gotchas" aria-controls="pan-10-choosing-a-stage-and-gotchas" aria-selected="false" tabindex="-1"><span class="num">11</span>10 · Choosing</button><button class="tab" role="tab" id="t-11-quick-reference" aria-controls="pan-11-quick-reference" aria-selected="false" tabindex="-1"><span class="num">12</span>11 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">13</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">14</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">15</span>Exercises</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 15</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<li><a href="#1-mixed-precision">Mixed Precision</a></li>
+<li><a href="#2-zero-redundancy-optimization">Zero Redundancy Optimization</a></li>
+<li><a href="#3-zero-data-parallelism">ZeRO Data Parallelism</a></li>
+<li><a href="#4-activation-checkpointing">Activation Checkpointing</a></li>
+<li><a href="#5-zero-r">ZeRO-R</a></li>
+<li><a href="#6-zero-offload">ZeRO Offload</a></li>
+<li><a href="#7-zero-infinity">ZeRO Infinity</a></li>
+<li><a href="#8-fsdp-the-pytorch-native-zero">FSDP, the PyTorch-native ZeRO</a></li>
+<li><a href="#9-the-memory-ledger-worked">The memory ledger, worked</a></li>
+<li><a href="#10-choosing-a-stage-and-gotchas">Choosing a stage, and gotchas</a></li>
+<li><a href="#11-quick-reference">Quick reference</a></li>
+</ol></div></section><section class="panel" id="pan-1-mixed-precision" role="tabpanel" aria-labelledby="t-1-mixed-precision" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 15</p><h2 id="1-mixed-precision">1. Mixed Precision</h2></div><div class="body"><div class="subnav"><a href="#but-why-mixed">But why mixed?</a><a href="#loss-scaling">Loss Scaling</a><a href="#how-mixed-precision-works">How Mixed Precision works</a><a href="#0-create-the-model-and-optimizer">0) Create the model and optimizer</a><a href="#1-float2half">1) Float2Half</a><a href="#2-forward">2) Forward</a><a href="#3-backward">3) Backward</a><a href="#4-update-weight">4) Update Weight</a><a href="#doing-mixed-precision-training-in-pytorch">Doing mixed-precision training in PyTorch</a><a href="#dynamic-loss-scaling">Dynamic Loss Scaling</a></div><p>As recent GPUs have come to support lower-precision computation, modern neural-network training mostly uses <strong>mixed precision</strong>, using FP16 (half) and FP32 (single) together. On a V100, if FP32 runs at about 14 TFLOPS, in FP16 you can train the model at 100 TFLOPS. Also, using FP16 shrinks the model size, which is an advantage not only for training but for deployment too.</p>
+<div class="ascii-card"><pre>   FP32   │S│ 8 exponent │        23 mantissa        │   4 bytes
+   FP16   │S│5 exponent│  10 mantissa │                2 bytes
+   BF16   │S│ 8 exponent │ 7 mantissa │                2 bytes
+                ▲            ▲
+                range     precision</pre></div>
+<h3 id="but-why-mixed">But why <em>mixed</em>?</h3>
+<p>A question arises here. Why not just train the model in FP16 — is it really necessary to use FP32 and FP16 together? To give the conclusion first: training with FP16 alone makes the loss diverge badly and training is nearly impossible. Keeping gradients in FP16 throws away most of the decimal places, so precise training becomes impossible. So we use both the fast FP16 and the accurate FP32, trying to take only the advantages of each.</p>
+<p>The compute-heavy forward and backward are done with the FP16 model, and the computed gradients are copied into the higher-precision FP32 model to update the weights. But another question arises. How do we apply FP16 gradients to FP32? According to the researchers' experiments, when you backward a loss computed in FP16, some values that were small (on the left of the figure) <strong>became 0</strong> during the computation.</p>
+<div class="ascii-card"><pre>   gradient magnitude histogram, log scale
+
+                            FP16 representable range
+                        ┌───────────────────────────┐
+   ▁▁▂▄██▆▃▂▁           │                           │
+   └────────┘           │                           │
+   these underflow      │                           │
+   to ZERO in fp16      │                           │
+   ◀────────────────────┤                           │
+                        └───────────────────────────┘</pre></div>
+<h3 id="loss-scaling">Loss Scaling</h3>
+<p>How can we solve this problem? With a very simple idea: multiply the loss gradient by a very large value to push the distribution to the right. The name of this technique is <strong>loss scaling</strong>. If you multiply the FP16 loss by a very large value, values that would have vanished when applied to FP32 can be preserved.</p>
+<div class="ascii-card"><pre>   before scaling                    after × 1024
+                                                    ┌──── fp16 range ────┐
+   ▁▂▄██▆▃▂▁    │◀ fp16 range ▶│         ─────▶      │  ▁▂▄██▆▃▂▁        │
+   └─ lost ─┘                                        │  └─ preserved ─┘  │</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># What loss scaling does, stripped to its essentials:
+scale = 1024.0
+
+loss = compute_loss(model(batch))     # fp16/bf16 forward
+(loss * scale).backward()             # every gradient in the graph is now scale x larger
+
+for p in model.parameters():          # undo it in fp32, BEFORE the optimizer sees it
+    p.grad = p.grad.float() / scale    #   cast first, then divide
+
+optimizer.step()</pre></div>
+<div class="note"><span class="tag">Note — why scaling the loss works at all</span>
+<p>Because differentiation is linear:</p>
+<div class="ascii-card"><pre>   d(c·L)/dw  =  c · dL/dw</pre></div>
+<p>Multiplying the loss by <code>c</code> multiplies <strong>every</strong> gradient in the graph by <code>c</code>, uniformly, with one multiply. There is no need to touch the backward pass at all. The gradients then live in a range fp16 can represent, and you divide by <code>c</code> once at the end, in fp32, before the optimizer step.</p>
+<p>The critical detail: <strong>you must unscale before the update</strong>, or your effective learning rate is <code>c</code> times too large. <code>GradScaler</code> does this inside <code>scaler.step(optimizer)</code>. Keep this in mind for the walkthrough below.</p>
+<p>Indeed, as in the figure below, multiplying the loss by a large value made training work well without diverging. The grey graph is without scaling; the green is with. Surprisingly, the performance is almost identical to FP32.</p>
+<p>For this reason, mixed precision using FP16 and FP32 together has become almost essential to modern neural-network training. Until bfloat16 (Google TPU) — which covers FP32's range with FP16's storage size — is supported on more diverse GPUs and becomes popularized, FP16 + 32 mixed-precision training will remain an essential technique for neural-network training.</p>
+</div>
+<div class="warn"><span class="tag">bf16 won. Use it, and skip most of this section</span><p>Every NVIDIA GPU from Ampere (A100) onward, and every AMD MI-series, supports bf16 natively. It is now the default for large-model training, and this changes the chapter's premise:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>fp16</th>
+<th>bf16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exponent bits</td>
+<td>5</td>
+<td><strong>8 — same as fp32</strong></td>
+</tr>
+<tr>
+<td>Mantissa bits</td>
+<td>10</td>
+<td>7</td>
+</tr>
+<tr>
+<td>Dynamic range</td>
+<td>~6e-5 to 65504</td>
+<td>~1e-38 to 3e38</td>
+</tr>
+<tr>
+<td><strong>Needs loss scaling?</strong></td>
+<td><strong>Yes</strong></td>
+<td><strong>No</strong></td>
+</tr>
+<tr>
+<td>Precision within range</td>
+<td>better</td>
+<td>worse</td>
+</tr>
+</tbody>
+</table></div>
+<p>bf16 trades mantissa bits for exponent bits, and it turns out <strong>range matters more than precision</strong> for gradients. Because bf16 has fp32's exponent range, gradients simply don't underflow — so <code>GradScaler</code>, dynamic loss scaling, overflow detection, and skipped steps all disappear.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># modern: no scaler at all
+with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+    loss = model(**batch).loss
+loss.backward()
+optimizer.step()</pre></div>
+<p>Everything below about loss scaling is still worth understanding — you'll meet it in older code, on pre-Ampere hardware, and in fp8 training, where scaling came back (per-tensor, this time). But for new work on modern GPUs: use bf16 and skip it.</p></div>
+<h3 id="how-mixed-precision-works">How Mixed Precision works</h3>
+<p>The following shows how mixed precision operates. Let's look at the process in detail with code and formulas.</p>
+<div class="ascii-card"><pre>   ┌─ FP32 master weights ─┐         ┌─ FP16 working copy ─┐
+   │  w (4 bytes/param)    │──cast──▶│  w (2 bytes/param)  │
+   │                       │         │         │           │
+   │                       │         │      forward        │
+   │                       │         │         │           │
+   │                       │         │      backward       │
+   │                       │         │         │           │
+   │  optimizer.step()     │◀─copy───│   fp16 gradients    │
+   │  (momentum, variance  │  +unscale└─────────────────────┘
+   │   all in fp32)        │
+   └───────────────────────┘</pre></div>
+<h3 id="0-create-the-model-and-optimizer">0) Create the model and optimizer</h3>
+<p>Define a neural network with 2 layers.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import torch
+import torch.nn as nn
+
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w1 = nn.Linear(512, 512, bias=False)
+        self.w2 = nn.Linear(512, 1, bias=False)
+
+    def forward(self, x):
+        z1 = self.w1(x)
+        z2 = self.w2(z1)
+        return z2</pre></div>
+<p>Create the neural network to train and the optimizer.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from torch.optim import SGD
+
+fp32_model = Net().to(&quot;cuda&quot;)
+optimizer = SGD(fp32_model.parameters(), lr=1e-2)</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>f&quot;GPU = {torch.cuda.memory_allocated(0) / (1024 ** 2)} GiB&quot;</pre></div>
+<h3 id="1-float2half">1) Float2Half</h3>
+<p>This process simply truncates a parameter like <code>0.524796132</code> to something like <code>0.5247</code>.</p>
+<p>As you can see, the capacity is also about half the size of the FP32 model. (1.0 GB + 0.5 GB)</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>fp16_model = Net().half().to(&quot;cuda&quot;)
+fp16_model.load_state_dict(fp32_model.state_dict())</pre></div>
+<h3 id="2-forward">2) Forward</h3>
+<p>Perform the forward pass using the model copied to fp16.</p>
+<p><code>z₁ = w₁ · x</code> (FWD: layer1)</p>
+<p><code>z₂ = w₂ · z₁</code> (FWD: layer2)</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import torch
+
+# example input sizes
+batch_size, hidden_size = 4, 512
+
+# create dummy data (bsz=4, hid=512)
+x = torch.randn(batch_size, hidden_size, dtype=torch.half, device=&quot;cuda&quot;)
+
+# do forward
+z2 = fp16_model(x)
+
+# check dtype of output logits
+f&quot;logits type = {z2.dtype}&quot;</pre></div>
+<p>Compute the loss using the computed FP16 output.</p>
+<p><code>L = (y − z₂)² / 2</code> (Loss computation)</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># create dummy data (bsz=4)
+y = torch.tensor([[1.9], [9.5], [0.9], [1.2]], dtype=torch.half, device=&quot;cuda&quot;)
+
+# compute mean square error loss
+L = torch.nn.functional.mse_loss(z2, y)
+
+# check dtype of loss
+f&quot;loss type = {L.dtype}&quot;</pre></div>
+<h3 id="3-backward">3) Backward</h3>
+<p>Now we need to update the model's parameters with the gradient-descent rule <code>wₙ := wₙ − lr · dL/dwₙ</code>.</p>
+<p>So we need gradients like <code>dL/dw₁</code> and <code>dL/dw₂</code>. They are roughly as follows (obtained by the chain rule):</p>
+<div class="ascii-card"><pre>   dL/dw₂ = dL/dz₂ · dz₂/dw₂
+   dL/dw₁ = dL/dz₂ · dz₂/dz₁ · dz₁/dw₁</pre></div>
+<p>Concretely:</p>
+<div class="ascii-card"><pre>   dL/dz₂ = y − z₂     (BWD-activation: layer2)
+   dz₂/dw₂ = z₁        (BWD-weight:     layer2)
+   dz₂/dz₁ = w₂        (BWD-activation: layer1)
+   dz₁/dw₁ = x         (BWD-weight:     layer1)
+
+   dL/dw₂ = (y − z₂) · z₁
+   dL/dw₁ = (y − z₂) · w₂ · x</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># loss scaling
+L *= 1024
+
+# do backward
+L.backward()</pre></div>
+<div class="note"><span class="tag">Note — the two kinds of backward, which matter again in chapter 06&#x27;s zero-bubble schedules</span>
+<p>Notice the list above separates <strong>BWD-activation</strong> (<code>dL/dz</code>, the gradient w.r.t. the layer <em>input</em>) from <strong>BWD-weight</strong> (<code>dL/dw</code>, the gradient w.r.t. the <em>parameters</em>). Only the first is needed by the previous layer; the second is needed only by the optimizer. That is exactly the decomposition zero-bubble pipeline scheduling exploits. Same fact, different chapter.</p>
+</div>
+<h3 id="4-update-weight">4) Update Weight</h3>
+<p>Finally, run <code>optimizer.step()</code> to update the parameters.</p>
+<div class="ascii-card"><pre>   w₁ := w₁ − lr · dL/dw₁
+   w₂ := w₂ − lr · dL/dw₂</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>print(f&#x27;before: {fp32_model.w1.weight}\n&#x27;)
+optimizer.step()
+print(f&#x27;after: {fp32_model.w1.weight}\n&#x27;)</pre></div>
+<p>Think about it — the FP32 model never performed a forward or backward. So it doesn't hold gradient tensors. That's why running <code>optimizer.step()</code> didn't change the values. So before running <code>optimizer.step()</code>, we must copy the gradients of the FP16 model that went through <code>backward()</code>.</p>
+<p>For reference, in PyTorch every parameter (<code>nn.Parameter</code>) with <code>requires_grad=True</code> has a <code>grad</code> attribute. When <code>backward</code> is called on a tensor output by the model, it walks back through the graph performing the derivative computation and stores the results in the space called <code>grad</code>. Because <code>grad</code> is the same size as the corresponding tensor, if the model's capacity is 10 GB then the gradients need 10 GB as well. This is one of the reasons training needs far more memory than inference. So if a tensor won't be used for training, you must set <code>requires_grad</code> to <code>False</code> to prevent unnecessary memory consumption.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># copy gradient to FP32 model
+fp32_model.w1.weight.grad = fp16_model.w1.weight.grad.float()
+fp32_model.w2.weight.grad = fp16_model.w2.weight.grad.float()</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>print(f&#x27;before: {fp32_model.w1.weight}\n&#x27;)
+optimizer.step()
+print(f&#x27;after: {fp32_model.w1.weight}\n&#x27;)</pre></div>
+<div class="warn"><span class="tag">There is a bug in this walkthrough: the gradients are never unscaled</span><p><code>L *= 1024</code> multiplied every gradient by 1024. The copy to the fp32 model carries that factor straight through into <code>optimizer.step()</code>, so the effective learning rate is <strong>1024× larger than <code>lr=1e-2</code></strong>. As a demonstration of the mechanics it's fine; as a template it will blow up.</p>
+<p>The missing step:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>SCALE = 1024
+fp32_model.w1.weight.grad = fp16_model.w1.weight.grad.float() / SCALE
+fp32_model.w2.weight.grad = fp16_model.w2.weight.grad.float() / SCALE</pre></div>
+<p>Note the ordering: cast to fp32 <strong>first</strong>, then divide. Dividing in fp16 would re-introduce the underflow the scaling existed to prevent.</p>
+<p>A real implementation also checks for <code>inf</code>/<code>nan</code> before unscaling and <strong>skips the step</strong> if any are found — an overflowed gradient is garbage, not a small number. That check is what <code>scaler.step(optimizer)</code> does for you, and it's why <code>GradScaler</code> sometimes reports skipped steps early in training.</p></div>
+<h3 id="doing-mixed-precision-training-in-pytorch">Doing mixed-precision training in PyTorch</h3>
+<p>In PyTorch you can perform mixed-precision training easily as follows.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># bf16 — the default choice on any GPU from Ampere onward.
+# No GradScaler, no overflow handling, no skipped steps.
+for batch in loader:
+    optimizer.zero_grad(set_to_none=True)
+    with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+        loss = model(**batch).loss
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+
+
+# fp16 — only if you are on pre-Ampere hardware. Needs the scaler.
+scaler = torch.amp.GradScaler(&quot;cuda&quot;)
+
+for batch in loader:
+    optimizer.zero_grad(set_to_none=True)
+    with torch.autocast(&quot;cuda&quot;, dtype=torch.float16):
+        loss = model(**batch).loss
+
+    scaler.scale(loss).backward()      # scaled gradients
+    scaler.unscale_(optimizer)         # BEFORE clipping — clipping needs true values
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    scaler.step(optimizer)             # skips the step if any gradient is inf/nan
+    scaler.update()                    # adjust the scale for next iteration</pre></div>
+<div class="note"><span class="tag">Note — what autocast actually does, since &quot;casts operations to mixed precision&quot; is vague</span>
+<p>It maintains a per-operation policy:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Runs in</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Numerically safe, compute-heavy</td>
+<td><strong>fp16/bf16</strong></td>
+<td><code>matmul</code>, <code>conv</code>, <code>linear</code>, <code>bmm</code></td>
+</tr>
+<tr>
+<td>Numerically sensitive</td>
+<td><strong>fp32</strong></td>
+<td><code>softmax</code>, <code>layer_norm</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, losses</td>
+</tr>
+<tr>
+<td>Promote to widest input</td>
+<td>fp32</td>
+<td><code>add</code>, <code>cat</code>, elementwise mixes</td>
+</tr>
+</tbody>
+</table></div>
+<p>So "mixed precision" isn't a uniform cast — it's a <em>curated</em> one. The big GEMMs get the tensor-core speedup; reductions and normalizations stay in fp32 where catastrophic cancellation would otherwise bite. Your model weights stay fp32 throughout; only the activations flowing through autocast-ed ops are low precision.</p>
+</div>
+<div class="warn"><span class="tag">`torch.cuda.amp.*` is deprecated</span><p>(since PyTorch 2.4) and emits a <code>FutureWarning</code>. The spellings are <code>torch.amp.GradScaler("cuda")</code> and <code>torch.autocast("cuda", ...)</code>. You will see the old ones constantly in blog posts and older repos.</p>
+<p>Note the <code>unscale_</code> placement in the fp16 path above: gradient clipping must see <em>true</em> gradients. Clipping scaled gradients clips at <code>1024 ×</code> your threshold — that is, not at all.</p></div>
+<h3 id="dynamic-loss-scaling">Dynamic Loss Scaling</h3>
+<p>Loss scaling made mixed-precision training very effective. But it's very hard to know what scale value is best to set. So some open-source projects propose the <strong>dynamic loss scaling</strong> technique to solve this. It's implemented in NVIDIA's <code>amp</code> and MS's <code>deepspeed</code>.</p>
+<p>The idea of dynamic loss scaling is very simple. <strong>The goal is to keep the scale value as large as possible without the gradient's decimals overflowing.</strong> The larger you make the gradient values the better, but if they get too large overflow occurs, so you grow them as much as possible short of overflow.</p>
+<p>So at the start of training you set a very large value as the scale. In <code>deepspeed</code> the default is set to 2³². You backward the loss with this value, and if the gradient overflowed you halve the scale value. Repeating this process many times to find the maximum scale value at which overflow does not occur is exactly dynamic loss scaling.</p>
+<div class="note"><span class="tag">Note — the algorithm has a second half that is easy to miss: it also grows</span>
+<div class="ascii-card"><pre>   every step:
+       backward with current scale
+       if any gradient is inf/nan:
+           SKIP the optimizer step        ← the update is discarded entirely
+           scale ← scale / 2
+           reset the success counter
+       else:
+           apply the step
+           if N consecutive successes (N = loss_scale_window, default 1000):
+               scale ← scale × 2          ← creep back up</pre></div>
+<p>Without the growth half it would only ever ratchet downward and eventually underflow again. The <code>hysteresis</code> parameter in the config (<code>"hysteresis": 2</code>) means "tolerate this many overflows before reducing," which damps oscillation around the boundary.</p>
+<p>Two practical consequences:</p>
+<ul>
+<li><strong>Early skipped steps are normal.</strong> Starting at 2³² essentially guarantees overflow, so the first several steps get discarded while the scale ratchets down. If you see "OVERFLOW! Skipping step" in the first ~20 iterations, that's the algorithm working, not a bug.</li>
+<li><strong><code>initial_scale_power: 32</code> is unusually aggressive.</strong> DeepSpeed's own default is 16. Starting at 32 just spends more steps searching. And with bf16 the entire mechanism is unnecessary.</li>
+</ul>
+</div>
+<div class="note"><span class="tag">Note — historical, for reading old configs</span>
+<p>Before PyTorch had native AMP, mixed precision came from NVIDIA's <code>apex</code> library, which exposed an <code>opt_level</code> knob:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th><code>opt_level</code></th>
+<th>Meaning</th>
+<th>Modern equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>O0</code></td>
+<td>pure fp32</td>
+<td>no autocast</td>
+</tr>
+<tr>
+<td><code>O1</code></td>
+<td>per-operation allowlist, fp32 master weights</td>
+<td><strong><code>torch.autocast</code></strong></td>
+</tr>
+<tr>
+<td><code>O2</code></td>
+<td>"almost fp16" — weights cast, norms kept fp32</td>
+<td>roughly <code>model.half()</code> plus care</td>
+</tr>
+<tr>
+<td><code>O3</code></td>
+<td>pure fp16</td>
+<td><code>model.half()</code>; diverges — it was a speed <em>baseline</em>, not a recommendation</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>apex.amp</code> is deprecated — the repository says so itself and points at PyTorch AMP, as do <code>apex.parallel.DistributedDataParallel</code> and <code>apex.parallel.SyncBatchNorm</code>. <code>torch.autocast</code> is essentially <code>O1</code> and is the only one you need. The wider apex repo still exists for some fused kernels, but for anything in this chapter it is not the answer; on current NVIDIA stacks that role belongs to <strong>Transformer Engine</strong>.</p>
+</div></div></section><section class="panel" id="pan-2-zero-redundancy-optimization" role="tabpanel" aria-labelledby="t-2-zero-redundancy-optimization" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 15</p><h2 id="2-zero-redundancy-optimization">2. Zero Redundancy Optimization</h2></div><div class="body"><p>By using FP16 and FP32 together, training speed became very fast, but a drawback appeared — memory. Because the FP32 master weights, the FP16 parameters, and the gradients are all held on the GPU, more memory is needed than before.</p>
+<p>And even though the model parameters exist in FP16, the optimization happens in FP32, so tensors such as the variance and momentum required by adaptive optimizers like AdaGrad and Adam must still be kept in FP32.</p>
+<div class="ascii-card"><pre>   Adam&#x27;s update, per parameter:
+
+     m ← β₁·m + (1−β₁)·g          momentum   (fp32, 4 bytes)
+     v ← β₂·v + (1−β₂)·g²         variance   (fp32, 4 bytes)
+     w ← w − lr · m̂ / (√v̂ + ε)    master w   (fp32, 4 bytes)</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+Reference: pytorch/torch/optim/adam.py
+&quot;&quot;&quot;
+
+@torch.no_grad()
+def step(self, closure=None):
+    &quot;&quot;&quot;Performs a single optimization step.&quot;&quot;&quot;
+    loss = None
+    if closure is not None:
+        with torch.enable_grad():
+            loss = closure()
+
+    for group in self.param_groups:
+        params_with_grad = []
+        grads = []
+        ...</pre></div>
+<p>So far we've surveyed the kinds of tensors allocated in memory when we train a model: FP16 parameters and gradients, FP32 parameters, gradients, momentum, variance. The surprising thing is that <strong>the region actually occupied by the model is quite small.</strong> During training, an enormous quantity of tensors beyond the model is allocated in GPU memory.</p>
+<div class="ascii-card"><pre>   Per parameter, mixed-precision Adam:
+
+     fp16 weights        ██                        2 bytes
+     fp16 gradients      ██                        2 bytes
+     fp32 master weights ████                      4 bytes
+     Adam momentum       ████                      4 bytes
+     Adam variance       ████                      4 bytes
+                         ────────────────────────────────
+                         TOTAL  16 bytes/param
+                         ▲▲
+                         only 2 of the 16 are &quot;the model&quot;
+                         → 87.5% of it is bookkeeping</pre></div>
+<p>Additionally, <strong>data tensors</strong> and <strong>activation tensors</strong> are allocated in memory. Data tensors mean the token-state tensors before they enter the model, and activation tensors mean the hidden states and other tensors computed during forward and backward. On top of that, when you do distributed processing you also need <strong>bucket space to hold tensors during communication.</strong> We already covered buckets as gradient bucketing in the Data Parallelism session. So we need to manage not only the model and the data but also these <strong>optimizer states (variance, momentum) and data &amp; activation memory.</strong></p>
+<p>Zero Redundancy Optimization (ZeRO) is <strong>a collection of memory-optimization techniques</strong> that helps manage these parts very efficiently. There are broadly two families of solutions: <strong>ZeRO-DP</strong> (ZeRO Data Parallelism) and <strong>ZeRO-R</strong> (ZeRO Residual States). Let's work through them step by step.</p>
+<div class="note"><span class="tag">Note — the word &quot;redundancy&quot; is the whole thesis, so make it concrete</span>
+<p>Under plain DDP, all <code>N</code> GPUs hold <strong>byte-identical</strong> copies of those 16 bytes/param. Across 8 GPUs, that's 8 identical copies of everything:</p>
+<div class="ascii-card"><pre>   DDP, N=4:
+   GPU0 [16Ψ]   GPU1 [16Ψ]   GPU2 [16Ψ]   GPU3 [16Ψ]     ← 4× redundancy
+        └────────────┴────────────┴────────────┘
+                    all identical, always</pre></div>
+<p>Yet at any instant, a rank only needs the parameters of the layer it's computing, and the optimizer state only at <code>step()</code> time. <strong>The redundancy buys nothing except convenience.</strong> ZeRO removes it, shard by shard, in four escalating stages.</p>
+<p>For a 7B model that's <code>16 × 7e9 = 112 GB</code> of state. On 8×80GB GPUs, DDP needs 112 GB <em>per GPU</em> and fails. ZeRO-3 needs 14 GB per GPU and fits comfortably.</p>
+</div></div></section><section class="panel" id="pan-3-zero-data-parallelism" role="tabpanel" aria-labelledby="t-3-zero-data-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 15</p><h2 id="3-zero-data-parallelism">3. ZeRO Data Parallelism</h2></div><div class="body"><p>If we first examine the memory state, the left side of the figure above (FP16, FP32, model &amp; optimizer &amp; gradient) takes up the largest space. So we need to split and manage those efficiently. ZeRO-DP helps split and manage these tensors per device, together with data parallelism.</p>
+<p>ZeRO-DP is provided in 4 stages and can be applied selectively through the <code>DeepSpeed</code> library.</p>
+<ul>
+<li><strong>Stage 0</strong>:</li>
+<li>No Partitioning</li>
+<li>ZeRO-DP is not applied.</li>
+<li><strong>Stage 1</strong>:</li>
+<li>Optimizer States Partitioning</li>
+<li>Splits the optimizer-state (momentum, variance) tensors across several GPUs.</li>
+<li><strong>4× reduction</strong> in memory consumption</li>
+<li>Communication cost similar to before</li>
+<li><strong>Stage 2</strong>:</li>
+<li>Stage 1 + Gradient partitioning</li>
+<li>Splits the gradient tensors across several GPUs.</li>
+<li><strong>2× further reduction</strong> in memory consumption</li>
+<li>Communication cost similar to before</li>
+<li><strong>Stage 3</strong>:</li>
+<li>Parameter partitioning</li>
+<li>Splits the parameter (model) tensors across several GPUs.</li>
+<li>Linear reduction in memory consumption with the degree of partitioning</li>
+<li><strong>1.5× more</strong> communication cost than before</li>
+</ul>
+<p>Because ZeRO-DP's operation is very complex, let's check it with a video.</p>
+<p>https://www.microsoft.com/en-us/research/uploads/prod/2020/02/Turing-Animation.mp4</p>
+<div class="ascii-card"><pre>   Let Ψ = #parameters, N = data-parallel world size
+
+   ┌────────────┬──────────────┬─────────────────────┬───────────────┐
+   │  Stage     │ What shards  │ Memory per GPU      │ Comm vs DDP   │
+   ├────────────┼──────────────┼─────────────────────┼───────────────┤
+   │  DDP       │  nothing     │       16Ψ           │      1×       │
+   │  ZeRO-1    │  optimizer   │   4Ψ + 12Ψ/N        │      1×       │
+   │  ZeRO-2    │  + gradients │   2Ψ + 14Ψ/N        │      1×       │
+   │  ZeRO-3    │  + params    │      16Ψ/N          │     1.5×      │
+   └────────────┴──────────────┴─────────────────────┴───────────────┘
+
+   fp16 weights  ██                   ← survives until stage 3
+   fp16 grads    ██                   ← sharded at stage 2
+   fp32 w,m,v    ████████████         ← sharded at stage 1  (12 of the 16 bytes!)</pre></div>
+<div class="note"><span class="tag">Note — why the stages are in that order: biggest win first, cheapest first</span>
+<p>Stage 1 shards the fp32 master weights, momentum, and variance — <strong>12 of the 16 bytes</strong>, three quarters of the total — and costs nothing extra in communication. That's why it's stage 1: it's nearly free.</p>
+</div>
+<div class="note"><span class="tag">Note — why stages 1 and 2 are communication-neutral, which sounds too good to be true</span>
+<p>Straight from notebook 03's identity:</p>
+<div class="ascii-card"><pre>   all_reduce  =  reduce_scatter  +  all_gather      (and costs exactly 2× either half)
+
+   DDP:      all_reduce(gradients)                       → 2Ψ moved per rank
+   ZeRO-1/2: reduce_scatter(gradients) → each rank gets its shard
+             ... local optimizer step on that shard ...
+             all_gather(updated params)                  → Ψ + Ψ = 2Ψ moved per rank</pre></div>
+<p><strong>Identical volume.</strong> DDP was already paying for both halves of an all-reduce; ZeRO just declines to reassemble in between, does the update on the shard it holds, and reassembles the <em>parameters</em> instead of the gradients. Same bytes, far less memory. This is why ZeRO-1 and ZeRO-2 are close to strict improvements over DDP and there is rarely a reason not to use them.</p>
+<p>Stage 3 is different: parameters are sharded permanently, so every layer must be <code>all_gather</code>ed before use in the forward pass <strong>and again</strong> in the backward pass. That extra gather is the 1.5×.</p>
+<p>In conclusion, applying ZeRO-DP lets you train a much larger model on smaller GPUs. Let's try it right away. First create a configuration file. I enabled a learning-rate scheduler, fp16, and zero optimization (stage 1). There are many other options in the deepspeed configuration; see https://www.deepspeed.ai/docs/config-json.</p>
+<div class="ascii-card"><pre>{
+  &quot;train_batch_size&quot;: 16,
+  &quot;gradient_accumulation_steps&quot;: 1,
+  &quot;scheduler&quot;: {
+    &quot;type&quot;: &quot;WarmupDecayLR&quot;,
+    &quot;params&quot;: {
+      &quot;total_num_steps&quot;: 300,
+      &quot;warmup_min_lr&quot;: 0,
+      &quot;warmup_max_lr&quot;: 3e-5,
+      &quot;warmup_num_steps&quot;: 30
+    }
+  },
+  &quot;fp16&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;initial_scale_power&quot;: 32,
+    &quot;loss_scale_window&quot;: 1000,
+    &quot;hysteresis&quot;: 2,
+    &quot;min_loss_scale&quot;: 1
+  },
+  &quot;zero_optimization&quot;: {
+    &quot;stage&quot;: 1
+  },
+  &quot;zero_allow_untested_optimizer&quot;: true,
+  &quot;wall_clock_breakdown&quot;: false,
+  &quot;steps_per_print&quot;: 9999999999
+}</pre></div>
+<p>Then write code like the following. The argument parser must have the options <code>--local_rank</code> and <code>--deepspeed_config</code>, and of these <code>--local_rank</code> is filled in automatically when the script is launched.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/zero_dp_args.py
+&quot;&quot;&quot;
+from argparse import ArgumentParser
+from datasets import load_dataset
+from torch.optim import Adam
+from torch.utils.data import DataLoader, DistributedSampler
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import deepspeed
+import torch.distributed as dist
+
+model = AutoModelForCausalLM.from_pretrained(&quot;gpt2&quot;)
+tokenizer = AutoTokenizer.from_pretrained(&quot;gpt2&quot;)
+tokenizer.pad_token = tokenizer.eos_token
+
+parser = ArgumentParser()
+parser.add_argument(
+    &quot;--deepspeed_config&quot;, default=&quot;../src/zero_dp_config.json&quot;, type=str
+)
+parser.add_argument(&quot;--local_rank&quot;, default=0, type=int)
+args = parser.parse_args()
+
+optimizer = Adam(model.parameters(), lr=3e-5, weight_decay=3e-7)
+
+engine, optimizer, _, scheduler = deepspeed.initialize(
+    args=args,
+    model=model,
+    optimizer=optimizer,
+)
+
+ds = load_dataset(&quot;rajpurkar/squad&quot;)[&quot;train&quot;][&quot;context&quot;]
+sampler = DistributedSampler(ds, shuffle=True, drop_last=True)   # &lt;- see note below
+data_loader = DataLoader(ds, batch_size=8, sampler=sampler, num_workers=8)
+
+for i, data in enumerate(data_loader):
+    tokens = tokenizer(
+        data,
+        return_tensors=&quot;pt&quot;,
+        truncation=True,
+        padding=True,
+        max_length=1024,
+    )
+
+    loss = engine(
+        input_ids=tokens.input_ids.cuda(),
+        attention_mask=tokens.attention_mask.cuda(),
+        labels=tokens.input_ids.cuda(),
+    ).loss
+
+    engine.backward(loss)
+    engine.step()
+
+    if i % 10 == 0 and dist.get_rank() == 0:
+        print(f&quot;step:{i}, loss:{loss}&quot;)
+
+    if i &gt;= 300:
+        break</pre></div>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ deepspeed --num_gpus=4 ../src/zero_args.py --deepspeed_config=../src/zero_dp_config.json</pre></div>
+</div>
+<div class="note"><span class="tag">Note — three things about this loop that differ from ordinary PyTorch</span>
+<ol>
+<li><strong><code>engine.backward(loss)</code> and <code>engine.step()</code>, not <code>loss.backward()</code> / <code>optimizer.step()</code>.</strong> The engine must intercept both: <code>backward</code> to insert the <code>reduce_scatter</code> and the loss unscaling, <code>step</code> to update only this rank's shard and then <code>all_gather</code> the result. Calling the raw PyTorch versions silently bypasses ZeRO.</li>
+<li><strong>No <code>optimizer.zero_grad()</code>.</strong> The engine handles gradient lifetime itself — with <code>contiguous_gradients</code> it's managing a preallocated flat buffer, not per-parameter <code>.grad</code> tensors.</li>
+<li><strong>No <code>DistributedSampler</code>.</strong> Every rank iterates the same <code>DataLoader</code> in the same order — meaning <strong>all four ranks train on identical data</strong>. That makes this a correctness bug as a training script (it's a 4× waste, not data parallelism), though it doesn't affect the memory demonstration. A real script needs a <code>DistributedSampler</code> with <code>set_epoch</code>, exactly as in chapter 05.</li>
+<li>Minor: the file is created as <code>src/zero_dp_args.py</code> but launched as <code>../src/zero_args.py</code>.</li>
+</ol>
+<p>Or you can pass the configuration directly to <code>deepspeed.initialize()</code>.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/zero_dp_args.py
+&quot;&quot;&quot;
+from datasets import load_dataset
+from torch.optim import Adam
+from torch.utils.data import DataLoader, DistributedSampler
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import deepspeed
+import torch.distributed as dist
+
+model = AutoModelForCausalLM.from_pretrained(&quot;gpt2&quot;)
+tokenizer = AutoTokenizer.from_pretrained(&quot;gpt2&quot;)
+tokenizer.pad_token = tokenizer.eos_token
+optimizer = Adam(model.parameters(), lr=3e-5, weight_decay=3e-7)
+
+engine, optimizer, _, scheduler = deepspeed.initialize(
+    optimizer=optimizer,
+    model=model,
+    config={
+        &quot;train_batch_size&quot;: 16,
+        &quot;gradient_accumulation_steps&quot;: 1,
+        &quot;scheduler&quot;: {
+            &quot;type&quot;: &quot;WarmupDecayLR&quot;,
+            &quot;params&quot;: {
+                &quot;total_num_steps&quot;: 300,
+                &quot;warmup_min_lr&quot;: 0,
+                &quot;warmup_max_lr&quot;: 3e-5,
+                &quot;warmup_num_steps&quot;: 30,
+            },
+        },
+        &quot;fp16&quot;: {
+            &quot;enabled&quot;: True,
+            &quot;initial_scale_power&quot;: 32,
+            &quot;loss_scale_window&quot;: 1000,
+            &quot;hysteresis&quot;: 2,
+            &quot;min_loss_scale&quot;: 1,
+        },
+        &quot;zero_optimization&quot;: {
+            &quot;stage&quot;: 1,
+            &quot;allgather_partitions&quot;: True,
+            &quot;allgather_bucket_size&quot;: 5e8,
+            &quot;overlap_comm&quot;: False,
+            &quot;reduce_scatter&quot;: True,
+            &quot;reduce_bucket_size&quot;: 5e8,
+            &quot;contiguous_gradients&quot;: True,
+        },
+        &quot;zero_allow_untested_optimizer&quot;: True,
+        &quot;wall_clock_breakdown&quot;: False,
+        &quot;steps_per_print&quot;: 9999999999,
+    },
+)</pre></div>
+</div>
+<div class="note"><span class="tag">Note — the zero_optimization sub-options, since they appear here without explanation</span>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What it does</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reduce_scatter</code></td>
+<td>Use <code>reduce_scatter</code> instead of <code>all_reduce</code> for gradients</td>
+<td>Keep <code>true</code> — it's the mechanism</td>
+</tr>
+<tr>
+<td><code>allgather_partitions</code></td>
+<td><code>all_gather</code> updated params after the step</td>
+<td>Keep <code>true</code></td>
+</tr>
+<tr>
+<td><code>allgather_bucket_size</code> / <code>reduce_bucket_size</code></td>
+<td>Cap on communication buffer size, in elements</td>
+<td>This <em>is</em> the "Constant Memory Buffer" of §5. Lower if you OOM</td>
+</tr>
+<tr>
+<td><code>overlap_comm</code></td>
+<td>Overlap communication with backward compute</td>
+<td><strong>Turn this on.</strong> Costs some memory, buys real speed</td>
+</tr>
+<tr>
+<td><code>contiguous_gradients</code></td>
+<td>Copy gradients into one preallocated flat buffer</td>
+<td>Reduces fragmentation (§5's third idea)</td>
+</tr>
+<tr>
+<td><code>zero_allow_untested_optimizer</code></td>
+<td>Suppresses the warning for optimizers DeepSpeed hasn't validated</td>
+<td>Needed here because it's <code>torch.optim.Adam</code> rather than <code>FusedAdam</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><code>overlap_comm: false</code> in this config is leaving performance on the table — it's the same computation/communication overlap that made DDP fast in chapter 05.</p>
+</div></div></section><section class="panel" id="pan-4-activation-checkpointing" role="tabpanel" aria-labelledby="t-4-activation-checkpointing" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 15</p><h2 id="4-activation-checkpointing">4. Activation Checkpointing</h2></div><div class="body"><p>Besides the FP16/32 model, gradients, and optimizer states, another large memory region is the <strong>activation memory</strong> region. Activations mean the input tensors that get multiplied with the model weights. If there is a neural network like <code>y = w₁ · (w₂ · x)</code>, then tensors such as <code>x</code> (multiplied with <code>w₁</code>) and <code>w₂ · x</code> correspond to activation memory.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+Reference: https://pytorch.org/tutorials/beginner/examples_autograd/two_layer_net_custom_function.html
+&quot;&quot;&quot;
+
+import torch
+
+class ReLU(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        # storing the input value
+
+        return input.clamp(min=0)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[input &lt; 0] = 0
+        return grad_input</pre></div>
+<p>In the Pipeline Parallelism session we mentioned that the activation tensors used during forward are stored for the backward pass. As above, to compute the derivative of a max-pooling layer you need the original positions of the pooled values, so the tensor input during forward is absolutely required. Also, looking at the <code>ReLU</code> implementation above, you can see the <code>input</code> tensor being saved via <code>ctx.save_for_backward</code>.</p>
+<p><em>(diagrams: <code>../images/checkpoint_full_act.gif</code>, <code>checkpoint_no_act.gif</code>, <code>checkpoint_act.gif</code>)</em></p>
+<p><strong>That is, to perform the backward step you must store the inputs from the forward step.</strong> But if you store activations everywhere like this, memory consumption becomes very large.</p>
+<div class="ascii-card"><pre>   (a) store everything  — the default
+   layers:  1─2─3─4─5─6─7─8
+   stored:  ●─●─●─●─●─●─●─●        memory: O(L)   recompute: none</pre></div>
+<p>So if you don't store the activation tensors you can save far more memory. But if you don't store them, you have to run forward once more at backward time to obtain the activation tensors.</p>
+<div class="ascii-card"><pre>   (b) store nothing
+   layers:  1─2─3─4─5─6─7─8
+   stored:  ○─○─○─○─○─○─○─○        memory: O(1)   recompute: O(L²) — re-run
+                                                   from layer 1 every time</pre></div>
+<p>Activation checkpointing is a method that combines the advantages of both, storing activations <strong>at intervals</strong>.</p>
+<div class="ascii-card"><pre>   (c) checkpoint every √L layers
+   layers:  1─2─3─4─5─6─7─8
+   stored:  ●─○─○─●─○─○─●─○        memory: O(√L)  recompute: O(L)
+            ▲     ▲     ▲          re-run only from the nearest checkpoint</pre></div>
+<p>Storing only at intervals like this lets you save computation time by not redoing forward from the very beginning every time, and greatly reduces memory consumption by removing almost all activations. This technique — <strong>storing activations at intervals</strong> and, when a forward is needed, running forward from the checkpointed location — is called activation checkpointing. PyTorch already has checkpointing built in. Let's practise with PyTorch.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+src/checkpointing.py
+&quot;&quot;&quot;
+from torch import nn
+from torch.utils.checkpoint import checkpoint
+from transformers import AutoTokenizer, BertLayer, BertConfig
+
+config = BertConfig.from_pretrained(&quot;bert-base-cased&quot;)
+tokenizer = AutoTokenizer.from_pretrained(&quot;bert-base-cased&quot;)
+tokens = tokenizer(&quot;Hello I am Kevin&quot;, return_tensors=&quot;pt&quot;)
+
+embedding = nn.Embedding(tokenizer.vocab_size, config.hidden_size)
+layers = nn.ModuleList([BertLayer(config) for _ in range(6)])
+
+hidden_states = embedding(tokens.input_ids)
+attention_mask = tokens.attention_mask
+
+for i, layer_module in enumerate(layers):
+    layer_outputs = checkpoint(
+        layer_module,
+        hidden_states,
+        attention_mask,
+        use_reentrant=False,      # required; see the note below
+    )
+
+    hidden_states = layer_outputs[0]
+
+print(f&quot;output: {hidden_states}&quot;)</pre></div>
+<p>Usage is simply changing what you used to write as <strong><code>module(a, b, c)</code> into <code>checkpoint(module, a, b, c)</code></strong> — that's it.</p>
+<p>Also, the Hugging Face <code>transformers</code> we use frequently has this activation-checkpointing feature built into almost every model. <strong>You can simply turn it on and off with <code>model.gradient_checkpointing_enable()</code> and <code>model.gradient_checkpointing_disable()</code>.</strong> Really easy, right?</p>
+<div class="note"><span class="tag">Note — the trade, quantified</span>
+<p>The rule of thumb for transformers:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th></th>
+<th>Activation memory</th>
+<th>Extra compute</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No checkpointing</td>
+<td>100%</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>Checkpoint every layer</td>
+<td>~<code>1/L</code> of the intermediates</td>
+<td><strong>~33%</strong> (one extra forward)</td>
+</tr>
+<tr>
+<td>Selective (attention only)</td>
+<td>~50–70% saved</td>
+<td>~5–10%</td>
+</tr>
+</tbody>
+</table></div>
+<p>An extra forward pass is roughly one third of a full training step (forward ≈ 1, backward ≈ 2), hence the ~33%. That is usually an excellent trade: 33% more compute to fit a batch 4× larger, or a model that otherwise wouldn't run at all.</p>
+<p><strong>Selective checkpointing</strong> — recompute only the expensive-to-store, cheap-to-recompute parts (attention scores) and keep the rest — gets most of the memory benefit for a fraction of the compute. Megatron's <code>--recompute-granularity selective</code> does this, and it's usually the better default than full recomputation.</p>
+</div>
+<div class="warn"><span class="tag">`use_reentrant` is now required</span><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>layer_outputs = checkpoint(layer_module, hidden_states, attention_mask,
+                           use_reentrant=False)</pre></div>
+<p>The old reentrant implementation had real limitations: it broke with <code>torch.autograd.grad</code>, didn't handle keyword arguments, mis-handled modules with no <code>requires_grad</code> inputs, and interacted badly with DDP's unused-parameter detection. <code>use_reentrant=False</code> is the non-reentrant implementation and is now the recommended path; omitting the argument raises a warning and will eventually change behaviour.</p>
+<p>One more modern caveat: <strong>checkpointing re-runs the forward, so anything stochastic must be replayed identically.</strong> PyTorch handles RNG state for you by default (<code>preserve_rng_state=True</code>), but dropout inside a checkpointed region is a classic source of subtle bugs in hand-rolled implementations.</p></div></div></section><section class="panel" id="pan-5-zero-r" role="tabpanel" aria-labelledby="t-5-zero-r" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 15</p><h2 id="5-zero-r">5. ZeRO-R</h2></div><div class="body"><div class="subnav"><a href="#1-activation-memory-partitioning">1) Activation Memory Partitioning</a><a href="#2-constant-memory-buffer">2) Constant Memory Buffer</a><a href="#3-memory-defragmentation-contiguous-checkpointing">3) Memory Defragmentation (Contiguous Checkpointing)</a></div><div class="warn"><p><strong>📝 Older material numbers this section "4" as well; it is renumbered 5 here, and the two sections after it shift accordingly.</strong></p></div>
+<p>ZeRO-R is a set of techniques for highly optimizing regions such as activation memory and communication buckets.</p>
+<p>Through the ZeRO-DP we looked at in the previous chapter we efficiently improved model-state memory (FP16 &amp; 32 parameters, gradients, optimizer states). ZeRO-R proposes the following three solutions:</p>
+<ul>
+<li><strong>Activation Memory Partitioning</strong></li>
+<li><strong>Constant Size Buffer</strong></li>
+<li><strong>Memory Defragmentation</strong></li>
+</ul>
+<p>Let's look at each.</p>
+<h3 id="1-activation-memory-partitioning">1) Activation Memory Partitioning</h3>
+<p>Activation checkpointing can help both memory efficiency and speed, but when training large models it can cause considerable memory problems. In particular, when combined with model parallelism, after the forward is computed many copies of the activation tensors end up scattered here and there. <strong>ZeRO-R all-gathers these activation tensors, picks out only the ones needed, and partitions them onto GPUs.</strong> Also, for activations that are too large it checkpoints them to CPU RAM — sacrificing a little speed to save GPU memory.</p>
+<div class="note"><span class="tag">Note — the redundancy it&#x27;s attacking is the one from chapter 07</span>
+<p>Under tensor parallelism, the LayerNorm and dropout regions are <em>replicated</em>: every TP rank holds the identical full <code>[batch, seq, hidden]</code> activation. With TP=8 that's 8 identical copies of the largest tensor in the model. ZeRO-R's activation partitioning shards those checkpointed activations across the TP group instead.</p>
+<p>If that sounds familiar, it should — <strong>this is the same problem sequence parallelism solves</strong> (chapter 07 §5), arrived at from a different direction. Sequence parallelism is generally the better answer today: it eliminates the replication <em>structurally</em>, with identical communication volume, rather than gathering and re-partitioning after the fact.</p>
+</div>
+<h3 id="2-constant-memory-buffer">2) Constant Memory Buffer</h3>
+<p>Constant memory buffer refers to the technique of <strong>keeping the size of the buckets used for all-reduce, all-gather, etc. constant.</strong> Generally, the larger the model the larger you want the communication buckets to be as well. But if the model gets very large, the buffer size can become so large that it occupies a substantial portion of the GPU. So <strong>the maximum bucket size is capped so that it is never allocated larger than a fixed value.</strong> Once the bucket size grows past a certain level, keeping it there is enough to get good efficiency.</p>
+<div class="note"><span class="tag">Note — why a cap costs nothing</span>
+<p>Communication efficiency versus message size saturates. Below some threshold you're latency-bound and bigger helps a lot; above it you're already at line rate and bigger helps not at all:</p>
+<div class="ascii-card"><pre>   bandwidth
+   achieved   │           ┌──────────────────────  saturated
+              │        ╱
+              │      ╱     ← past here, bigger buckets buy nothing
+              │    ╱          but still cost memory
+              │  ╱
+              └─────────────────────────────▶ message size
+                    ~50–500 MB</pre></div>
+<p>So a fixed cap (<code>allgather_bucket_size</code>, <code>reduce_bucket_size</code>, default 5e8 elements) sits past the knee and never grows further. If you're tight on memory, lowering these is one of the cheapest levers available.</p>
+</div>
+<h3 id="3-memory-defragmentation-contiguous-checkpointing">3) Memory Defragmentation (Contiguous Checkpointing)</h3>
+<p>While training a model, <strong>fragmentation of GPU memory occurs very frequently</strong> as many tensors are created and destroyed. Sometimes you have plenty of capacity inside the GPU but the space is fragmented, so you can't place a contiguous tensor. So ZeRO-R <strong>pre-creates empty memory regions that can hold activations, gradients, etc. in the free space</strong> and, when similar-sized tensors are created, <strong>moves them into those regions</strong> to prevent fragmentation as much as possible.</p>
+<div class="ascii-card"><pre>   fragmented                          defragmented
+   ┌──┬──┬─┬───┬─┬──┬────┬─┬──┐        ┌────────────────┬──────────────┐
+   │██│  │█│   │█│  │████│█│  │        │████████████████│              │
+   └──┴──┴─┴───┴─┴──┴────┴─┴──┘        └────────────────┴──────────────┘
+    40% free but no contiguous          40% free, all contiguous
+    block big enough → OOM              → allocation succeeds</pre></div>
+<div class="note"><span class="tag">Note — this is why you can OOM at 60% utilization, and what to do about it</span>
+<p>The error message is characteristic:</p>
+<div class="ascii-card"><pre>   CUDA out of memory. Tried to allocate 2.00 GiB.
+   GPU has 14.5 GiB free; 8.2 GiB reserved by PyTorch but unallocated.</pre></div>
+<p>"Reserved but unallocated" is fragmentation: the caching allocator holds the memory but has no single contiguous run large enough. Beyond DeepSpeed's <code>contiguous_gradients</code>, two general remedies:</p>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</pre></div>
+<p>which lets the allocator grow segments rather than fragment across fixed blocks, and <code>torch.cuda.empty_cache()</code> (blunt, releases cached blocks back to the driver, and slow — don't put it in your training loop).</p>
+<p>Just like ZeRO-DP, you only need to write a simple configuration.</p>
+<ul>
+<li><strong>Constant Buffer Size</strong></li>
+<li>Determined the maximum bucket size via <code>allgather_bucket_size</code> and <code>reduce_bucket_size</code>.</li>
+<li><strong>Activation Memory</strong></li>
+<li>Partitions activation memory across GPUs via <code>partition_activations</code>.</li>
+<li>Offloads very large activation tensors to CPU via <code>cpu_checkpointing</code>.</li>
+<li><strong>Memory Defragmentation</strong></li>
+<li>Mitigates fragmentation via <code>contiguous_memory_optimization</code>.</li>
+</ul>
+<p>Besides these techniques there are many more. For details on more options please refer to the paper and the documentation.</p>
+<div class="ascii-card"><pre>{
+  &quot;train_batch_size&quot;: 16,
+  &quot;gradient_accumulation_steps&quot;: 1,
+  &quot;scheduler&quot;: {
+    &quot;type&quot;: &quot;WarmupDecayLR&quot;,
+    &quot;params&quot;: {
+      &quot;total_num_steps&quot;: 300,
+      &quot;warmup_min_lr&quot;: 0,
+      &quot;warmup_max_lr&quot;: 3e-5,
+      &quot;warmup_num_steps&quot;: 30
+    }
+  },
+  &quot;fp16&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;initial_scale_power&quot;: 32,
+    &quot;loss_scale_window&quot;: 1000,
+    &quot;hysteresis&quot;: 2,
+    &quot;min_loss_scale&quot;: 1
+  },
+  &quot;zero_optimization&quot;: {
+    &quot;stage&quot;: 1,
+    &quot;allgather_bucket_size&quot;: 5e8,
+    &quot;reduce_bucket_size&quot;: 5e8
+  },
+  &quot;activation_checkpointing&quot;: {
+    &quot;partition_activations&quot;: true,
+    &quot;cpu_checkpointing&quot;: true,
+    &quot;contiguous_memory_optimization&quot;: true,
+    &quot;number_checkpoints&quot;: 4
+  },
+  &quot;zero_allow_untested_optimizer&quot;: true,
+  &quot;wall_clock_breakdown&quot;: false,
+  &quot;steps_per_print&quot;: 9999999999
+}</pre></div>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ deepspeed --num_gpus=4 ../src/zero_args.py --deepspeed_config=../src/zero_r_config.json</pre></div>
+</div>
+<div class="note"><span class="tag">Note — partition_activations only does anything under model parallelism</span>
+<p>It shards activations across the <em>model-parallel</em> group, so with pure data parallelism (as in this example, 4 GPUs all doing DP) there's nothing replicated to shard. It's a no-op here. It becomes meaningful when combined with tensor parallelism — which is chapter 09.</p>
+</div></div></section><section class="panel" id="pan-6-zero-offload" role="tabpanel" aria-labelledby="t-6-zero-offload" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 15</p><h2 id="6-zero-offload">6. ZeRO Offload</h2></div><div class="body"><div class="subnav"><a href="#dpu-delayed-parameter-update">DPU: Delayed Parameter Update</a><a href="#zero-offload-zero-dp">ZeRO Offload + ZeRO DP</a><a href="#cpu-adam">CPU Adam</a></div><p>The <code>Activation Memory Partitioning</code> technique we saw in the previous chapter included the ability to move activation tensors that are too large down to the CPU. ZeRO-Offload, the follow-up to ZeRO-R, was able to break the GPU's capacity limit by <strong>offloading part of the model to CPU RAM.</strong> The core idea of ZeRO-Offload is as follows.</p>
+<h4 id="gpu-side">GPU-side</h4>
+<ul>
+<li>FP16 parameters &amp; gradients reside on the GPU.</li>
+<li>Forward &amp; backward are performed there using them. (because they are heavy computations)</li>
+</ul>
+<h4 id="cpu-side">CPU-side</h4>
+<ul>
+<li>FP32 parameters &amp; gradients &amp; optimizer states reside on the CPU.</li>
+<li>Weight update is performed on the CPU. (because it is a light computation)</li>
+<li>In particular, they implemented a CPU Adam optimizer that can run very fast on CPU.</li>
+</ul>
+<div class="ascii-card"><pre>   ┌───────────── GPU (fast, small) ─────────────┐
+   │  fp16 params  ██   fp16 grads  ██           │   4 bytes/param
+   │  forward + backward   ← heavy compute       │
+   └──────────────────┬──────────────────────────┘
+                      │ gradients down / params up  (PCIe)
+   ┌──────────────────▼──────────────────────────┐
+   │  fp32 params ████  momentum ████  var ████  │  12 bytes/param
+   │  optimizer.step()     ← light compute       │
+   └───────────── CPU (slow, large) ─────────────┘</pre></div>
+<p>Generally the CPU's processing speed is tens of times slower than the GPU's. So very large computations must be performed on the GPU. For that reason forward and backward are performed on the GPU. Think about it — most of the GPU is occupied by FP32 parameters, gradients, and optimizer states, yet the operation they actually perform is the weight update, which has a small computation cost.</p>
+<p>So if you move the whole FP32 portion down to the CPU, the GPU is left with only the FP16 parts that genuinely require GPU computation, and becomes very roomy.</p>
+<div class="note"><span class="tag">Note — the argument is really about arithmetic intensity, and it&#x27;s a good one</span>
+<div class="ascii-card"><pre>                     work per parameter        where it belongs
+   forward/backward  O(batch × seq) FLOPs      GPU  (compute-bound)
+   optimizer step    O(1) FLOPs                CPU  (memory-bound)</pre></div>
+<p>The optimizer step does a <em>constant</em> amount of arithmetic per parameter — a few multiplies and adds — regardless of batch size. It is entirely memory-bandwidth-bound. A CPU with hundreds of GB of RAM can do that work adequately, and it's holding 12 of the 16 bytes hostage on the GPU for no computational reason. Moving it is the natural trade.</p>
+</div>
+<div class="note"><span class="tag">Note — but understand what it costs, because this is the section people over-apply</span>
+<p>Every step, gradients must cross PCIe to the CPU and updated parameters must come back:</p>
+<div class="ascii-card"><pre>   traffic per step ≈ 2 × Ψ × 2 bytes  (fp16 grads down, fp16 params up)
+
+   7B model:  ≈ 28 GB per step over PCIe
+   PCIe Gen4 x16 ≈ 25 GB/s effective  →  ~1.1 s/step of pure transfer</pre></div>
+<p>A well-fed A100 does a 7B step in well under a second. <strong>Offload can therefore cost you more than 2× in step time.</strong> It is a capacity technique, not a performance one: use it when the alternative is <em>not training at all</em>, not when you're merely tight. Order of preference: shard first (ZeRO-1/2/3), checkpoint activations second, offload last.</p>
+</div>
+<h3 id="dpu-delayed-parameter-update">DPU: Delayed Parameter Update</h3>
+<p>If the GPU only starts sending to the CPU after forward &amp; backward are entirely finished, the GPU has to wait during the communication time. ZeRO-Offload introduced a technique called <strong>Delayed Parameter Update (DPU)</strong>, which, similarly to DDP's gradient bucketing, is a strategy that <strong>overlaps communication and computation to shorten total processing time.</strong></p>
+<p>Experiments showed that applying DPU caused no problem for performance and improved speed somewhat.</p>
+<div class="note"><span class="tag">Note — DPU is not just overlap; it changes the algorithm, and that&#x27;s worth flagging</span>
+<p>The name is precise: the parameter update is <em>delayed by one step</em>. Step <code>k</code>'s forward uses parameters updated from step <code>k−1</code>'s gradients while step <code>k</code>'s gradients are still travelling to the CPU:</p>
+<div class="ascii-card"><pre>   GPU:  fwd/bwd(k)      fwd/bwd(k+1)     fwd/bwd(k+2)
+                  ╲              ╲              ╲
+   CPU:            step(k)        step(k+1)      step(k+2)
+                        ╲              ╲
+   GPU uses params from: step(k-1)      step(k)</pre></div>
+<p>That is <strong>stale-gradient (delayed) SGD</strong>, the same family as PipeDream's async updates in chapter 06. The paper reports it's empirically fine — with a warm-up period of normal synchronous steps first — but it is a different optimization algorithm, not a pure scheduling win. DeepSpeed keeps it off by default for that reason.</p>
+</div>
+<h3 id="zero-offload-zero-dp">ZeRO Offload + ZeRO DP</h3>
+<p>ZeRO-Offload can be combined with ZeRO-DP. If you offload the optimizer states and gradients to CPU while ZeRO-DP is applied, it takes the form shown above. For reference, combining ZeRO-DP with Offload is possible from stage 2 onward, and to offload parameters as well you must set the ZeRO stage to 3.</p>
+<ul>
+<li><strong>ZeRO stage 2</strong>: Optimizer States Offload</li>
+<li><strong>ZeRO stage 3</strong>: Optimizer States + Parameter Offload</li>
+</ul>
+<div class="warn"><span class="tag">Small update:</span><p>in current DeepSpeed, <code>offload_optimizer</code> is supported from <strong>stage 1</strong>, not just stage 2. <code>offload_param</code> still requires <strong>stage 3</strong> — you cannot offload parameters that aren't sharded. Check your version's <code>config-json</code> docs.</p></div>
+<h3 id="cpu-adam">CPU Adam</h3>
+<p>The current Adam optimizer is optimized for GPU, so running it on CPU is indeed somewhat slow. DeepSpeed provides an Adam optimizer that runs very fast on CPU by applying various optimization techniques. The implementation of CPU Adam is closer to computer architecture or operating systems than to machine learning or distributed processing, so we won't cover it in detail here. For more detail please see the paper.</p>
+<div class="note"><span class="tag">Note — the short version, since it explains why offload is viable at all</span>
+<p><code>DeepSpeedCPUAdam</code> is a hand-written C++ kernel using AVX2/AVX-512 SIMD intrinsics, OpenMP threading across parameter tiles, and tiling sized to the L2 cache — plus it fuses the fp32→fp16 cast into the update so the result can be shipped back to the GPU without a second pass. It is reported at roughly 5–6× the throughput of <code>torch.optim.Adam</code> on CPU. Use it:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from deepspeed.ops.adam import DeepSpeedCPUAdam
+optimizer = DeepSpeedCPUAdam(model.parameters(), lr=3e-5)</pre></div>
+<p>Using plain <code>torch.optim.Adam</code> with offload enabled is a common and severe performance mistake — the CPU step becomes the bottleneck for the entire cluster.</p>
+<p>Let's practise ZeRO-Offload. Likewise, first change the configuration. To offload both the optimizer and the parameters we set the ZeRO stage to 3 and added <code>offload_param</code> and <code>offload_optimizer</code>.</p>
+<div class="ascii-card"><pre>{
+  &quot;train_batch_size&quot;: 16,
+  &quot;gradient_accumulation_steps&quot;: 1,
+  &quot;scheduler&quot;: {
+    &quot;type&quot;: &quot;WarmupDecayLR&quot;,
+    &quot;params&quot;: {
+      &quot;total_num_steps&quot;: 300,
+      &quot;warmup_min_lr&quot;: 0,
+      &quot;warmup_max_lr&quot;: 3e-5,
+      &quot;warmup_num_steps&quot;: 30
+    }
+  },
+  &quot;fp16&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;initial_scale_power&quot;: 32,
+    &quot;loss_scale_window&quot;: 1000,
+    &quot;hysteresis&quot;: 2,
+    &quot;min_loss_scale&quot;: 1
+  },
+  &quot;zero_optimization&quot;: {
+    &quot;stage&quot;: 3,
+    &quot;allgather_bucket_size&quot;: 5e8,
+    &quot;reduce_bucket_size&quot;: 5e8,
+    &quot;offload_param&quot;: {
+      &quot;device&quot;: &quot;cpu&quot;,
+      &quot;pin_memory&quot;: true
+    },
+    &quot;offload_optimizer&quot;: {
+      &quot;device&quot;: &quot;cpu&quot;,
+      &quot;pin_memory&quot;: true
+    }
+  },
+  &quot;activation_checkpointing&quot;: {
+    &quot;partition_activations&quot;: true,
+    &quot;cpu_checkpointing&quot;: true,
+    &quot;contiguous_memory_optimization&quot;: true,
+    &quot;number_checkpoints&quot;: 4
+  },
+  &quot;zero_allow_untested_optimizer&quot;: true,
+  &quot;wall_clock_breakdown&quot;: false,
+  &quot;steps_per_print&quot;: 9999999999
+}</pre></div>
+<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ deepspeed --num_gpus=4 ../src/zero_args.py --deepspeed_config=../src/zero_off_config.json</pre></div>
+</div>
+<div class="note"><span class="tag">Note — pin_memory: true matters more than it looks</span>
+<p>Pinned (page-locked) host memory can be DMA'd directly by the GPU and transferred asynchronously; pageable memory requires the driver to stage through an internal pinned buffer first, roughly halving effective PCIe bandwidth. Given that offload is already transfer-bound, that's the difference between "slow" and "unusable." The cost is that pinned memory can't be swapped out by the OS, so allocate it deliberately.</p>
+</div></div></section><section class="panel" id="pan-7-zero-infinity" role="tabpanel" aria-labelledby="t-7-zero-infinity" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 15</p><h2 id="7-zero-infinity">7. ZeRO Infinity</h2></div><div class="body"><p>ZeRO-Infinity adopted the approach of storing parameters in NVMe (SSD) memory. Because NVMe has far larger capacity than CPU memory, it is considered to have broken through the memory limit once more.</p>
+<p>https://www.microsoft.com/en-us/research/uploads/prod/2021/04/1400x788_deepspeed_nologo-1.mp4</p>
+<h3 id="the-core-idea-of-zero-infinity">The core idea of ZeRO Infinity</h3>
+<p>ZeRO-Infinity is an extension of ZeRO-Offload. Previously ZeRO-Offload operated CPU RAM and GPU VRAM as follows:</p>
+<ul>
+<li><strong>GPU</strong>: fp16 parameters &amp; gradients reside; <strong>performs forward &amp; backward</strong>.</li>
+<li><strong>CPU</strong>: fp32 parameters &amp; gradients &amp; optimizer reside; <strong>performs weight update</strong>.</li>
+</ul>
+<p>ZeRO-Infinity adds NVMe and operates three devices:</p>
+<ul>
+<li><strong>NVMe</strong>: by default all parameters reside on NVMe when not in use.</li>
+<li><strong>GPU</strong>: when fp16 parameters &amp; gradients need to perform forward &amp; backward, only the needed portion is uploaded from NVMe to the GPU.</li>
+<li><strong>CPU</strong>: when fp32 parameters &amp; gradients and the optimizer need to perform the weight update, only the needed portion is uploaded from NVMe to the CPU.</li>
+</ul>
+<p>That is, it uses the approach of keeping all tensors down on NVMe by default and lifting them up to compute devices like CPU &amp; GPU only when they're needed.</p>
+<div class="ascii-card"><pre>   the memory hierarchy, as a capacity/bandwidth ladder
+
+   ┌──────────┬──────────────┬────────────────┬─────────────────────────┐
+   │ Tier     │ Capacity     │ Bandwidth      │ Holds                   │
+   ├──────────┼──────────────┼────────────────┼─────────────────────────┤
+   │ GPU HBM  │ 40–192 GB    │ 1–8 TB/s       │ the layer being computed│
+   │ CPU DRAM │ 0.5–4 TB     │ ~100 GB/s      │ optimizer states        │
+   │ NVMe SSD │ 10s of TB    │ 2–14 GB/s      │ everything else, idle   │
+   └──────────┴──────────────┴────────────────┴─────────────────────────┘
+              ▲ 1000× more capacity, 1000× less bandwidth</pre></div>
+<h3 id="comparison-with-offload-zero-dp">Comparison with Offload &amp; ZeRO-DP</h3>
+<p>Because ZeRO-Infinity keeps almost every tensor down on NVMe, the CPU and GPU are in fact nearly empty. So as in the figure above, you can train models at a scale that was outright impossible with the previous techniques. Also, according to the experimental results, it was faster than ZeRO-Offload.</p>
+<p>ZeRO-Infinity needs a device connected to NVMe, so we won't do a hands-on exercise here. If your device has NVMe, change the <code>offload_param</code> and <code>offload_optimizer</code> device to <code>nvme</code> and set <code>nvme_path</code> appropriately.</p>
+<div class="ascii-card"><pre>&quot;offload_param&quot;: {
+    &quot;device&quot;: &quot;nvme&quot;,
+    &quot;nvme_path&quot;: &quot;/local_nvme&quot;,
+    &quot;pin_memory&quot;: true
+},
+&quot;offload_optimizer&quot;: {
+    &quot;device&quot;: &quot;nvme&quot;,
+    &quot;nvme_path&quot;: &quot;/local_nvme&quot;,
+    &quot;pin_memory&quot;: true
+}</pre></div>
+<div class="note"><span class="tag">Note — &quot;faster than ZeRO-Offload&quot; is surprising, and the reason is worth knowing</span>
+<p>NVMe is ~10× slower than DRAM, so how can adding a slower tier be faster? Two reasons:</p>
+<ol>
+<li><strong>It frees CPU DRAM</strong>, which lets the CPU-side optimizer work on larger contiguous chunks instead of thrashing.</li>
+<li><strong>It bandwidth-<em>aggregates</em>.</strong> A node with 8–16 NVMe drives in parallel reaches tens of GB/s, approaching PCIe rates. ZeRO-Infinity's <code>aio</code> layer issues deep asynchronous I/O queues across all of them and prefetches layer <code>k+1</code> while layer <code>k</code> computes.</li>
+</ol>
+<p>That second point is the design's real trick — and also the reason it disappoints on a single consumer SSD. Its performance is a strong function of how many NVMe devices you actually have.</p>
+</div>
+<div class="note"><span class="tag">Note — where this sits today</span>
+<p>ZeRO-Infinity remains the ceiling for "train the largest possible model on the fewest GPUs," and it's genuinely useful for fine-tuning a very large model on one node. But since 2021 the field mostly went a different way for the same goal:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>2021 answer</th>
+<th>Common answer today</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fit a huge model for fine-tuning</td>
+<td>ZeRO-Infinity</td>
+<td><strong>LoRA / QLoRA</strong> — train 0.1% of parameters, no optimizer state for the rest</td>
+</tr>
+<tr>
+<td>Reduce optimizer memory</td>
+<td>offload</td>
+<td><strong>8-bit optimizers</strong> (<code>bitsandbytes</code>) — 12Ψ → 3Ψ</td>
+</tr>
+<tr>
+<td>Train a huge model at scale</td>
+<td>ZeRO-3 + offload</td>
+<td>ZeRO-3/FSDP <strong>+ TP + PP</strong> across more GPUs</td>
+</tr>
+<tr>
+<td>Reduce parameter memory</td>
+<td>offload</td>
+<td>fp8 / 4-bit quantized base weights</td>
+</tr>
+</tbody>
+</table></div>
+<p>Offload trades bandwidth for capacity; these alternatives reduce the requirement instead. Reach for offload when they don't apply.</p>
+</div></div></section><section class="panel" id="pan-8-fsdp-the-pytorch-native-zero" role="tabpanel" aria-labelledby="t-8-fsdp-the-pytorch-native-zero" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 15</p><h2 id="8-fsdp-the-pytorch-native-zero">8. FSDP, the PyTorch-native ZeRO</h2></div><div class="body"><p>The single biggest change since 2021: you no longer need DeepSpeed to get ZeRO. PyTorch has it built in, it composes with the other parallelism axes via <code>DeviceMesh</code>, and it's the default choice for new projects.</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
+torchrun --standalone --nproc_per_node=8 fsdp_train.py
+&quot;&quot;&quot;
+import os
+import torch, torch.distributed as dist
+from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
+
+local_rank = int(os.environ[&quot;LOCAL_RANK&quot;])
+torch.cuda.set_device(local_rank)
+dist.init_process_group(&quot;nccl&quot;, device_id=torch.device(f&quot;cuda:{local_rank}&quot;))
+
+model = build_model().to(&quot;cuda&quot;)
+
+mp = MixedPrecisionPolicy(
+    param_dtype=torch.bfloat16,      # compute in bf16
+    reduce_dtype=torch.float32,      # reduce gradients in fp32 for stability
+)
+
+# shard each block, then the root — order matters
+for layer in model.layers:
+    fully_shard(layer, mp_policy=mp)
+fully_shard(model, mp_policy=mp)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-5, fused=True)
+
+for batch in loader:                 # DistributedSampler as usual
+    loss = model(**batch).loss
+    loss.backward()                  # reduce_scatter happens here
+    optimizer.step()                 # each rank updates only its shard
+    optimizer.zero_grad(set_to_none=True)</pre></div>
+<div class="note"><span class="tag">Note — mapping DeepSpeed concepts onto FSDP</span>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>DeepSpeed</th>
+<th>PyTorch FSDP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>zero_optimization.stage: 1</code></td>
+<td>Megatron <code>--use-distributed-optimizer</code>; or FSDP with <code>reshard_after_forward=False</code></td>
+</tr>
+<tr>
+<td><code>zero_optimization.stage: 2</code></td>
+<td>roughly <code>fully_shard</code> with gradient sharding</td>
+</tr>
+<tr>
+<td><code>zero_optimization.stage: 3</code></td>
+<td><strong><code>fully_shard</code></strong> (this is the default behaviour)</td>
+</tr>
+<tr>
+<td><code>fp16</code> / <code>bf16</code> config block</td>
+<td><code>MixedPrecisionPolicy</code></td>
+</tr>
+<tr>
+<td><code>offload_optimizer</code> / <code>offload_param</code></td>
+<td><code>CPUOffloadPolicy</code></td>
+</tr>
+<tr>
+<td><code>activation_checkpointing</code></td>
+<td><code>torch.utils.checkpoint</code> / <code>apply_activation_checkpointing</code></td>
+</tr>
+<tr>
+<td><code>overlap_comm</code></td>
+<td>on by default; prefetching is automatic</td>
+</tr>
+<tr>
+<td><code>reduce_bucket_size</code></td>
+<td>per-module sharding granularity — i.e. <em>where</em> you call <code>fully_shard</code></td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<div class="note"><span class="tag">Note — fully_shard per layer is not optional decoration</span>
+<p>The unit you wrap is the unit that gets <code>all_gather</code>ed. Wrap only the root and FSDP gathers the <em>entire</em> model before the forward — which defeats the purpose entirely. Wrap each transformer block and it gathers one block at a time, frees it, and prefetches the next:</p>
+<div class="ascii-card"><pre>   per-layer wrapping:      gather L1 → compute → free → gather L2 → compute → free
+                            peak = full model / N  +  one layer
+
+   root-only wrapping:      gather EVERYTHING → compute → free
+                            peak = full model    ← no saving at all</pre></div>
+</div>
+<div class="note"><span class="tag">Note — new in 2.13: FSDP2 can overlap its two collectives</span>
+<p>Historically FSDP's <code>reduce_scatter</code> (gradients, on the backward) and <code>all_gather</code> (parameters, prefetching the next layer) shared a stream and serialized against each other. PyTorch 2.13 adds an <strong>opt-in dedicated process group</strong> so the two overlap, which directly attacks the 1.5× communication cost that §3 attributes to stage 3. If you are FSDP-bound, this is the first knob to try, ahead of anything in §10.</p>
+</div>
+<div class="note"><span class="tag">Note — reduce_dtype=torch.float32 is a detail worth keeping</span>
+<p>Gradients are summed across the world; in bf16, with only 7 mantissa bits, summing many small values loses precision fast. Reducing in fp32 costs a bit of bandwidth and removes a class of subtle convergence problems. Most production configs do this.</p>
+</div>
+<div class="note"><span class="tag">Note — checkpointing under FSDP</span>
+<p>State is sharded, so <code>torch.save(model.state_dict())</code> gives you one rank's shard. Use <code>torch.distributed.checkpoint</code>, which saves DTensors with their sharding metadata and can <strong>resume at a different world size or parallel layout</strong> — a capability you will want and will not have if you roll your own.</p>
+</div></div></section><section class="panel" id="pan-9-the-memory-ledger-worked" role="tabpanel" aria-labelledby="t-9-the-memory-ledger-worked" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 15</p><h2 id="9-the-memory-ledger-worked">9. The memory ledger, worked</h2></div><div class="body"><p>Everything in this chapter is one accounting exercise. Here it is end to end for a <strong>7B model on 8× 80 GB GPUs</strong>, mixed-precision Adam.</p>
+<div class="ascii-card"><pre>   Ψ = 7e9 parameters,  N = 8</pre></div>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th>Formula</th>
+<th>Per-GPU state</th>
+<th>Fits in 80 GB?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fp32 + Adam, single GPU</td>
+<td><code>16Ψ</code></td>
+<td>112 GB</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>DDP (mixed precision)</td>
+<td><code>16Ψ</code></td>
+<td>112 GB</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>ZeRO-1</td>
+<td><code>4Ψ + 12Ψ/N</code></td>
+<td>28 + 10.5 = <strong>38.5 GB</strong></td>
+<td>✓</td>
+</tr>
+<tr>
+<td>ZeRO-2</td>
+<td><code>2Ψ + 14Ψ/N</code></td>
+<td>14 + 12.25 = <strong>26.3 GB</strong></td>
+<td>✓</td>
+</tr>
+<tr>
+<td>ZeRO-3 / FSDP</td>
+<td><code>16Ψ/N</code></td>
+<td><strong>14 GB</strong></td>
+<td>✓ with room to spare</td>
+</tr>
+<tr>
+<td>ZeRO-3 + optimizer offload</td>
+<td><code>4Ψ/N</code> on GPU</td>
+<td><strong>3.5 GB</strong></td>
+<td>✓ (CPU holds 84 GB)</td>
+</tr>
+</tbody>
+</table></div>
+<p>And <strong>that's only model state.</strong> Activations must fit in what's left:</p>
+<div class="ascii-card"><pre>   activations ≈ layers × batch × seq × hidden × c        (c ≈ 10–20, no checkpointing)
+
+   7B-ish: 32 layers, batch 4, seq 2048, hidden 4096, bf16
+         ≈ 32 × 4 × 2048 × 4096 × 2 bytes × ~12  ≈  25 GB
+         with activation checkpointing            ≈   3 GB</pre></div>
+<p>So the realistic budget on one 80 GB GPU:</p>
+<div class="ascii-card"><pre>   ZeRO-3 state          14 GB
+   activations (ckpt)     3 GB
+   comm buffers           2 GB
+   fragmentation/slack    5 GB
+                        ───────
+                         24 GB used, 56 GB free → raise the batch size</pre></div>
+<div class="note"><span class="tag">Note — the diagnostic order when you OOM</span>
+<p>Work down this list; each step is cheaper than the one after it.</p>
+<ol>
+<li><strong>Reduce micro-batch size</strong>, use gradient accumulation to keep the global batch. Free.</li>
+<li><strong>Enable activation checkpointing.</strong> ~33% compute for a large activation saving.</li>
+<li><strong>ZeRO-1 → 2 → 3.</strong> Stages 1 and 2 are communication-free; stage 3 costs 1.5×.</li>
+<li><strong><code>reduce_bucket_size</code> / <code>allgather_bucket_size</code> down.</strong> Small effect, no downside.</li>
+<li><strong>Fuse the loss.</strong> <code>nn.LinearCrossEntropyLoss</code> (2.13) never materializes <code>[batch, seq, vocab]</code>. For large vocabularies this is frequently the single largest allocation in the model — up to 4× off peak memory, for one line.</li>
+<li><strong>8-bit optimizer</strong> (<code>bitsandbytes</code>): 12Ψ → ~3Ψ for optimizer state.</li>
+<li><strong>Add tensor parallelism</strong> (chapter 07) — the only technique here that also cuts <em>activation</em> memory.</li>
+<li><strong>Offload to CPU.</strong> Big capacity win, big speed cost.</li>
+<li><strong>Offload to NVMe.</strong> Bigger win, bigger cost.</li>
+</ol>
+<p>Measure between steps. <code>torch.cuda.max_memory_allocated()</code> and <code>torch.cuda.memory_summary()</code> tell you where you actually are.</p>
+</div></div></section><section class="panel" id="pan-10-choosing-a-stage-and-gotchas" role="tabpanel" aria-labelledby="t-10-choosing-a-stage-and-gotchas" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 15</p><h2 id="10-choosing-a-stage-and-gotchas">10. Choosing a stage, and gotchas</h2></div><div class="body"><div class="note"><span class="tag">Note — the decision, in one pass</span>
+<div class="ascii-card"><pre>   Does 16Ψ fit on one GPU?
+        yes → DDP.  (Still the fastest thing that works.)
+        no  ↓
+   Does 4Ψ + 12Ψ/N fit?
+        yes → ZeRO-1.  Free memory, no extra communication.
+        no  ↓
+   Does 2Ψ + 14Ψ/N fit?
+        yes → ZeRO-2.  Still communication-neutral.
+        no  ↓
+   Does 16Ψ/N fit (+ activations)?
+        yes → ZeRO-3 / FSDP.  1.5× communication.
+        no  ↓
+   Add activation checkpointing, then TP, then more GPUs.
+        still no ↓
+   Offload (CPU → NVMe).  Accept the slowdown.</pre></div>
+<p><strong>Gotchas:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OOM at 60% utilization</td>
+<td>Fragmentation</td>
+<td><code>contiguous_gradients</code>, <code>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</code></td>
+</tr>
+<tr>
+<td>"OVERFLOW! Skipping step" for the first ~20 steps</td>
+<td>Dynamic loss scaling searching down from 2³²</td>
+<td>Normal. Lower <code>initial_scale_power</code>, or use bf16</td>
+</tr>
+<tr>
+<td>Overflow warnings <em>throughout</em> training</td>
+<td>Genuine instability, or fp16 range</td>
+<td>Switch to bf16; check LR and for <code>inf</code> in the data</td>
+</tr>
+<tr>
+<td>ZeRO-3 much slower than expected</td>
+<td><code>overlap_comm: false</code>, or too-small sharding granularity</td>
+<td>Enable overlap; shard per transformer block. On FSDP2 (PyTorch ≥ 2.13) also enable the dedicated-process-group overlap</td>
+</tr>
+<tr>
+<td><code>torch.compile(fullgraph=True)</code> fails through FSDP2</td>
+<td>PyTorch 2.12 stopped supporting graph-break-free compilation through FSDP2 hooks</td>
+<td>Compile <strong>before</strong> <code>fully_shard</code>, or allow graph breaks</td>
+</tr>
+<tr>
+<td>Offload makes everything crawl</td>
+<td>Using <code>torch.optim.Adam</code> instead of <code>DeepSpeedCPUAdam</code>; or <code>pin_memory: false</code></td>
+<td>Use the fused CPU optimizer, pin memory</td>
+</tr>
+<tr>
+<td>Loss is identical on all ranks and training is 4× slow</td>
+<td>No <code>DistributedSampler</code> — every rank trains the same data</td>
+<td>Add one, with <code>set_epoch</code></td>
+</tr>
+<tr>
+<td><code>state_dict()</code> gives a fragment</td>
+<td>Parameters are sharded</td>
+<td><code>torch.distributed.checkpoint</code>, or gather first</td>
+</tr>
+<tr>
+<td>Gradient clipping has no effect</td>
+<td>Clipping before <code>unscale_</code></td>
+<td><code>scaler.unscale_(optimizer)</code> first</td>
+</tr>
+<tr>
+<td>Slower than DDP for a model that fits</td>
+<td>You applied ZeRO-3 unnecessarily</td>
+<td>Drop to ZeRO-1, or plain DDP</td>
+</tr>
+</tbody>
+</table></div>
+</div>
+<div class="note"><span class="tag">Note — the last row is the most common mistake in practice</span>
+<p>ZeRO-3 is not "better DDP." For a model that fits comfortably, ZeRO-3 does strictly more communication for memory you did not need. Use the smallest stage that fits.</p>
+</div></div></section><section class="panel" id="pan-11-quick-reference" role="tabpanel" aria-labelledby="t-11-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 12 of 15</p><h2 id="11-quick-reference">11. Quick reference</h2></div><div class="body"><div class="ascii-card"><pre>   THE 16 BYTES  (mixed-precision Adam, per parameter)
+   ─────────────────────────────────────────────────
+     fp16 weights        2  ┐
+     fp16 gradients      2  ├─ 4Ψ  &quot;working set&quot;
+     fp32 master weights 4  ┐
+     Adam momentum       4  ├─ 12Ψ &quot;optimizer state&quot;  ← 75% of the total
+     Adam variance       4  ┘
+                        ───
+                        16 bytes/param
+
+   THE STAGES        memory/GPU        comm
+   ──────────        ──────────        ────
+     DDP              16Ψ              1×
+     ZeRO-1        4Ψ + 12Ψ/N          1×      ← shard optimizer state
+     ZeRO-2        2Ψ + 14Ψ/N          1×      ← + gradients
+     ZeRO-3           16Ψ/N            1.5×    ← + parameters
+
+   WHY 1 AND 2 ARE FREE
+   ────────────────────
+     all_reduce = reduce_scatter + all_gather
+     DDP already pays for both halves; ZeRO just doesn&#x27;t reassemble in between.
+
+   ZeRO-R  (residual states)
+   ─────────────────────────
+     partition_activations           shard replicated activations across MP ranks
+     allgather/reduce_bucket_size    cap communication buffers
+     contiguous_memory_optimization  defragment
+
+   OFFLOAD LADDER
+   ──────────────
+     GPU HBM   40–192 GB   1–8 TB/s     ← the layer being computed
+     CPU DRAM  0.5–4 TB    ~100 GB/s    ← optimizer states
+     NVMe      10s of TB   2–14 GB/s    ← everything idle</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># ── modern PyTorch (preferred) ─────────────────────────────
+from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
+mp = MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
+for layer in model.layers: fully_shard(layer, mp_policy=mp)
+fully_shard(model, mp_policy=mp)
+
+# bf16: no GradScaler needed
+with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
+    loss = model(**batch).loss
+loss.backward(); optimizer.step(); optimizer.zero_grad(set_to_none=True)
+
+# activation checkpointing
+from torch.utils.checkpoint import checkpoint
+out = checkpoint(layer, x, use_reentrant=False)     # note the argument
+model.gradient_checkpointing_enable()               # HF one-liner
+
+# fused loss — often the single biggest allocation in a large-vocab LM
+loss = torch.nn.LinearCrossEntropyLoss()(hidden, lm_head.weight, targets)   # 2.13
+
+# compile BEFORE sharding (2.12 changed FSDP2 + compiled-autograd behaviour)
+model = torch.compile(model); fully_shard(model)
+
+# ── DeepSpeed ──────────────────────────────────────────────
+# deepspeed --num_gpus=8 train.py --deepspeed_config=ds.json
+{
+  &quot;bf16&quot;: {&quot;enabled&quot;: true},
+  &quot;zero_optimization&quot;: {
+      &quot;stage&quot;: 2,
+      &quot;overlap_comm&quot;: true,               # ← turn this ON
+      &quot;contiguous_gradients&quot;: true,
+      &quot;reduce_bucket_size&quot;: 5e8,
+      &quot;allgather_bucket_size&quot;: 5e8
+  }
+}
+# from deepspeed.ops.adam import DeepSpeedCPUAdam   # if offloading</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 15</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Verified version</th>
+<th>Notes for this chapter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PyTorch</strong></td>
+<td><strong>2.13.0</strong> (8 Jul 2026)</td>
+<td>2.12 → 2.13 changed several distributed names; see below</td>
+</tr>
+<tr>
+<td><strong>Megatron Core</strong></td>
+<td><strong>0.18.0</strong> (23 Jun 2026)</td>
+<td>Development moved to GitHub in Dec 2025; <code>megatron.core.*</code> is the supported API</td>
+</tr>
+<tr>
+<td><strong>transformers</strong></td>
+<td><strong>v5.14</strong></td>
+<td>v5 is <strong>PyTorch-only</strong>; the slow/fast tokenizer split is gone</td>
+</tr>
+<tr>
+<td><strong>DeepSpeed</strong></td>
+<td><strong>0.18.x</strong></td>
+<td>Still maintained; ZeRO config keys in this chapter unchanged</td>
+</tr>
+<tr>
+<td><strong>CUDA</strong></td>
+<td>13.0 default on PyPI, 13.2 experimental</td>
+<td>Volta/Pascal/Maxwell dropped from recent builds</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Distributed changes since this material was first drafted, in one place:</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Version</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>all_gather_into_tensor</code> → <strong><code>all_gather_single</code></strong></td>
+<td>2.13</td>
+<td>Renamed to align with torchcomms; old name still resolves for now</td>
+</tr>
+<tr>
+<td><code>reduce_scatter_tensor</code> → <strong><code>reduce_scatter_single</code></strong></td>
+<td>2.13</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>torchcomms</strong> lands as the new backend layer</td>
+<td>2.13</td>
+<td><code>c10d</code> is still the user-facing surface; torchcomms replaces the layer <em>beneath</em> it</td>
+</tr>
+<tr>
+<td><code>torchrun</code> picks an <strong>OS-assigned free port</strong> by default</td>
+<td>2.12</td>
+<td>Only when neither <code>--standalone</code> nor <code>--master-port</code> is given. Fixes "Address already in use"</td>
+</tr>
+<tr>
+<td><code>torch.distributed.nn.functional</code> raises under <code>torch.compile</code></td>
+<td>2.12</td>
+<td>Use <code>torch.distributed._functional_collectives</code></td>
+</tr>
+<tr>
+<td><strong>Differentiable collectives</strong> added</td>
+<td>2.11</td>
+<td>Native autograd-aware collectives — the <code>f</code>/<code>g</code> adjoint pattern, built in</td>
+</tr>
+<tr>
+<td><code>DeviceMesh</code> requires PGs to exist at construction</td>
+<td>2.11</td>
+<td>Call <code>init_process_group</code> <strong>before</strong> building the mesh</td>
+</tr>
+<tr>
+<td>Implicit <code>mesh["dp_cp"]</code> after <code>_flatten()</code> deprecated</td>
+<td>2.10</td>
+<td>Keep your own reference to the flattened mesh</td>
+</tr>
+<tr>
+<td><strong><code>torch.cuda.amp.*</code></strong></td>
+<td>deprecated since 2.4</td>
+<td>Use <code>torch.amp.GradScaler("cuda")</code> / <code>torch.autocast("cuda", ...)</code></td>
+</tr>
+<tr>
+<td><strong>XCCL</strong> backend for Intel XPU</td>
+<td>2.8</td>
+<td>Fourth backend alongside NCCL / Gloo / MPI</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Specific to this chapter:</strong> the 16-bytes/param census and the stage formulas (<code>4Ψ+12Ψ/N</code>, <code>2Ψ+14Ψ/N</code>, <code>16Ψ/N</code>) are arithmetic and unchanged. <code>use_reentrant=False</code> is still required on <code>torch.utils.checkpoint.checkpoint</code>. Two additions since drafting: FSDP2's opt-in reduce-scatter/all-gather overlap (2.13), which reduces the effective cost of stage-3-equivalent sharding, and <code>nn.LinearCrossEntropyLoss</code> (2.13), which belongs in the OOM checklist in §9. On the Megatron side, <code>--use-megatron-fsdp</code> supersedes the older <code>--use-custom-fsdp</code>, and requires <code>--use-distributed-optimizer</code>.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 14 of 15</p><h2 id="further-reading">Further reading</h2></div><div class="body"><ul>
+<li><strong>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</strong> — Rajbhandari et al., 2019. The stage analysis and the memory formulas used throughout this chapter.</li>
+<li><strong>ZeRO-Offload: Democratizing Billion-Scale Model Training</strong> — Ren et al., 2021. CPU Adam and DPU.</li>
+<li><strong>ZeRO-Infinity</strong> — Rajbhandari et al., 2021. The NVMe tier and the <code>aio</code> engine.</li>
+<li><strong>Mixed Precision Training</strong> — Micikevicius et al., 2017. Loss scaling and fp32 master weights.</li>
+<li><strong>Training Deep Nets with Sublinear Memory Cost</strong> — Chen et al., 2016. Older material activation-checkpointing result (<code>O(√L)</code> memory).</li>
+<li><strong>8-bit Optimizers via Block-wise Quantization</strong> — Dettmers et al., 2021. The alternative to offloading optimizer state.</li>
+<li>PyTorch FSDP documentation and <code>torch.distributed.checkpoint</code>.</li>
+<li>DeepSpeed <code>config-json</code> reference — every option in this chapter and many more.</li>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 15 of 15</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+<li><strong>Fix the bug.</strong> Correct the unscaling error in §1's walkthrough, then verify: run 10 steps with and without the <code>/1024</code> and compare the weight deltas. By what factor do they differ?</li>
+</ol>
+<ol start="2">
+<li><strong>Measure the census.</strong> For <code>gpt2</code> (124M params), print <code>torch.cuda.memory_allocated()</code> after each of: model load, <code>.half()</code> copy, forward, backward, <code>optimizer.step()</code>. Compare the deltas to the 16 bytes/param prediction.</li>
+</ol>
+<ol start="3">
+<li><strong>Walk the stages.</strong> Run the same job at ZeRO stage 0, 1, 2, 3 and record peak memory and step time. Plot both. Where does the 1.5× communication cost of stage 3 become visible?</li>
+</ol>
+<ol start="4">
+<li><strong>Checkpointing trade.</strong> Train with and without <code>gradient_checkpointing_enable()</code>. Measure peak memory and step time. Is the compute overhead close to the predicted ~33%?</li>
+</ol>
+<ol start="5">
+<li><strong>Derive the stage formulas.</strong> Starting from the 16 bytes/param table, derive <code>4Ψ + 12Ψ/N</code> and <code>2Ψ + 14Ψ/N</code> yourself. Then compute the crossover <code>N</code> at which ZeRO-1 and ZeRO-3 differ by less than 10% for a 1B model.</li>
+</ol>
+<ol start="6">
+<li><strong>Price the offload.</strong> For a 1.3B model on PCIe Gen4 x16, estimate transfer time per step under optimizer offload. Compare to the measured step time without offload. At what model size does offload stop being the bottleneck?</li>
+</ol>
+<ol start="7">
+<li><strong>bf16 vs fp16.</strong> Run the same job in fp16 (with <code>GradScaler</code>) and bf16 (without). Log the loss scale over time in the fp16 run. Do the loss curves agree?</li>
+</ol>
+<p><em>Part of a practical series on large-scale model training. Verified against PyTorch 2.13, Megatron Core 0.18, transformers v5, and DeepSpeed 0.18 in July 2026. Distributed APIs move quickly — where this document and your installed docs disagree, trust the docs.</em></p></div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
