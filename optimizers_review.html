@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optimizers: SGD, Adam, AdamW, Muon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
+  overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:7px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{padding:0 20px}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow"><span>Interview notes</span><span>optimizers &middot; first principles</span></p>
+  <h1>SGD, Adam, AdamW, Muon</h1>
+  <div class="ring-wrap">
+    <div class="ring" aria-hidden="true"><div class="ring-cell"><span>SGD &middot; &#8467;&#8322;</span></div><div class="ring-cell"><span>Adam &middot; &#8467;&#8734;</span></div><div class="ring-cell"><span>AdamW &middot; + decay</span></div><div class="ring-cell"><span>Muon &middot; spectral</span></div></div>
+    <p class="ring-cap"><span>Pick a norm to constrain the step &mdash; the norm you pick <em>is</em> the optimizer</span><span>AdamW = 16 bytes/param</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>One tab per optimizer, plus a first-principles tab and a cheat sheet. Each update rule is <em>derived</em>, not asserted &mdash; there is far less to memorise than there looks.</li>
+<li>Blocks marked <strong>Note</strong> contain a derivation or a number worth internalising. Blocks in <strong>magenta</strong> are traps: things that silently change your effective learning rate or your regularisation strength.</li>
+<li>Formulas are plain monospace so they survive copy-paste into a terminal or a notes app.</li>
+<li>If you are short on time: read <strong>1 &middot; First principles</strong> and <strong>7 &middot; Remember</strong>. Everything else expands those two.</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-contents" aria-controls="pan-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-first-principles" aria-controls="pan-first-principles" aria-selected="false" tabindex="-1"><span class="num">02</span>1 · First principles</button><button class="tab" role="tab" id="t-derivation" aria-controls="pan-derivation" aria-selected="false" tabindex="-1"><span class="num">03</span>2 · The derivation</button><button class="tab" role="tab" id="t-sgd" aria-controls="pan-sgd" aria-selected="false" tabindex="-1"><span class="num">04</span>3 · SGD</button><button class="tab" role="tab" id="t-adam" aria-controls="pan-adam" aria-selected="false" tabindex="-1"><span class="num">05</span>4 · Adam</button><button class="tab" role="tab" id="t-adamw" aria-controls="pan-adamw" aria-selected="false" tabindex="-1"><span class="num">06</span>5 · AdamW</button><button class="tab" role="tab" id="t-muon" aria-controls="pan-muon" aria-selected="false" tabindex="-1"><span class="num">07</span>6 · Muon</button><button class="tab" role="tab" id="t-memory" aria-controls="pan-memory" aria-selected="false" tabindex="-1"><span class="num">08</span>7 · Memory</button><button class="tab" role="tab" id="t-remember" aria-controls="pan-remember" aria-selected="false" tabindex="-1"><span class="num">09</span>8 · Remember</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 9</p><h2 id="contents">Table of contents</h2></div><div class="body">
+<ol>
+<li><a href="#first-principles">First principles — one skeleton, four optimizers</a></li>
+<li><a href="#derivation">The derivation, in full</a></li>
+<li><a href="#sgd">SGD (and momentum)</a></li>
+<li><a href="#adam">Adam</a></li>
+<li><a href="#adamw">AdamW</a></li>
+<li><a href="#muon">Muon</a></li>
+<li><a href="#memory">Memory: bytes per parameter, and how to shrink them</a></li>
+<li><a href="#remember">Things to remember</a></li>
+</ol>
+<div class="note"><span class="tag">How to use this</span>
+<p>The whole point of tab 2 is that you should <strong>not</strong> memorise four unrelated update rules. There is one derivation. You pick a norm, and the norm hands you the optimizer. Everything after that is bookkeeping — momentum, bias correction, where weight decay goes, how many bytes of state.</p>
+<p>If you have ten minutes before an interview: read tab 2, then tab 9. If you have an hour: read tab 3 as well and re-derive the four update rules on paper with the tabs closed.</p>
+</div>
+</div></section><section class="panel" id="pan-first-principles" role="tabpanel" aria-labelledby="t-first-principles" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 9</p><h2 id="first-principles">1. First principles — one skeleton, four optimizers</h2></div><div class="body">
+<div class="subnav"><a href="#skeleton">The skeleton</a><a href="#the-derivation">The one derivation</a><a href="#norm-table">The norm table</a><a href="#three-knobs">The three knobs</a></div>
+
+<h3 id="skeleton">The skeleton</h3>
+<p>Every optimizer here is the same four lines. Only line 3 really changes.</p>
+<div class="ascii-card"><pre>   1.  g   = ∇L(w)                  noisy direction
+   2.  m   = smooth(g)              average away the noise   (momentum)
+   3.  Δ   = sharpen(m)             change the geometry      (preconditioning)
+   4.  w  ←  w − η·Δ  − η·λ·w       step, plus decoupled decay</pre></div>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>line 2 — smooth</th><th>line 3 — sharpen</th><th>line 4 — decay</th></tr></thead>
+<tbody>
+<tr><td><strong>SGD</strong></td><td>none, or momentum buffer</td><td>nothing (identity)</td><td>L2 ≡ decoupled</td></tr>
+<tr><td><strong>Adam</strong></td><td>EMA of g</td><td>divide by RMS(g), per coordinate</td><td>L2 (broken)</td></tr>
+<tr><td><strong>AdamW</strong></td><td>EMA of g</td><td>divide by RMS(g), per coordinate</td><td>decoupled ✓</td></tr>
+<tr><td><strong>Muon</strong></td><td>momentum buffer</td><td>orthogonalise the matrix</td><td>decoupled ✓</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="the-derivation">The one derivation</h3>
+<p>Take a first-order Taylor expansion around the current weights:</p>
+<div class="formula">L(w + Δ) ≈ L(w) + ⟨g, Δ⟩</div>
+<p>Minimising this over all Δ is meaningless — it is linear, so it runs off to −∞. You must add a leash. Pick a norm ‖·‖, pick a trust radius r, and solve:</p>
+<div class="formula">Δ* = argmin<sub>‖Δ‖ ≤ r</sub> ⟨g, Δ⟩</div>
+<p>The answer is always "go as far as the leash allows, in the direction most anti-aligned with <code>g</code>". <strong>The norm you choose <em>is</em> the optimizer.</strong> That is the entire taxonomy, and it is the one thing worth memorising.</p>
+
+<h3 id="norm-table">The norm table</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Leash on the step</th><th>Solution Δ* ∝</th><th>Gives you</th><th>Reads as</th></tr></thead>
+<tbody>
+<tr><td>ℓ₂ — Euclidean length</td><td><code>−g</code></td><td><strong>SGD</strong></td><td>"follow the gradient"</td></tr>
+<tr><td>ℓ∞ — largest single coordinate</td><td><code>−sign(g)</code></td><td><strong>signSGD ≈ Adam</strong></td><td>"same size step everywhere"</td></tr>
+<tr><td>spectral — largest singular value</td><td><code>−UVᵀ</code>, where <code>g = UΣVᵀ</code></td><td><strong>Muon</strong></td><td>"same size step in every direction of the matrix"</td></tr>
+</tbody>
+</table></div>
+
+<div class="note"><span class="tag">Note — all three in three lines of algebra</span>
+<div class="ascii-card"><pre>   ℓ₂       ⟨g,Δ⟩ ≥ −‖g‖₂‖Δ‖₂            (Cauchy–Schwarz)
+            equality at  Δ = −r · g/‖g‖₂                  →  SGD
+
+   ℓ∞       ⟨g,Δ⟩ = Σ gᵢΔᵢ ≥ −r Σ|gᵢ|    (each |Δᵢ| ≤ r independently)
+            equality at  Δᵢ = −r · sign(gᵢ)               →  signSGD
+
+   spectral ⟨G,Δ⟩ ≥ −r‖G‖_nuclear        (nuclear is the dual of spectral)
+            equality at  Δ = −r · UVᵀ                     →  Muon</pre></div>
+<p>Same three steps every time: bound the inner product by the <em>dual norm</em> of the gradient, then read off the Δ that achieves equality. If you can do this on a whiteboard you can rebuild all four optimizers from scratch — <a href="#derivation">the next tab</a> works each line out in full, including where the step <em>size</em> comes from, why the corners of the ball are what you always land on, and how the choice of norm decides which tensors Muon may touch.</p>
+</div>
+
+<h3 id="three-knobs">The three knobs</h3>
+<p><strong>1. Which norm (geometry).</strong> Covered above. ℓ₂ treats every scalar weight as interchangeable. ℓ∞ says "the risky thing is any one coordinate moving too far" — which is what you want when different layers have gradients differing by orders of magnitude. Spectral says "a weight matrix is a linear <em>map</em>; the risky thing is stretching some input direction too much" — the right object for hidden layers.</p>
+<p><strong>2. How much smoothing.</strong> <code>g</code> is a one-minibatch sample of the true gradient. An exponential moving average with coefficient β averages roughly <code>1/(1−β)</code> recent samples, cutting variance at the cost of staleness. β = 0.9 → ~10 steps; β = 0.95 → ~20; β = 0.999 → ~1000. That single formula explains every β you will ever be asked about.</p>
+<p><strong>3. Where weight decay lives.</strong> Inside the loss (L2 penalty, so it flows through the preconditioner) or bolted onto the update (decoupled). These are <em>identical</em> when the preconditioner is the identity, and different otherwise — which is the entire content of the Adam → AdamW story.</p>
+
+<div class="note"><span class="tag">Note — why square roots are everywhere in this material</span>
+<p>Adam has <code>√v̂</code>. Muon has <code>√max(A,B)</code>, <code>√min(A,B)</code>, <code>√(d_out/d_in)</code>. These are not unrelated fudge factors — <strong>every one is the same conversion: a sum of squares turned back into a typical magnitude.</strong></p>
+<p>Squares are what you get when you measure size the natural way (variance, energy, Euclidean length all accumulate as <code>Σx²</code>). But you need to <em>divide by</em> or <em>compare against</em> something in the original units, so you take a root to get back.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Instance</th><th>The sum of squares underneath it</th></tr></thead>
+<tbody>
+<tr><td><code>‖x‖₂ = √(Σxᵢ²)</code></td><td>length from squared components</td></tr>
+<tr><td><code>RMS(x) = ‖x‖₂/√n</code></td><td>root <em>mean</em> square — mean divides by n inside, so √n outside</td></tr>
+<tr><td><code>‖O‖<sub>F</sub> = √min(A,B)</code></td><td>orthogonal O has min(A,B) singular values equal to 1</td></tr>
+<tr><td><code>RMS(O) = 1/√max(A,B)</code></td><td>the row above, divided by √(A·B)</td></tr>
+<tr><td><code>σ ≈ 1/√r</code></td><td>r equal singular values with Σσ² = 1 ⇒ rσ² = 1</td></tr>
+<tr><td><code>√(d_in/d_out)</code></td><td>‖x‖₂ = √d_in when RMS(x) = 1</td></tr>
+<tr><td><strong>Adam's <code>√v̂</code></strong></td><td><code>v</code> is an EMA of <code>g²</code>, so <code>√v</code> is back in the units of <code>g</code></td></tr>
+</tbody>
+</table></div>
+<p><strong>Adam's root and Muon's root are the same root.</strong> Adam accumulates <code>g²</code>, so it must take a square root before dividing <code>m</code> by it — otherwise the update is in the wrong units and the scale-invariance argument collapses. Muon computes a Frobenius norm, also a sum of squares, so it must take a root before comparing to a per-entry RMS. Both are dimensional bookkeeping, not tuning.</p>
+<div class="ascii-card"><pre>   sanity check — scale the loss by 100:
+
+     g → 100·g      m → 100·m      v → 10000·v      √v → 100·√v
+
+     m / √v  unchanged  ✓        without the root: off by 100×</pre></div>
+</div>
+
+<div class="rulebox"><span class="tag">The compression</span>
+<p><strong>direction (norm) × smoothing (momentum) × decay (coupled or not).</strong> Four optimizers, three knobs. Everything else in this document is a consequence, a default value, or a byte count.</p>
+</div>
+</div></section><section class="panel" id="pan-derivation" role="tabpanel" aria-labelledby="t-derivation" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 9</p><h2 id="derivation">2. The derivation, in full</h2></div><div class="body">
+<div class="subnav"><a href="#d-setup">Why you need a leash</a><a href="#d-theorem">The one theorem</a><a href="#d-l2">Case ℓ₂ → SGD</a><a href="#d-size">Where the step <em>size</em> comes from</a><a href="#d-linf">Case ℓ∞ → sign / Adam</a><a href="#d-spec">Case spectral → Muon</a><a href="#d-extreme">The geometric picture</a><a href="#d-pertensor">Why it acts per tensor</a><a href="#d-momentum">Where momentum plugs in</a><a href="#d-whichnorm">Which norm for which tensor</a><a href="#d-whiteboard">Whiteboard checklist</a></div>
+
+<h3 id="d-setup">Why you need a leash at all</h3>
+<p>You know the loss and its gradient at one point. The only honest local model you have is the linear one:</p>
+<div class="formula">L(w + Δ) ≈ L(w) + ⟨g, Δ⟩</div>
+<p>Minimising that over all Δ gives −∞: a linear function has no minimum. The model is only trustworthy near <code>w</code> anyway, so restrict Δ to a small ball and minimise there:</p>
+<div class="formula">Δ* = argmin<sub>‖Δ‖ ≤ r</sub> ⟨g, Δ⟩</div>
+<p>Two decisions are hiding in that line, and it pays to keep them apart:</p>
+<ul>
+<li><strong>Which norm ‖·‖</strong> — i.e. what shape is the ball. This decides the <em>direction</em>, and it is what distinguishes SGD from Adam from Muon.</li>
+<li><strong>How big is r</strong> — this decides the <em>length</em>, and it is what the learning rate is really doing. Covered in <a href="#d-size">§ step size</a> below.</li>
+</ul>
+
+<h3 id="d-theorem">The one theorem</h3>
+<p>Define the <strong>dual norm</strong> of <code>g</code>: the largest inner product <code>g</code> can achieve against a unit-ball vector.</p>
+<div class="formula">‖g‖<sub>★</sub> := max<sub>‖Δ‖ ≤ 1</sub> ⟨g, Δ⟩</div>
+<p>By construction, <code>⟨g,Δ⟩ ≥ −r‖g‖★</code> for every Δ in the ball of radius r. So the problem has the same shape every time:</p>
+<div class="ascii-card"><pre>   value at the optimum   :   ⟨g, Δ*⟩ = −r · ‖g‖★      ← predicted decrease in loss
+   the optimum itself     :   Δ*      = −r · lmo(g)     ← lmo = the maximiser above</pre></div>
+<p>So the whole exercise is: <strong>name the dual norm, then write down the Δ that achieves equality.</strong> That maximiser has several names in the literature — the <em>linear minimisation oracle</em> (LMO), the <em>dualiser</em>, the <em>sharp operator</em> — all the same object.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Norm on the step</th><th>Its dual</th><th>Shape of the unit ball</th></tr></thead>
+<tbody>
+<tr><td>ℓ₂</td><td>ℓ₂ (self-dual)</td><td>sphere</td></tr>
+<tr><td>ℓ∞</td><td><strong>ℓ₁</strong></td><td>cube</td></tr>
+<tr><td>ℓ<sub>p</sub></td><td>ℓ<sub>q</sub>, with 1/p + 1/q = 1</td><td>—</td></tr>
+<tr><td>Frobenius (Schatten-2)</td><td>Frobenius</td><td>sphere in matrix space</td></tr>
+<tr><td>spectral (Schatten-∞)</td><td><strong>nuclear</strong> (Schatten-1)</td><td>matrices with all σ ≤ 1</td></tr>
+</tbody>
+</table></div>
+<div class="warn"><span class="tag">Two dual pairs people flip</span>
+<p>The dual of ℓ∞ is <strong>ℓ₁</strong>, not ℓ∞. And <code>‖·‖₂</code> on a <em>matrix</em> conventionally means the <strong>spectral</strong> norm (the operator 2-norm), not the Frobenius norm. Frobenius is the ℓ₂ norm of the flattened matrix, and steepest descent under it is just SGD — the entire content of Muon is that spectral ≠ Frobenius.</p>
+</div>
+
+<h3 id="d-l2">Case 1 — ℓ₂ gives SGD</h3>
+<div class="ascii-card"><pre>   minimise   ⟨g, Δ⟩        subject to   ‖Δ‖₂ ≤ r
+
+   Cauchy–Schwarz:   ⟨g, Δ⟩  ≥  −‖g‖₂ · ‖Δ‖₂  ≥  −r‖g‖₂
+
+   equality needs:   (i)  Δ parallel to g, pointing the other way
+                     (ii) ‖Δ‖₂ = r  (saturate the leash)
+
+   ⇒   Δ* = −r · g/‖g‖₂           dual norm value: ‖g‖★ = ‖g‖₂</pre></div>
+<p>ℓ₂ is self-dual, which is why this case looks trivial and why it took decades for anyone to ask what happens with a different norm. Note the literal answer is <em>normalised</em> gradient descent — the direction of <code>g</code>, at fixed length r. Plain SGD's <code>−ηg</code> comes from the next section.</p>
+
+<h3 id="d-size">Where the step size comes from</h3>
+<p>The hard leash gives a direction and a length r that you still have to choose. The alternative is to replace the leash with a <strong>quadratic upper bound</strong>. If the loss is β-smooth in the same norm:</p>
+<div class="ascii-card"><pre>   L(w + Δ)  ≤  L(w) + ⟨g, Δ⟩ + (β/2)·‖Δ‖₂²
+
+   minimise the right-hand side over Δ  ⇒  Δ = −g/β     ⇒     η = 1/β</pre></div>
+<p><strong>The learning rate is one over the sharpness.</strong> And this is exactly a trust region with <code>r = ‖g‖₂/β</code> — a leash whose length is proportional to the gradient norm. That is the entire difference between normalised and unnormalised SGD, and it generalises: the norm gives you the direction, a curvature model gives you the length.</p>
+<div class="note"><span class="tag">Note — why this matters for the other two cases</span>
+<p>Run the same argument under ℓ∞ and you get a fixed-size step in every coordinate — signSGD with a constant learning rate, no normalisation needed. Under the spectral norm you get Muon's fixed-size orthogonal step. In all three, the "adaptive" feel comes from the geometry of the ball, not from any explicit per-parameter learning rate.</p>
+</div>
+
+<h3 id="d-linf">Case 2 — ℓ∞ gives sign descent (and Adam)</h3>
+<p>Now the ball is a cube: <code>‖Δ‖∞ ≤ r</code> means <code>|Δᵢ| ≤ r</code> for each coordinate <em>independently</em>. The objective is a sum over coordinates, so the problem <strong>separates</strong> — solve each coordinate on its own:</p>
+<div class="ascii-card"><pre>   per coordinate:   minimise  gᵢ·Δᵢ   over   Δᵢ ∈ [−r, +r]
+
+                     a linear function on an interval is minimised at an endpoint
+
+   ⇒  Δᵢ* = −r·sign(gᵢ),  contributing  −r·|gᵢ|
+
+   total:  ⟨g, Δ*⟩ = −r·Σ|gᵢ| = −r‖g‖₁      ← confirms the dual is ℓ₁</pre></div>
+<p>Read what happened: the solution sits at a <strong>corner</strong> of the cube, so every entry is ±r. The magnitude <code>|gᵢ|</code> influences <em>nothing</em> except the sign. A coordinate with gradient 10⁻⁶ takes the same size step as one with gradient 10³.</p>
+<p>That is precisely the property Adam inherits, and precisely why it works on transformers, where embedding, attention, MLP, and LayerNorm gradients differ by orders of magnitude and no single global step size can serve all of them.</p>
+<div class="note"><span class="tag">Note — Adam is the <em>soft</em> version, and that is deliberate</span>
+<p>Exact ℓ∞ steepest descent is signSGD, which is brittle: at <code>gᵢ = 0</code> the solution is undefined (any Δᵢ works), and a single noisy sign flip produces a full-size step in the wrong direction. Adam's <code>m̂/(√v̂ + ε)</code> is a continuous relaxation of <code>sign</code>: it saturates toward ±1 when the gradient is <em>consistent</em> across steps, and shrinks toward 0 when the sign is noisy (large <code>√v</code>, small <code>|m|</code>). Same geometry, with a confidence weighting bolted on.</p>
+</div>
+
+<h3 id="d-spec">Case 3 — the spectral norm gives Muon</h3>
+<p>Now the variable is a matrix <code>G ∈ ℝ<sup>m×n</sup></code> and the inner product is the Frobenius one, <code>⟨G,Δ⟩ = tr(GᵀΔ)</code>. The constraint <code>‖Δ‖<sub>spectral</sub> ≤ r</code> says: every singular value of Δ is at most r.</p>
+<div class="ascii-card"><pre>   von Neumann's trace inequality:   |tr(AᵀB)|  ≤  Σᵢ σᵢ(A)·σᵢ(B)
+
+   so    ⟨G, Δ⟩  ≥  −Σᵢ σᵢ(G)·σᵢ(Δ)  ≥  −r·Σᵢ σᵢ(G)  =  −r·‖G‖_nuclear
+
+   equality needs:   (i)  every σᵢ(Δ) = r          (saturate, in every direction)
+                     (ii) Δ shares G's singular vectors, oppositely aligned
+
+   write  G = UΣVᵀ    ⇒    Δ* = −r · UVᵀ</pre></div>
+<p>Verify it in one line: <code>⟨G, −r·UVᵀ⟩ = −r·tr(VΣUᵀUVᵀ) = −r·tr(VΣVᵀ) = −r·Σσᵢ</code>. ✓ And <code>UVᵀ</code> is semi-orthogonal, so its spectral norm is exactly 1. ✓</p>
+<p>So the answer <strong>keeps U and V and replaces Σ with the identity</strong>. That object has several names — the <em>polar factor</em> of G (from the polar decomposition <code>G = (UVᵀ)(VΣVᵀ)</code>), the <em>matrix sign</em> <code>msign(G)</code>, or the <em>zeroth matrix power</em> <code>G(GᵀG)<sup>−1/2</sup></code>. Newton–Schulz is just a cheap way to compute it approximately with matmuls.</p>
+<div class="note"><span class="tag">Note — the whole difference in one 2×2</span>
+<div class="ascii-card"><pre>   G = ⎡10   0 ⎤        singular values 10 and 0.1
+       ⎣ 0  0.1⎦
+
+   SGD  step ∝ ⎡10  0 ⎤     the second direction gets a 100× smaller step
+               ⎣ 0 0.1⎦     — it will take ~100× as many steps to learn
+
+   Muon step ∝ ⎡1  0⎤       both directions get an equal step
+               ⎣0  1⎦</pre></div>
+<p>Real momentum matrices have very low <em>stable rank</em> — a handful of singular values carry nearly all the mass, and the picture above is the typical case, not a contrived one. That is why flattening the spectrum buys real progress rather than just rescaling noise.</p>
+</div>
+
+<h3 id="d-extreme">The geometric picture that ties all three together</h3>
+<p>Minimising a <em>linear</em> function over a convex set puts the optimum at an <strong>extreme point</strong> of that set. So the update always lands on a corner of the unit ball, and the three optimizers differ only in what the corners of their ball look like:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Ball</th><th>Its extreme points</th><th>Hence the update is</th></tr></thead>
+<tbody>
+<tr><td>ℓ₂ — sphere</td><td>every boundary point</td><td>any direction: a scaled <code>−g</code></td></tr>
+<tr><td>ℓ∞ — cube</td><td>the 2<sup>d</sup> vertices, entries ±r</td><td>a sign vector</td></tr>
+<tr><td>spectral</td><td>the semi-orthogonal matrices (all σ equal)</td><td><code>−r·UVᵀ</code></td></tr>
+</tbody>
+</table></div>
+<div class="rulebox"><span class="tag">The one-sentence answer to "why does Muon output an orthogonal matrix?"</span>
+<p><strong>Because the orthogonal matrices are the corners of the spectral-norm ball</strong> — and a linear objective is always minimised at a corner. Nothing about orthogonality was designed in; it fell out of the choice of norm.</p>
+</div>
+
+<h3 id="d-pertensor">Why every optimizer acts one tensor at a time</h3>
+<p>A network's parameters are a tuple <code>(W₁, …, W_L)</code>. Define the network-level norm as a <strong>max over layers</strong> of per-layer norms:</p>
+<div class="formula">‖Δ‖ := max<sub>ℓ</sub> ‖Δ<sub>ℓ</sub>‖<sub>(ℓ)</sub></div>
+<p>Then <code>‖Δ‖ ≤ r</code> holds exactly when <code>‖Δ_ℓ‖ ≤ r</code> holds for every layer separately. The constraint set is a product, the objective is a sum, so the problem <strong>decouples</strong> and you dualise each tensor on its own. That is why every optimizer implementation is a loop over parameters — it is not an approximation, it is the exact solution under a max-type norm.</p>
+<p>Two consequences worth having ready:</p>
+<ul>
+<li>Choosing instead a <em>sum</em>-type norm (plain ℓ₂ over all parameters concatenated, which is what SGD does) couples every layer's step size to the global gradient norm. A layer with small gradients gets a small step forever, no matter how much progress is available there.</li>
+<li>Because the per-layer norms are chosen independently, <strong>Muon-on-matrices + AdamW-on-everything-else is not a hack</strong> — it is a single well-defined mixed norm: spectral on the 2-D tensors, ℓ∞ on the 1-D ones.</li>
+</ul>
+
+<h3 id="d-momentum">Where momentum plugs in</h3>
+<p>All of the above is stated for the true gradient. You have a noisy minibatch sample, so substitute the momentum buffer for <code>g</code> and dualise that instead. Doing so converts the three cases into SGD-momentum, Adam, and Muon respectively.</p>
+<div class="warn"><span class="tag">Order matters: momentum <em>then</em> dualise</span>
+<p>Muon buffers the raw gradients and orthogonalises the buffer — not the other way round. Orthogonalising first would throw away every matrix's magnitude before averaging, so the buffer would average a sequence of already-unit-norm matrices and lose the information momentum exists to accumulate. Momentum-first is also what Jordan found works better empirically, and it is what distinguishes Muon from earlier orthogonalising optimizers.</p>
+</div>
+
+<h3 id="d-whichnorm">Which norm belongs to which tensor</h3>
+<p>The framework tells you the update <em>given</em> a norm. Choosing the norm is a modelling decision, and there is a principled version of it. Take a hidden layer <code>W: ℝ<sup>d_in</sup> → ℝ<sup>d_out</sup></code> and measure vectors in RMS (activations in a normalised transformer are roughly RMS-controlled). For a vector with <code>RMS(x) = 1</code> we have <code>‖x‖₂ = √d_in</code>, so:</p>
+<div class="ascii-card"><pre>   ‖W‖_{RMS→RMS}  =  max  RMS(Wx)/RMS(x)  =  σ_max(W) · √(d_in/d_out)
+
+   bounding the change in output RMS by r   ⇒   σ_max(ΔW) ≤ r·√(d_out/d_in)
+
+   ⇒   ΔW  =  −η · √(d_out/d_in) · UVᵀ</pre></div>
+<p>There is the shape factor that appears in every Muon implementation. In PyTorch's <code>torch.optim.Muon</code> it is exposed as <code>adjust_lr_fn</code>: Keller Jordan's original scales the update by <code>√max(1, A/B)</code> (this derivation), while Moonshot's <code>"match_rms_adamw"</code> uses <code>0.2·√max(A, B)</code> instead, which targets AdamW's empirical update RMS so you can transfer AdamW's tuned <code>lr</code> and <code>wd</code> directly.</p>
+<p>The same reasoning explains the exclusion list. An <strong>embedding table</strong> is not applied to an RMS-normed vector — it is indexed by a one-hot, one row at a time. The RMS→RMS operator norm is simply the wrong measurement for it, so the spectral leash is the wrong leash, and AdamW's ℓ∞ geometry (which treats rows independently) is the right one. Likewise a <strong>1-D gain or bias</strong> has no singular value spectrum to flatten. "Muon is for hidden layers" is a consequence of picking norms honestly, not a heuristic.</p>
+
+<h3 id="d-whiteboard">The whiteboard checklist</h3>
+<div class="rulebox"><span class="tag">Five steps, any optimizer</span>
+<ol>
+<li><strong>Linearise.</strong> <code>L(w+Δ) ≈ L(w) + ⟨g, Δ⟩</code>. Say out loud that this is unbounded below.</li>
+<li><strong>Leash it.</strong> <code>‖Δ‖ ≤ r</code>. State which norm, and why that norm suits this tensor.</li>
+<li><strong>Bound it.</strong> <code>⟨g,Δ⟩ ≥ −r‖g‖★</code>. Name the dual norm (ℓ₂→ℓ₂, ℓ∞→ℓ₁, spectral→nuclear).</li>
+<li><strong>Achieve it.</strong> Write the Δ that makes the bound tight. That is your update direction: <code>−g/‖g‖</code>, <code>−sign(g)</code>, <code>−UVᵀ</code>.</li>
+<li><strong>Size it.</strong> Either keep r fixed (normalised update) or get it from a smoothness bound (<code>η = 1/β</code>, the unnormalised update).</li>
+</ol>
+<p>Then bolt on the two engineering pieces: swap <code>g</code> for the momentum buffer, and add decoupled weight decay <code>−ηλw</code> outside the whole thing. You have just rebuilt SGD, Adam, AdamW and Muon without memorising a single update rule.</p>
+</div>
+<div class="warn"><span class="tag">Sign conventions, since this is where whiteboards go wrong</span>
+<ul>
+<li>Everything above <em>minimises</em> <code>⟨g,Δ⟩</code>, so the answers carry a minus sign. If you define the LMO as a maximiser instead, put the minus in front.</li>
+<li>The optimum value <code>−r‖g‖★</code> is the <strong>predicted decrease in loss</strong>. A larger dual norm means more progress is available for the same step budget — which is a clean way to compare geometries.</li>
+<li><code>r</code> and <code>η</code> are not the same object. <code>r</code> is a distance in weight space; <code>η</code> is whatever your implementation multiplies the normalised direction by.</li>
+</ul>
+</div>
+</div></section><section class="panel" id="pan-sgd" role="tabpanel" aria-labelledby="t-sgd" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 9</p><h2 id="sgd">3. SGD (and momentum)</h2></div><div class="body">
+<div class="subnav"><a href="#sgd-update">The update</a><a href="#sgd-momentum">Momentum, and the 1/(1−μ) trap</a><a href="#sgd-nesterov">Nesterov</a><a href="#sgd-props">Properties</a></div>
+
+<h3 id="sgd-update">The update</h3>
+<p>Row 1 of the norm table, with no smoothing at all:</p>
+<div class="formula">w ← w − η · g</div>
+<p>That's it. No state, no per-parameter adaptation. It is the baseline everything else is measured against, and on convolutional vision models it is still competitive with — often better-generalising than — anything adaptive.</p>
+
+<h3 id="sgd-momentum">Momentum, and the 1/(1−μ) trap</h3>
+<p>The gradient is noisy, so average it. PyTorch's convention:</p>
+<div class="ascii-card"><pre>   b ←  μ·b + g            μ = 0.9 typically
+   w ←  w − η·b</pre></div>
+<div class="warn"><span class="tag">This is a sum, not an average — and it changes your learning rate</span>
+<p>Note the missing <code>(1−μ)</code>. If the gradient were constant at <code>g</code>, the buffer converges to a geometric series:</p>
+<div class="formula">b<sub>∞</sub> = g · (1 + μ + μ² + …) = g / (1 − μ)</div>
+<p>At μ = 0.9 that is a <strong>10× larger effective step</strong> than plain SGD. Turning on momentum without dropping the learning rate roughly tenfold is a classic way to blow up a run. The other convention, <code>b ← μ·b + (1−μ)·g</code> (a true EMA, what Adam uses for <code>m</code>), has <code>b<sub>∞</sub> = g</code> and no such gain. <strong>Know which one your framework uses.</strong></p>
+</div>
+<p>The second reason momentum helps, beyond variance reduction: in a narrow ravine the oscillating components cancel across steps while the consistent downhill component accumulates. You get a larger step along the valley floor and a smaller one across it, for free.</p>
+
+<h3 id="sgd-nesterov">Nesterov</h3>
+<p>Evaluate the gradient at the point momentum is about to carry you to, rather than where you are — a look-ahead correction. In practice PyTorch implements it as using <code>g + μ·b</code> in place of <code>b</code>. Small, usually-positive effect; not worth much interview time except to know it is a look-ahead, not a different geometry.</p>
+
+<h3 id="sgd-props">Properties</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Property</th><th>SGD + momentum</th></tr></thead>
+<tbody>
+<tr><td>Optimizer state</td><td>1 buffer → <strong>4 bytes/param</strong> (fp32)</td></tr>
+<tr><td>Scale sensitivity</td><td><strong>High.</strong> Multiply the loss by <em>c</em> and every step grows by <em>c</em>. Layers with tiny gradients barely move.</td></tr>
+<tr><td>Batch-size LR rule</td><td>Linear scaling: double batch → double lr, with warmup</td></tr>
+<tr><td>Where it wins</td><td>CNNs / vision, where it often generalises better than Adam</td></tr>
+<tr><td>Where it fails</td><td>Transformers. Gradient scales across embeddings, attention, and LayerNorm gains differ by orders of magnitude; one global η cannot serve all of them.</td></tr>
+<tr><td>Weight decay</td><td>L2 and decoupled decay are the same thing here (identity preconditioner)</td></tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>opt = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9,
+                      nesterov=True, weight_decay=5e-4)</pre></div>
+</div></section><section class="panel" id="pan-adam" role="tabpanel" aria-labelledby="t-adam" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 9</p><h2 id="adam">4. Adam</h2></div><div class="body">
+<div class="subnav"><a href="#adam-why">What it fixes</a><a href="#adam-update">The update</a><a href="#adam-bias">Bias correction, derived</a><a href="#adam-invariance">Why divide by √v</a><a href="#adam-sign">Adam is smoothed sign descent</a><a href="#adam-hypers">Hyperparameters</a></div>
+
+<h3 id="adam-why">What it fixes</h3>
+<p>SGD has two separate problems, and Adam attacks both with one buffer each:</p>
+<ul>
+<li><strong>Noise</strong> — a minibatch gradient is a high-variance estimate. Fix: EMA of <code>g</code>. That is <code>m</code>, the <em>first moment</em>.</li>
+<li><strong>Scale heterogeneity</strong> — different parameters have gradients of wildly different magnitude, so no single η fits all. Fix: divide each coordinate by an estimate of its own gradient magnitude. That is <code>v</code>, the <em>second moment</em>, used as an RMS.</li>
+</ul>
+
+<h3 id="adam-update">The update</h3>
+<div class="ascii-card"><pre>   m ←  β₁·m + (1−β₁)·g          EMA of the gradient          (β₁ = 0.9)
+   v ←  β₂·v + (1−β₂)·g²         EMA of the squared gradient  (β₂ = 0.95…0.999)
+
+   m̂ = m / (1 − β₁ᵗ)             bias correction
+   v̂ = v / (1 − β₂ᵗ)
+
+   w ←  w − η · m̂ / (√v̂ + ε)</pre></div>
+<p>Read the last line as: <em>direction from <code>m̂</code>, magnitude normalised away by <code>√v̂</code></em>. Adam decides <strong>where</strong> to go from the first moment and refuses to let the second moment decide <strong>how far</strong>.</p>
+
+<h3 id="adam-bias">Bias correction, derived</h3>
+<p>Both buffers start at zero, so early on they are biased toward zero. Unroll the recursion:</p>
+<div class="formula">m<sub>t</sub> = (1−β₁) · Σ<sub>i=1..t</sub> β₁<sup>t−i</sup> g<sub>i</sub></div>
+<p>If every gradient were the same value <code>g</code>, the coefficients sum to <code>(1−β₁)(1−β₁ᵗ)/(1−β₁) = 1−β₁ᵗ</code>. So <code>m<sub>t</sub> = (1−β₁ᵗ)·g</code> — short by exactly that factor. Divide it out. Same argument for <code>v</code>.</p>
+<div class="note"><span class="tag">Note — what happens if you forget it</span>
+<p>At <code>t = 1</code> with β₁ = 0.9, β₂ = 0.999: <code>m₁ = 0.1g</code> and <code>v₁ = 0.001g²</code>, so the uncorrected ratio is</p>
+<div class="formula">m₁ / √v₁ = 0.1·g / (0.0316·|g|) ≈ 3.2 · sign(g)</div>
+<p>The first steps are about <strong>3× too large</strong>, not too small — the correction to <code>v</code> (a square root of a much smaller number) dominates the correction to <code>m</code>. In general the early overshoot factor is <code>(1−β₁)/√(1−β₂)</code>. This is exactly the regime warmup also protects you from.</p>
+</div>
+
+<h3 id="adam-invariance">Why divide by √v — the units argument</h3>
+<p>Multiply your loss by a constant <em>c</em>. Then <code>g → c·g</code>, so <code>m → c·m</code> and <code>√v → c·√v</code>, and the ratio <code>m̂/√v̂</code> is <strong>unchanged</strong>. Adam's step size is invariant to the scale of the gradient — globally, and per-coordinate.</p>
+<p>That single property is why Adam works on transformers and SGD struggles: every layer effectively gets its own learning rate, discovered automatically. It is also why Adam is indifferent to loss scaling in mixed precision (as long as you unscale consistently), and why <code>m̂/√v̂</code> is dimensionless — <code>η</code> is measured in units of <em>weights</em>, not units of <em>gradient</em>.</p>
+<div class="warn"><span class="tag">ε breaks the invariance — on purpose, and sometimes by accident</span>
+<p><code>ε</code> is a floor, so the invariance only holds while <code>√v̂ ≫ ε</code>. If gradients are small relative to ε, the denominator becomes roughly constant and Adam degenerates into SGD with learning rate <code>η/ε</code>. Also note the placement: PyTorch uses <code>√v̂ + ε</code> (outside the root), some papers use <code>√(v̂ + ε)</code> (inside). They are not the same, and people have chased phantom bugs over it.</p>
+</div>
+
+<h3 id="adam-sign">Adam is smoothed sign descent</h3>
+<p>Set β₁ = β₂ and suppose the gradient is roughly steady. Then <code>v ≈ g²</code>, so</p>
+<div class="formula">m̂ / √v̂  ≈  g / |g|  =  sign(g)</div>
+<p>which is row 2 of the norm table: steepest descent under ℓ∞. Adam is <em>signSGD with two EMAs bolted on</em>. This gives you the useful mental picture that the normalised update has magnitude near 1 in every coordinate — in practice its RMS lands around <strong>0.2–0.4</strong>, a number that matters later for Muon's scaling.</p>
+
+<h3 id="adam-hypers">Hyperparameters and defaults</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Knob</th><th>Typical</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td><code>β₁</code></td><td>0.9</td><td>Direction averaged over ~10 steps</td></tr>
+<tr><td><code>β₂</code></td><td>0.95 (LLMs) · 0.999 (classic)</td><td>Magnitude averaged over ~20 or ~1000 steps. Large-batch LLM runs prefer 0.95: faster recovery after a loss spike, and each step already averages many samples.</td></tr>
+<tr><td><code>ε</code></td><td>1e-8</td><td>Raise it (1e-6…1e-5) if gradients are tiny or you are in bf16 and seeing instability</td></tr>
+<tr><td><code>lr</code></td><td>1e-4 … 3e-4 for LLM pretraining</td><td>Scales ~√batch, not linearly, because the update is already normalised</td></tr>
+<tr><td>warmup</td><td>~0.5–2k steps</td><td>Not optional. <code>v̂</code> is estimated from very few samples for the first ~<code>1/(1−β₂)</code> steps.</td></tr>
+</tbody>
+</table></div>
+<p><strong>Lineage in one line:</strong> Adagrad accumulates <em>all</em> past <code>g²</code> (so the step decays to zero) → RMSProp replaces the sum with an EMA → Adam adds momentum and bias correction.</p>
+<p><strong>Cost:</strong> 2 states × 4 bytes = <strong>8 bytes/param</strong>. FLOPs are trivial; the step is memory-bandwidth bound, which is why <code>foreach</code> / <code>fused</code> implementations are meaningfully faster.</p>
+</div></section><section class="panel" id="pan-adamw" role="tabpanel" aria-labelledby="t-adamw" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 9</p><h2 id="adamw">5. AdamW</h2></div><div class="body">
+<div class="subnav"><a href="#adamw-bug">The bug it fixes</a><a href="#adamw-update">The update</a><a href="#adamw-lr">Decay is coupled to the LR</a><a href="#adamw-practice">In practice</a></div>
+
+<h3 id="adamw-bug">The bug it fixes</h3>
+<p>There are two things people call "weight decay", and they are only the same thing under SGD.</p>
+<div class="ascii-card"><pre>   L2 penalty         add  ½λ‖w‖²  to the loss   →  g̃ = g + λ·w
+   weight decay       shrink the weight directly →  w ← (1 − ηλ)·w</pre></div>
+<p>Under SGD they coincide exactly: <code>w − η(g + λw) = w − ηg − ηλw</code>. Nobody noticed a difference for thirty years. Under Adam they do <strong>not</strong>, because the L2 term goes through the preconditioner:</p>
+<div class="formula">Adam + L2:   Δ ∝ ( m of (g + λw) ) / √( v of (g + λw) )</div>
+<p>The <code>λw</code> contribution gets divided by <code>√v</code>. So a parameter with a large gradient history has a large <code>√v</code> and therefore receives <strong>less</strong> regularisation — the exact opposite of what you want, and completely unintended. Regularisation strength ends up coupled to gradient history.</p>
+
+<h3 id="adamw-update">The update</h3>
+<p>AdamW simply refuses to let decay through the preconditioner:</p>
+<div class="ascii-card"><pre>   m ←  β₁·m + (1−β₁)·g
+   v ←  β₂·v + (1−β₂)·g²
+
+   w ←  w − η · m̂/(√v̂ + ε)  −  η·λ·w
+                ▲                  ▲
+         adaptive part      untouched by v — that's the whole idea</pre></div>
+<p>Everything about Adam is unchanged. One term moved out of the fraction. That is the entire paper (Loshchilov &amp; Hutter, "Decoupled Weight Decay Regularization").</p>
+
+<h3 id="adamw-lr">Decay is still coupled to the learning rate</h3>
+<div class="warn"><span class="tag">The follow-on trap</span>
+<p>In the standard implementation the decay term carries an <code>η</code>. So the shrink per step is <code>η·λ</code>, and it <strong>follows your learning-rate schedule</strong>: as cosine decay drives η → 0, the effective regularisation vanishes too. Two consequences worth stating in an interview:</p>
+<ul>
+<li>Changing <code>lr</code> silently changes how strongly you regularise. The quantity that transfers across runs is <code>lr · wd</code>, not <code>wd</code>.</li>
+<li>Weight norms reach an <em>equilibrium</em> where per-step shrinkage balances per-step growth from the update. Weight decay in modern LLM training is better understood as implicit control of weight/update norms than as classical capacity control.</li>
+</ul>
+</div>
+
+<h3 id="adamw-practice">In practice</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Point</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Default everywhere</td><td>AdamW + cosine or WSD schedule + warmup is the standing default for LLM pretraining</td></tr>
+<tr><td>Typical λ</td><td>0.1 for LLM pretraining; 0.01 for fine-tuning</td></tr>
+<tr><td>Exclusion list</td><td><strong>No decay on biases, LayerNorm/RMSNorm gains</strong>, and often not on embeddings. These are 1-D scale parameters; shrinking them just fights the normaliser.</td></tr>
+<tr><td>The API gotcha</td><td><code>torch.optim.Adam(weight_decay=…)</code> is <strong>L2</strong>, i.e. the broken coupling. <code>torch.optim.AdamW</code> is decoupled. Different results, same-looking code.</td></tr>
+<tr><td>Memory</td><td>Identical to Adam: <strong>8 bytes/param</strong> of state</td></tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>decay, no_decay = [], []
+for n, p in model.named_parameters():
+    if not p.requires_grad:
+        continue
+    (no_decay if p.ndim &lt; 2 else decay).append(p)   # biases &amp; norm gains are 1-D
+
+opt = torch.optim.AdamW(
+    [{"params": decay,    "weight_decay": 0.1},
+     {"params": no_decay, "weight_decay": 0.0}],
+    lr=3e-4, betas=(0.9, 0.95), eps=1e-8, fused=True,
+)</pre></div>
+</div></section><section class="panel" id="pan-muon" role="tabpanel" aria-labelledby="t-muon" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 9</p><h2 id="muon">6. Muon</h2></div><div class="body">
+<div class="subnav"><a href="#muon-idea">The idea</a><a href="#muon-core">The core algorithm</a><a href="#muon-versions">Three versions, reconciled</a><a href="#muon-ns">Newton–Schulz</a><a href="#muon-cost">What it costs</a><a href="#muon-rms">The two scaling conventions</a><a href="#muon-scope">Scope</a><a href="#muon-scale">At scale</a><a href="#muon-sys">Systems friction</a></div>
+
+<h3 id="muon-idea">The idea</h3>
+<p><strong>M</strong>oment<strong>U</strong>m <strong>O</strong>rthogonalized by <strong>N</strong>ewton–Schulz (Jordan et al., 2024). Adam treats a weight matrix as a bag of unrelated scalars. But a hidden weight matrix is a <em>linear map</em>: what matters is how much it stretches each input direction, i.e. its singular values. So put the leash on the <strong>spectral norm</strong> — row 3 of the norm table.</p>
+<div class="formula">argmax<sub>‖Δ‖<sub>spectral</sub> ≤ 1</sub> ⟨G, Δ⟩  =  UVᵀ,  where G = UΣVᵀ</div>
+<p>In words: <strong>take the momentum matrix, keep its singular vectors, throw away its singular values, set them all to 1.</strong> Same directions, equalised magnitudes. Jordan states the same operation a second way, which is worth knowing because it makes the "post-processing step" framing obvious:</p>
+<div class="formula">Ortho(G) = argmin<sub>O</sub> { ‖O − G‖<sub>F</sub> : OᵀO = I or OOᵀ = I }</div>
+<p>— the <strong>nearest semi-orthogonal matrix</strong> to G. Steepest descent under the spectral norm and "snap the update to the closest orthogonal matrix" are the same computation arrived at from two directions.</p>
+<div class="note"><span class="tag">Note — why this is a good idea empirically</span>
+<p>Jordan's stated motivation is observational: the update matrices produced by SGD-momentum <em>and</em> by Adam for 2-D transformer parameters typically have very high condition number — nearly low-rank, with a few directions dominating every neuron's update. Orthogonalising raises the scale of the "rare directions", which are small in the update but still matter for learning. Same reasoning as Adam's per-coordinate normalisation, lifted from coordinates to singular directions.</p>
+</div>
+
+<h3 id="muon-core">The core algorithm</h3>
+<p>This is Muon as stated in the papers' algorithm boxes — the object of study, stripped of everything practical:</p>
+<div class="ascii-card"><pre>   B_t ←  μ·B_{t-1} + G_t             plain heavy-ball momentum,  μ = 0.95
+   O_t  =  NewtonSchulz5(B_t)  ≈ UVᵀ  orthogonalise
+   θ_t ←  θ_{t-1} − η·O_t</pre></div>
+<p>Note what is <em>not</em> there: no second moment (Muon carries one buffer, like SGD-momentum), and also no Nesterov, no weight decay, and no shape-dependent scaling. Those three are exactly what the shipped implementations add — see below.</p>
+
+<h3 id="muon-versions">Three versions, reconciled</h3>
+<div class="warn"><span class="tag">The paper box, the blog's implementation, and torch.optim.Muon are not the same algorithm</span>
+<p>This trips people up constantly, so it is worth being able to state the differences precisely.</p>
+</div>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>Paper algorithm box</th><th>Jordan's blog / repo</th><th><code>torch.optim.Muon</code></th></tr></thead>
+<tbody>
+<tr><td>Momentum</td><td>heavy-ball: <code>B ← μB + G</code></td><td>blog's definition is heavy-ball, but the <strong>public implementation defaults to Nesterov</strong></td><td><strong>Nesterov by default</strong> (<code>nesterov=True</code>): uses <code>G + μB</code></td></tr>
+<tr><td>Weight decay</td><td><strong>none</strong></td><td>none in the definition</td><td><strong>decoupled, λ = 0.1 by default</strong></td></tr>
+<tr><td>Shape / LR scaling</td><td><strong>none</strong></td><td><code>√max(1, A/B)</code> in the implementation</td><td><code>adjust_lr_fn</code>: <code>"original"</code> = <code>√max(1, A/B)</code> <strong>(default)</strong>, or <code>"match_rms_adamw"</code> = <code>0.2·√max(A,B)</code></td></tr>
+<tr><td>Newton–Schulz</td><td><code>NS5</code>, unspecified</td><td>5 steps, <code>(3.4445, −4.7750, 2.0315)</code>, bf16, Frobenius-normalised</td><td>same: <code>ns_steps=5</code>, same coefficients, <code>eps=1e-7</code></td></tr>
+<tr><td>Other defaults</td><td>—</td><td>—</td><td><code>lr=1e-3</code>, <code>momentum=0.95</code></td></tr>
+</tbody>
+</table></div>
+<p>Two things to take from this:</p>
+<ul>
+<li><strong>Nesterov is an empirical add-on, not part of the theory.</strong> Jordan's words: Nesterov-style momentum worked a bit better in every case tested, so it became the default in the public implementation. The algorithm box omits it because it is orthogonal to the idea being presented.</li>
+<li><strong>The paper box is deliberately the un-scaled version.</strong> Weight decay and the shape scaling are precisely the two changes Moonshot identified as necessary to scale Muon (see <a href="#muon-scale">At scale</a>). A paper that states vanilla Muon in Algorithm 2 is usually about to add them in Algorithm 3.</li>
+</ul>
+<div class="ascii-card"><pre>   what torch.optim.Muon actually runs, in order:
+
+     B_t ← μ·B_{t-1} + g_t
+     B̃_t ← g_t + μ·B_t              if nesterov (default), else B_t
+     O_t ← NS_k(B̃_t; ε)
+     θ_t ← θ_{t-1} − γ·λ·θ_{t-1}    decoupled weight decay, applied first
+     γ   ← AdjustLR(γ; shape(θ))    "original" or "match_rms_adamw"
+     θ_t ← θ_t − γ·O_t</pre></div>
+
+<h3 id="muon-ns">Newton–Schulz — why a polynomial, and why these numbers</h3>
+<p>An exact SVD per matrix per step would be far too slow, and the coupled Newton iteration used in Shampoo implementations needs fp32 to stay stable. Newton–Schulz survives <strong>bf16</strong>, which is why it was chosen.</p>
+<h4>What "matrix polynomial" means, and why odd powers</h4>
+<p>For a scalar, <code>φ(x) = ax + bx³ + cx⁵</code> is obvious. For a matrix it is not, for two reasons. You cannot just cube the entries — that would be elementwise, and would destroy the linear-map structure you care about. And for a <em>rectangular</em> <code>G</code> of shape m×n, <code>G³</code> is not even defined; the shapes do not compose.</p>
+<p>The fix is the <strong>sandwich form</strong>. These three are all m×n, so they can be added:</p>
+<div class="ascii-card"><pre>   G          (GGᵀ)G          (GGᵀ)²G          ← "x", "x³", "x⁵"
+
+   every term is  G  wrapped in an even number of extra copies of itself,
+   so the shape always comes back to m×n</pre></div>
+<p>Hence <strong>only odd powers</strong>. There is a second reason to want oddness beyond shape bookkeeping: an odd φ satisfies <code>φ(−x) = −φ(x)</code>, so <code>Ortho(−G) = −Ortho(G)</code>. Flip the sign of the gradient and the update flips too — which you obviously want from an optimizer.</p>
+<div class="note"><span class="tag">Note — the mental model: a scalar function applied to the spectrum</span>
+<p>The point of the algebra below is that <strong>a matrix polynomial is just a scalar function applied to the singular values, computed with nothing but matmuls.</strong> U and V never move. You are editing the spectrum of a matrix without ever computing its SVD.</p>
+<p>The closest scalar analogy is Newton's method for a reciprocal:</p>
+<div class="formula">x ← x·(2 − a·x)   converges to 1/a using only multiplication — no division</div>
+<p>Same spirit, and the same lineage: replace an expensive primitive (division there, SVD here) with a handful of cheap ones. That is exactly what the name <em>Newton–Schulz</em> refers to.</p>
+</div>
+<p>The mechanism is a one-line calculation. With <code>G = UΣVᵀ</code>, one iteration of the odd matrix polynomial gives:</p>
+<div class="ascii-card"><pre>   G' = aG + b(GGᵀ)G + c(GGᵀ)²G
+      = (aI + bUΣ²Uᵀ + cUΣ⁴Uᵀ)·UΣVᵀ
+      = U·(aΣ + bΣ³ + cΣ⁵)·Vᵀ
+
+   so N steps give   U·φᴺ(Σ)·Vᵀ,   where  φ(x) = ax + bx³ + cx⁵
+                                    applied elementwise to the singular values</pre></div>
+<p>U and V never move. The iteration only reshapes the spectrum. So convergence to <code>UVᵀ</code> needs exactly two things:</p>
+<ol>
+<li><strong>Start with all σ in [0, 1]</strong> — achieved by dividing G by <code>‖G‖<sub>F</sub></code> first. Harmless, since <code>Ortho(cG) = Ortho(G)</code>.</li>
+<li><strong>Pick (a,b,c) so that φᴺ(x) → 1</strong> on [0, 1]. Many choices work; the naive <code>(2, −1.5, 0.5)</code> is fine.</li>
+</ol>
+<h4>Choosing the coefficients</h4>
+<p>Everything so far says <em>what</em> the polynomial has to do. It has to satisfy exactly one correctness condition:</p>
+<div class="formula">φᴺ(x) → 1  for every x ∈ (0, 1]</div>
+<p>Because if every singular value goes to 1, then <code>U·φᴺ(Σ)·Vᵀ → U·I·Vᵀ = UVᵀ</code>, which is the orthogonalisation we wanted. (<code>φᴺ</code> means φ composed with itself N times, not the Nth power.)</p>
+<p><strong>That condition does not pin down <code>(a, b, c)</code> — it leaves a whole family.</strong> The naive <code>(2, −1.5, 0.5)</code> satisfies it perfectly well. So correctness is not the design problem. <em>Speed</em> is: every extra iteration costs another few matmuls on every 2-D parameter on every step, so the real objective is to reach the target in as few iterations as possible. The coefficients are chosen to minimise iteration count, not to minimise error.</p>
+
+<h5>Consideration 1 — make <code>a</code> as large as possible</h5>
+<p>Differentiate: <code>φ'(x) = a + 3bx² + 5cx⁴</code>, so <code>φ'(0) = a</code>. Near zero the cubic and quintic terms vanish and <code>φ(x) ≈ ax</code> — each iteration simply <strong>multiplies a small singular value by roughly <code>a</code></strong>. Growth is geometric, which gives a closed form for the bottleneck:</p>
+<div class="formula">iterations to lift σ₀ up to ≈1   ≈   log(1/σ₀) / log(a)</div>
+<p>And small singular values <em>are</em> the bottleneck. After dividing by <code>‖B‖<sub>F</sub></code>, a matrix of effective rank r has singular values sitting near <code>1/√r</code> with a long tail below that — so most of the spectrum starts small, and the whole job is dragging it up. <code>a</code> is the single number governing that rate:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Starting σ₀</th><th>Steps with a = 3.4445 <span style="opacity:.7">(measured / formula)</span></th><th>Steps with a = 2.0 <span style="opacity:.7">(measured / formula)</span></th></tr></thead>
+<tbody>
+<tr><td>0.01</td><td><strong>4</strong> / 3.7</td><td>7 / 6.6</td></tr>
+<tr><td>0.001</td><td><strong>6</strong> / 5.6</td><td>11 / 10.0</td></tr>
+<tr><td>0.0001</td><td><strong>8</strong> / 7.4</td><td>14 / 13.3</td></tr>
+</tbody>
+</table></div>
+<p>The ratio is <code>log(3.4445)/log(2) ≈ 1.78</code> — <strong>a bigger <code>a</code> buys you nearly half the iterations</strong>, uniformly, at every starting scale. That is the entire reason anyone bothered tuning these numbers.</p>
+
+<h5>Consideration 2 — but it still has to land near 1</h5>
+<p>You cannot simply crank <code>a</code> up: the polynomial has to remain well-behaved on all of [0, 1], and a steeper slope at the origin means a wilder polynomial further out. So the constraint is that the iterates must end up close to 1:</p>
+<div class="formula">lim<sub>N→∞</sub> φᴺ(x) ∈ [1 − ε, 1 + ε]   for all x ∈ (0, 1]</div>
+<p>The surprising empirical finding is how loose ε is allowed to be. <strong>ε ≈ 0.3 does not harm the loss curve</strong> for Muon trainings — the update can be 30% off from a true orthogonal matrix and training does not notice. That single observation is what makes the whole approach cheap, because it converts a convergence requirement into a much weaker "get in the neighbourhood" requirement.</p>
+
+<h5>The resulting problem</h5>
+<div class="ascii-card"><pre>   maximise    a
+   subject to  lim φᴺ(x) ∈ [0.7, 1.3]   for all x ∈ (0, 1]</pre></div>
+<p>Solved with an ad-hoc gradient-based search, this yields <strong>(3.4445, −4.7750, 2.0315)</strong>, at which point <strong>5 iterations suffice</strong> for transformer language models and small convnets. Third- and seventh-order polynomials were also tried; neither improved the wallclock further, so the quintic stayed.</p>
+<div class="note"><span class="tag">Note — how to read the figure, and the trap in it</span>
+<p>Plot φ, φ⁵, ρ, ρ⁵ on [0, 1] (ρ = the tuned polynomial) and the objective and its cost are both visible at once:</p>
+<ul>
+<li><strong>The objective</strong> — ρ's slope at the origin is 3.4445 against φ's 2.0. That gap <em>is</em> <code>φ'(0) = a</code>, the quantity being maximised.</li>
+<li><strong>The cost</strong> — ρ overshoots to ≈1.2 near x = 0.55 and falls to 0.701 at x = 1. No fixed point at 1, which is why ρ⁵ never flattens and instead chops through the band forever.</li>
+</ul>
+<p><strong>The trap:</strong> over most of the domain the <em>naive</em> polynomial looks strictly better. φ⁵ is a clean flat 1 from about x = 0.05 rightwards; ρ⁵ is visibly ragged everywhere. On that picture you would pick the naive coefficients.</p>
+<p>The visible half of the plot is the half that does not matter. Zoom into the left edge and it inverts:</p>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>First reaches 0.7 at σ =</th><th>Behaviour above that</th></tr></thead>
+<tbody>
+<tr><td>naive, 5 steps</td><td>0.026</td><td>[0.700, 1.002] — essentially exact</td></tr>
+<tr><td><strong>tuned, 5 steps</strong></td><td><strong>0.0016 — 16× smaller</strong></td><td>[0.68, 1.20] — permanently ragged</td></tr>
+</tbody>
+</table></div>
+<div class="ascii-card"><pre>   σ        naive⁵     tuned⁵
+   0.005    0.159      1.154      ← tuned lifts it, naive does not
+   0.01     0.312      0.699
+   0.04     0.90       ~1.1       ← accuracy crossover near here
+   0.1      1.000      0.712      ← naive now "better", on a direction that was already fine
+   1.0      1.000      0.696</pre></div>
+<p>After Frobenius normalisation <code>Σσᵢ² = 1</code>, so a matrix of effective rank r has singular values near <code>1/√r</code> with a long tail beneath. Everything above σ ≈ 0.05 is the handful of dominant directions; everything below σ ≈ 0.026 is the tail — <strong>which is exactly the set of "rare directions" Muon exists to lift.</strong> The naive polynomial is beautifully accurate on the directions that were already fine and does nothing for the ones you cared about. The tuned polynomial is sloppy everywhere, but sloppy inside the ±0.3 band that provably does not matter, and it actually reaches the tail.</p>
+</div>
+
+<div class="warn"><span class="tag">The shipped polynomial does not converge at all — and that is the design</span>
+<p>Iterate the two coefficient sets by hand and the difference is stark. The naive <code>(2, −1.5, 0.5)</code> has <code>φ(1) = 1</code> and <code>φ'(1) = 0</code>: a textbook superattracting fixed point, quadratic convergence. The tuned coefficients have <code>φ(1) = 0.701</code> — <strong>1 is not a fixed point</strong>. Starting from 1.0 the orbit is:</p>
+<div class="ascii-card"><pre>   1.000 → 0.701 → 1.114 → 0.721 → 1.090 → 0.696 → 1.119 → 0.728 → …
+
+   a 2-cycle bouncing around 1 forever, never settling</pre></div>
+<p>So why ship it? Because after Frobenius normalisation the singular values of a real momentum matrix are <em>small</em> — for a matrix with effective rank r they sit near <code>1/√r</code>, and the tail is far below that. Lifting the tail is the whole job, and <code>φ'(0) = a</code> is what governs that rate:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Starting σ</th><th>Steps to reach 0.5 — tuned (a = 3.44)</th><th>Steps — naive (a = 2.0)</th></tr></thead>
+<tbody>
+<tr><td>0.01</td><td><strong>4</strong></td><td>6</td></tr>
+<tr><td>0.001</td><td><strong>6</strong></td><td>10</td></tr>
+</tbody>
+</table></div>
+<p><strong>The trade is exact convergence for a steeper slope at zero.</strong> You give up ever landing on 1 and accept an orbit inside [0.7, 1.3]; in exchange the singular values that actually needed help get there in roughly half the steps. And the sloppiness is harmless because approximate orthogonalisation is still steepest descent under a Schatten-<em>p</em> norm for large finite <em>p</em>, which is indistinguishable from the spectral norm in practice.</p>
+</div>
+<div class="code"><div class="code-bar"><span>python — Jordan's NS5</span><button class="copy" type="button">copy</button></div><pre>def newtonschulz5(G, steps=5, eps=1e-7):
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X /= (X.norm() + eps)              # put all singular values in [0, 1]
+    if G.size(0) &gt; G.size(1):
+        X = X.T                        # work with the smaller Gram matrix
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A          # factored form: 4nm² + 2m³, not 6nm²
+        X = a * X + B @ X
+    if G.size(0) &gt; G.size(1):
+        X = X.T
+    return X</pre></div>
+<p>Two implementation details in there are load-bearing: the <strong>transpose</strong> so the Gram matrix is formed on the smaller dimension, and the <strong>factored</strong> <code>B @ X</code> rather than expanding the polynomial term by term.</p>
+
+<h3 id="muon-cost">What it costs</h3>
+<p>Before the NS iteration, Muon <em>is</em> SGD-momentum, so memory is one buffer. For the extra compute there is a clean closed form. Each NS step on an <code>n × m</code> parameter costs <code>2(2nm² + m³)</code> matmul FLOPs, against <code>6nmB</code> for a forward+backward through that layer with <code>B</code> tokens:</p>
+<div class="formula">FLOP overhead ≤ T·m / B    (T = NS steps, m = model dim, B = batch size in tokens)</div>
+<div class="tablewrap"><table>
+<thead><tr><th>Setting</th><th>m</th><th>B (tokens)</th><th>Overhead</th></tr></thead>
+<tbody>
+<tr><td>NanoGPT speedrun</td><td>768</td><td>524,288</td><td>5·768/524288 ≈ <strong>0.7%</strong></td></tr>
+<tr><td>Llama-405B-scale batch</td><td>16,384</td><td>16,000,000</td><td>5·16384/16000000 ≈ <strong>0.5%</strong></td></tr>
+</tbody>
+</table></div>
+<p>Under 1% either way — and note it <em>improves</em> with batch size, since the overhead is per-parameter while the baseline work is per-token. The real cost is not FLOPs but that this is a serial chain of small matmuls, plus the distribution problem below.</p>
+
+<h3 id="muon-rms">The two scaling conventions</h3>
+<p>An exactly orthogonal <code>O</code> of shape A×B has all <code>min(A,B)</code> singular values equal to 1, so <code>‖O‖<sub>F</sub> = √min(A,B)</code> and:</p>
+<div class="formula">RMS(O) = ‖O‖<sub>F</sub> / √(A·B) = √min(A,B) / √(A·B) = 1 / √max(A,B)</div>
+<p>The update's typical size therefore depends on the matrix's shape, which is not something you want. Two different fixes are in circulation, and <code>torch.optim.Muon</code> ships both:</p>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>Factor</th><th>What it targets</th></tr></thead>
+<tbody>
+<tr><td><code>"original"</code> — Jordan <em>(PyTorch default)</em></td><td><code>√max(1, A/B)</code></td><td>The RMS→RMS operator-norm derivation: <code>√(d_out/d_in)</code>, clamped at 1. Makes shapes consistent <em>with each other</em>.</td></tr>
+<tr><td><code>"match_rms_adamw"</code> — Moonshot</td><td><code>0.2·√max(A,B)</code></td><td>Drives RMS(update) to ≈ 0.2, AdamW's empirical update RMS, so <strong>AdamW's tuned lr and wd transfer directly</strong>.</td></tr>
+</tbody>
+</table></div>
+<div class="warn"><span class="tag">These are not interchangeable</span>
+<p>They differ by more than a constant — one is <code>√(A/B)</code>, the other <code>√max(A,B)</code>. If you port a learning rate between codebases without checking which convention is in force, you can be off by a factor of the model dimension's square root. PyTorch defaults to <code>"original"</code>, so an AdamW-tuned lr will <em>not</em> transfer unless you explicitly ask for <code>"match_rms_adamw"</code>.</p>
+</div>
+
+<h3 id="muon-scope">Scope — what it does not cover</h3>
+<div class="warn"><span class="tag">Muon is a hidden-layer optimizer, not a whole-model optimizer</span>
+<p>It applies to <strong>2-D hidden weight matrices only</strong>. Scalars, vectors, and — empirically important — the <strong>input embedding and the final classifier head</strong> go to AdamW, even though those two are 2-D. For the embedding this follows from modular-norm theory (its input is a one-hot, not an RMS-normed vector, so the spectral leash measures the wrong thing); for the output head, Jordan notes it is driven by empirics rather than theory. Convolutional kernels work by flattening the last three dimensions.</p>
+</div>
+<div class="note"><span class="tag">Note — the QKV detail</span>
+<p>Muon works <strong>better applied to Q, K and V separately</strong> than to a fused QKV matrix, which is how most transformer implementations parametrise them. Makes sense under the norm story: a fused QKV is three different linear maps stacked, and orthogonalising the stack is not the same as orthogonalising each. Easy to get wrong and rarely mentioned.</p>
+</div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>hidden = [p for n, p in model.named_parameters()
+          if p.ndim == 2 and "embed" not in n and "lm_head" not in n]
+rest   = [p for p in model.parameters() if not any(p is q for q in hidden)]
+
+opt_muon  = torch.optim.Muon(hidden, lr=0.02, momentum=0.95,
+                             weight_decay=0.1, ns_steps=5,
+                             adjust_lr_fn="match_rms_adamw")   # if porting AdamW's lr
+opt_adamw = torch.optim.AdamW(rest, lr=3e-4, betas=(0.9, 0.95), weight_decay=0.1)
+
+loss.backward()
+opt_muon.step(); opt_adamw.step()
+opt_muon.zero_grad(); opt_adamw.zero_grad()</pre></div>
+
+<h3 id="muon-scale">At scale</h3>
+<p>Muon went from a NanoGPT speedrun trick to frontier pretraining in about a year. Two changes made it scale — and they are exactly the two the algorithm box omits:</p>
+<ul>
+<li><strong>Decoupled weight decay</strong> — vanilla Muon lets weight norms grow without bound over long runs.</li>
+<li><strong>Consistent update RMS</strong> — the <code>0.2·√max(A,B)</code> convention above.</li>
+</ul>
+<p>With those, Moonshot's Moonlight report claimed roughly <strong>2× token efficiency versus AdamW</strong> at matched compute. Kimi K2 (1T-parameter MoE) pretrained on 15.5T tokens with <strong>MuonClip</strong> = Muon + weight decay + RMS matching + <strong>QK-Clip</strong>, which rescales the query/key projections whenever the maximum attention logit exceeds a threshold τ ≈ 100 — a targeted fix for the attention-logit explosion that Muon triggers more readily than AdamW does.</p>
+<p>Worth noting for context: as of the original blog post, "will Muon scale to 20B+ parameters and 1T+ tokens?" and "can the NS iterations be properly distributed across a large cluster?" were listed as <em>open questions</em>. The first has since been answered affirmatively; the second is still where the engineering pain lives.</p>
+
+<h3 id="muon-sys">Systems friction — the thing interviewers probe</h3>
+<div class="warn"><span class="tag">Orthogonalisation needs the whole matrix</span>
+<p>Newton–Schulz is a global operation on <code>B</code>. Under ZeRO-2/3 or FSDP the momentum matrix is sharded across ranks, so you must <strong>gather it, orthogonalise, then scatter</strong>. "Distributed Muon" implementations assign whole matrices to ranks, compute locally, and broadcast the result. Adam has no such problem — it is purely elementwise, so it shards perfectly. This is the main reason Muon is not a drop-in replacement in an existing sharded training stack.</p>
+</div>
+
+<h3>Lineage worth one sentence</h3>
+<p>Strip the preconditioner accumulation out of <strong>Shampoo</strong> and its update collapses algebraically to <code>UVᵀ</code> — the orthogonalised gradient. Add momentum <em>before</em> the orthogonalisation and you have Muon. So Muon is fairly described as "accumulation-free Shampoo, computed with Newton–Schulz instead of inverse fourth roots". Earlier orthogonalisation-based methods (Orthogonal-SGDM, stochastic spectral descent) either applied momentum <em>after</em> orthogonalising or had none at all — momentum-first is the empirical difference.</p>
+<p><strong>Memory:</strong> one buffer → <strong>4 bytes/param</strong>, half of AdamW's optimizer state (for the parameters it covers).</p>
+</div></section><section class="panel" id="pan-memory" role="tabpanel" aria-labelledby="t-memory" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 9</p><h2 id="memory">7. Memory: bytes per parameter</h2></div><div class="body">
+<div class="subnav"><a href="#mem-ledger">The ledger</a><a href="#mem-table">Bytes per param, by optimizer</a><a href="#mem-recipes">Real recipes, column by column</a><a href="#mem-shrink">Seven ways to shrink it</a><a href="#mem-8bit">8-bit optimizers</a></div>
+
+<h3 id="mem-ledger">The ledger</h3>
+<p>Standard bf16/fp16 mixed-precision training with fp32 master weights, for Ψ parameters:</p>
+<div class="ascii-card"><pre>   bf16 parameters        2 bytes/param   ┐
+   bf16 gradients         2 bytes/param   ├── 8 bytes, regardless of optimizer
+   fp32 master weights    4 bytes/param   ┘
+   optimizer state        K bytes/param   ←── this is the only part that varies</pre></div>
+<p>Pure fp32 training instead: 4 (params) + 4 (grads) + K. The mixed-precision number is the one quoted in the ZeRO paper and the one to have on the tip of your tongue.</p>
+
+<h3 id="mem-table">Bytes per parameter, by optimizer</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Optimizer</th><th>States kept</th><th>K (state bytes)</th><th>Total, mixed precision</th></tr></thead>
+<tbody>
+<tr><td>SGD, no momentum</td><td>—</td><td>0</td><td><strong>8</strong></td></tr>
+<tr><td>SGD + momentum</td><td><code>b</code></td><td>4</td><td><strong>12</strong></td></tr>
+<tr><td><strong>Adam / AdamW</strong></td><td><code>m</code>, <code>v</code></td><td>8</td><td><strong>16</strong> ← the number to remember</td></tr>
+<tr><td><strong>Muon</strong> (2-D weights)</td><td><code>B</code></td><td>4</td><td><strong>12</strong></td></tr>
+<tr><td>Lion</td><td><code>m</code></td><td>4</td><td>12</td></tr>
+<tr><td>8-bit AdamW</td><td><code>m</code>, <code>v</code> quantised</td><td>2</td><td>10</td></tr>
+<tr><td>Adafactor</td><td>row + col stats</td><td>≈0</td><td>≈8</td></tr>
+</tbody>
+</table></div>
+<div class="rulebox"><span class="tag">The one calculation</span>
+<p>AdamW ≈ <strong>16 bytes/param</strong>. A 7B model is <strong>112 GB</strong> before a single activation — it does not fit on an 80 GB card. Optimizer-related state (master + m + v = 12) is <strong>75%</strong> of that. This is precisely why ZeRO-1, which shards only those 12 bytes, is the cheapest large win in distributed training: <code>4Ψ + 12Ψ/N</code>.</p>
+</div>
+
+<h3 id="mem-recipes">Real recipes, column by column</h3>
+<p>The table above is the teaching version. Actual training stacks split the four columns differently, and the differences are worth knowing because two of them go the <em>wrong</em> way. All totals below are bytes per parameter; the 7B column is what that costs before a single activation.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Recipe</th><th>Working weights</th><th>Master</th><th>Grads</th><th>Opt. state</th><th>Total</th><th>7B</th></tr></thead>
+<tbody>
+<tr><td>FP32 everything</td><td>4</td><td>—</td><td>4</td><td>4 + 4</td><td><strong>16</strong></td><td>112 GB</td></tr>
+<tr><td>Textbook BF16 + AdamW</td><td>2</td><td>4</td><td>2</td><td>4 + 4</td><td><strong>16</strong></td><td>112 GB</td></tr>
+<tr><td>Megatron default (FP32 grad accum)</td><td>2</td><td>4</td><td>2 + 4</td><td>4 + 4</td><td><strong>20</strong></td><td>140 GB</td></tr>
+<tr><td>BF16 moments</td><td>2</td><td>4</td><td>2</td><td>2 + 2</td><td><strong>12</strong></td><td>84 GB</td></tr>
+<tr><td>8-bit AdamW (blockwise)</td><td>2</td><td>4</td><td>2</td><td>1 + 1</td><td><strong>10</strong></td><td>70 GB</td></tr>
+<tr><td>FP8-LM style</td><td>2</td><td>—</td><td>1</td><td>1 + 2</td><td><strong>≈6</strong></td><td>42 GB</td></tr>
+<tr><td>Muon, FP32 momentum</td><td>2</td><td>4</td><td>2</td><td>4</td><td><strong>12</strong></td><td>84 GB</td></tr>
+<tr><td>Muon, BF16 momentum</td><td>2</td><td>4</td><td>2</td><td>2</td><td><strong>10</strong></td><td>70 GB</td></tr>
+<tr><td>Muon, 8-bit momentum, BF16 master w/ SR</td><td>2</td><td>—</td><td>2</td><td>1</td><td><strong>≈5</strong></td><td>35 GB</td></tr>
+</tbody>
+</table></div>
+<div class="warn"><span class="tag">The row that surprises people: mixed precision can cost <em>more</em>, not less</span>
+<p>Megatron's default for bf16 training accumulates gradients in an <strong>FP32 buffer</strong> (<code>--accumulate-allreduce-grads-in-fp32</code>), because summing many bf16 gradients across micro-batches loses too much to rounding. So you pay for the bf16 gradient <em>and</em> the fp32 accumulator: <strong>20 bytes/param, not 16</strong>. If your memory maths says 16 and the job OOMs, this is usually why.</p>
+<p>Nuance: implementations that accumulate into the fp32 buffer inside a backward hook and immediately free the bf16 <code>.grad</code> sit closer to 18 in steady state, with 20 as the peak. Budget 20.</p>
+</div>
+<div class="note"><span class="tag">Note — two rows that need care attributing</span>
+<ul>
+<li><strong>BF16 moments.</strong> The recipe is real and lands at 12. But it is often labelled "DeepSeek-V3 style", and that is not quite what V3 did: V3 moved <em>only</em> the two AdamW moments to BF16 and explicitly kept <strong>master weights and gradients in FP32</strong>, gradients because they are the batch-size accumulation buffer. Their actual ledger is nearer 14 — and lower on the working-weights column, since the GEMMs run in FP8. The lesson generalises: <strong>moments are the safe thing to demote, accumulators are not.</strong></li>
+<li><strong>FP8-LM.</strong> Its headline is the optimizer bundle going 16 → 6, counted as master FP16 (2) + gradient FP8 (1) + first moment FP8 (1) + second moment FP16 (2). Note the asymmetry between the two moments and why it is forced: the first moment is a <em>direction</em>, so FP8 with tensor scaling preserves what matters, but the second moment is built from <code>g²</code> — squaring already-small gradients underflows in FP8, so it must stay 16-bit. Master weights also stay high-precision, since updates can be extremely small.</li>
+</ul>
+</div>
+<div class="rulebox"><span class="tag">What the table is really telling you</span>
+<p>Reading down the totals: <strong>16 → 20 → 12 → 10 → 6 → 5.</strong> Every reduction after the first comes from one of exactly three moves — <em>demote a state to fewer bits</em>, <em>drop the state entirely</em> (Muon carries one buffer where AdamW carries two), or <em>eliminate the FP32 master</em> using stochastic rounding so the bf16 weight is the only copy. The two cheapest rows use all three at once.</p>
+</div>
+
+<h3 id="mem-shrink">Seven ways to shrink it</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Technique</th><th>What it does</th><th>Cost</th><th>Lossless?</th></tr></thead>
+<tbody>
+<tr><td><strong>Shard</strong> (ZeRO-1/2/3, FSDP)</td><td>Each rank owns 1/N of the state → <code>K/N</code></td><td>Extra collectives</td><td><strong>Yes</strong> — try this first</td></tr>
+<tr><td><strong>8-bit states</strong> (bitsandbytes)</td><td>Quantise <code>m</code>, <code>v</code>: 8 → 2 bytes/param</td><td>Quantise/dequantise per step</td><td>Approximate, but empirically matches fp32</td></tr>
+<tr><td><strong>Factored second moment</strong> (Adafactor, SM3, Adam-mini)</td><td>Store row and column statistics of <code>g²</code>: <code>A+B</code> instead of <code>A·B</code></td><td>Some quality loss; Adafactor also drops momentum by default</td><td>Approximate</td></tr>
+<tr><td><strong>Offload</strong> (ZeRO-Offload)</td><td>Optimizer state lives in CPU RAM; step runs on CPU</td><td>PCIe bandwidth-bound; slower steps</td><td>Yes, but slow</td></tr>
+<tr><td><strong>Paged optimizers</strong> (QLoRA)</td><td>Unified memory; state pages out on transient spikes</td><td>Occasional stalls</td><td>Yes</td></tr>
+<tr><td><strong>Low-rank state</strong> (GaLore) / <strong>LoRA</strong></td><td>Project gradients into a rank-<em>r</em> subspace, keep state there</td><td>Restricts the update; LoRA changes what is trained at all</td><td>Approximate</td></tr>
+<tr><td><strong>Cheaper optimizer</strong> (Muon, Lion, SGD-M)</td><td>One state instead of two: 8 → 4</td><td>Different dynamics, retuning</td><td>Different algorithm</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="mem-8bit">8-bit optimizers, in one paragraph</h3>
+<p>Naively casting <code>m</code> and <code>v</code> to int8 destroys them: a single outlier in a tensor sets the scale and every other value quantises to zero. Two ideas fix it (Dettmers et al.):</p>
+<ul>
+<li><strong>Block-wise quantisation</strong> — split the tensor into blocks of ~2048 and give each block its own normalisation constant, so one outlier can only ruin its own block. It also makes quantisation embarrassingly parallel.</li>
+<li><strong>Dynamic exponent quantisation</strong> — a non-linear codebook that spends bits on relative rather than absolute precision, matching the wide dynamic range that optimizer states actually have.</li>
+</ul>
+<p>Result: 8 → 2 bytes/param of state, with pretraining and fine-tuning quality matching 32-bit. It is a one-line change (<code>bnb.optim.AdamW8bit</code>), which makes it the standard answer to "you are 20 GB over budget".</p>
+<div class="note"><span class="tag">Note — how these compose</span>
+<p>They stack, and the ordering of what to reach for is roughly: <strong>shard first</strong> (lossless), <strong>quantise second</strong> (cheap, near-lossless), <strong>offload third</strong> (costs throughput), <strong>change the algorithm last</strong> (costs retuning). Also remember activations are a separate budget entirely — activation checkpointing is orthogonal to everything on this page.</p>
+</div>
+</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 9</p><h2 id="remember">8. Things to remember</h2></div><div class="body">
+<div class="subnav"><a href="#r-updates">The four updates</a><a href="#r-norms">The norm table</a><a href="#r-bytes">Bytes</a><a href="#r-defaults">Defaults</a><a href="#r-traps">Traps</a><a href="#r-drill">60-second drill</a></div>
+
+<h3 id="r-updates">The four updates, on one card</h3>
+<div class="ascii-card"><pre>   SGD      b ← μb + g                              w ← w − η·b
+                                                    (μ=0.9 ⇒ 1/(1−μ) = 10× gain)
+
+   Adam     m ← β₁m + (1−β₁)g                       w ← w − η·m̂/(√v̂ + ε)
+            v ← β₂v + (1−β₂)g²                      m̂ = m/(1−β₁ᵗ),  v̂ = v/(1−β₂ᵗ)
+
+   AdamW    same m, v                               w ← w − η·m̂/(√v̂+ε) − η·λ·w
+                                                          decay outside the fraction ▲
+
+   Muon     B ← μB + G                              w ← w − η·s(A,B)·O − η·λ·w
+            O = NewtonSchulz₅(B) ≈ UVᵀ             s = √max(1,A/B)   (Jordan / torch default)
+                                                   s = 0.2√max(A,B)  (Moonshot, matches AdamW)</pre></div>
+<p>The paper algorithm box has no Nesterov, no weight decay and no <code>s</code>. Every shipped implementation has all three.</p>
+
+<h3 id="r-norms">The norm table (rebuild everything from here)</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Constrain step in…</th><th>Δ* ∝</th><th>=</th></tr></thead>
+<tbody>
+<tr><td>ℓ₂</td><td><code>−g</code></td><td>SGD</td></tr>
+<tr><td>ℓ∞</td><td><code>−sign(g)</code></td><td>Adam (smoothed)</td></tr>
+<tr><td>spectral</td><td><code>−UVᵀ</code></td><td>Muon</td></tr>
+</tbody>
+</table></div>
+<p>Method: bound <code>⟨g,Δ⟩</code> below by the <em>dual norm</em> of <code>g</code>, read off the Δ achieving equality.</p>
+
+<h3 id="r-bytes">Bytes per parameter (mixed precision = 8 + K)</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>SGD</th><th>SGD-M</th><th>Muon / Lion</th><th>AdamW</th><th>8-bit AdamW</th><th>Adafactor</th></tr></thead>
+<tbody><tr><td>8</td><td>12</td><td>12</td><td><strong>16</strong></td><td>10</td><td>≈8</td></tr></tbody>
+</table></div>
+<p>7B × 16 = 112 GB. Optimizer-side share = 12/16 = 75%. ZeRO-1 gives <code>4Ψ + 12Ψ/N</code>. Real recipes span <strong>20 down to ≈5</strong>: Megatron's FP32 grad accumulation costs 20; BF16 moments 12; 8-bit AdamW 10; Muon with BF16 momentum 10; FP8-LM ≈6.</p>
+
+<h3 id="r-defaults">Defaults worth quoting</h3>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>lr</th><th>momentum / betas</th><th>wd</th><th>other</th></tr></thead>
+<tbody>
+<tr><td>SGD (vision)</td><td>0.1</td><td>μ = 0.9</td><td>5e-4 (L2)</td><td>linear LR–batch scaling</td></tr>
+<tr><td>AdamW (LLM)</td><td>1e-4 … 3e-4</td><td>(0.9, 0.95)</td><td>0.1</td><td>ε=1e-8, warmup, cosine or WSD</td></tr>
+<tr><td>Muon</td><td>~0.02 for hidden weights (torch default 1e-3)</td><td>μ = 0.95, Nesterov on</td><td>0.1</td><td>ns_steps = 5, AdamW for embeddings + head + all 1-D, Q/K/V split</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="r-traps">Thirteen traps</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>#</th><th>Trap</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>Adam(weight_decay=…)</code> is <strong>L2</strong>, not decoupled. Use <code>AdamW</code>.</td></tr>
+<tr><td>2</td><td>PyTorch SGD momentum is a sum, not an EMA → effective step is <code>1/(1−μ)</code> = 10× larger.</td></tr>
+<tr><td>3</td><td>AdamW's effective decay is <code>η·λ</code> and follows the LR schedule. <code>lr·wd</code> is what transfers.</td></tr>
+<tr><td>4</td><td>Without bias correction the first steps are <code>(1−β₁)/√(1−β₂)</code> ≈ 3.2× <strong>too large</strong>.</td></tr>
+<tr><td>5</td><td>Warmup is not optional for Adam: <code>v̂</code> is a bad estimate for the first ~<code>1/(1−β₂)</code> steps.</td></tr>
+<tr><td>6</td><td><code>√v̂ + ε</code> ≠ <code>√(v̂ + ε)</code>. And an ε that is too large silently turns Adam into SGD.</td></tr>
+<tr><td>7</td><td>Never decay biases or LayerNorm/RMSNorm gains; often skip embeddings too.</td></tr>
+<tr><td>8</td><td>Adam is invariant to gradient scale; SGD is not. This is why Adam handles transformers' wildly differing per-layer gradient magnitudes.</td></tr>
+<tr><td>9</td><td>Muon covers 2-D <em>hidden</em> weights only. Embeddings + LM head + 1-D params → AdamW.</td></tr>
+<tr><td>10</td><td>Muon needs the full matrix to orthogonalise → gather/scatter under FSDP or ZeRO-2/3. Adam shards trivially because it is elementwise.</td></tr>
+<tr><td>11</td><td>β₂ sets an averaging window of <code>1/(1−β₂)</code> steps. LLM runs use 0.95 (~20 steps) so <code>v</code> recovers quickly after a loss spike.</td></tr>
+<tr><td>12</td><td>LR–batch scaling: roughly linear for SGD, roughly √ for Adam (the update is already normalised).</td></tr>
+<tr><td>13</td><td>Gradient clipping happens <em>before</em> the optimizer. With Adam its main job is stopping a spike from poisoning <code>v</code> for the next ~<code>1/(1−β₂)</code> steps.</td></tr>
+<tr><td>16</td><td>Mixed precision does not always save memory. Megatron's default FP32 gradient accumulation makes the real figure <strong>20 bytes/param, not 16</strong> — the usual cause of an OOM that your arithmetic said would fit.</td></tr>
+<tr><td>17</td><td>Moments are safe to demote to BF16 or 8-bit; <strong>accumulators are not</strong>. DeepSeek-V3 moved the AdamW moments to BF16 but kept master weights and gradients in FP32 precisely because the gradient is the batch-accumulation buffer.</td></tr>
+<tr><td>14</td><td>Muon's shape-scaling convention is <strong>not standard</strong>. <code>√max(1, A/B)</code> (Jordan, and PyTorch's default) and <code>0.2·√max(A,B)</code> (Moonshot) differ by more than a constant. An AdamW-tuned lr only transfers under the second.</td></tr>
+<tr><td>15</td><td>The Muon in a paper's algorithm box ≠ the Muon you run. Boxes typically omit Nesterov, decoupled weight decay, and shape scaling — the last two being exactly what made it scale.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="r-drill">The 60-second drill</h3>
+<div class="rulebox"><span class="tag">Say this out loud before the interview</span>
+<ol>
+<li>Linearise the loss, constrain the step in some norm, solve. The norm is the optimizer: ℓ₂ → SGD, ℓ∞ → sign/Adam, spectral → Muon.</li>
+<li>Momentum is an EMA over <code>1/(1−β)</code> steps. It reduces variance; PyTorch's SGD version also multiplies your step by <code>1/(1−μ)</code>.</li>
+<li>Adam = direction from <code>m</code>, magnitude normalised by <code>√v</code>. That ratio is scale-invariant, which is the whole reason it works on transformers. Bias-correct both because they start at zero.</li>
+<li>AdamW = move weight decay outside the <code>√v</code> fraction. Identical to Adam otherwise; identical to L2 under SGD.</li>
+<li>Muon = momentum, then flatten the matrix's singular values to 1 via a 5-step Newton–Schulz polynomial in bf16 — equivalently, snap the update to the nearest semi-orthogonal matrix. Then a shape-dependent scale factor whose convention you must check. One state, not two. Hidden 2-D weights only; FLOP overhead ≈ <code>T·m/B</code>, under 1%.</li>
+<li>16 bytes/param for AdamW mixed precision; 12 of them are shardable optimizer-side state. Shard, then quantise to 8-bit, then offload, then change algorithm.</li>
+</ol>
+</div>
+<p><em>Interview notes on optimizers. Muon details reflect torch.optim.Muon and the Moonlight / Kimi K2 line of work; the field moves fast, so re-check defaults against the docs you are actually running.</em></p>
+</div></section></main>
+
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
