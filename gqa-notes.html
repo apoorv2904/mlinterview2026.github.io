@@ -213,12 +213,21 @@ footer{
   details{page-break-inside:avoid}
   details[open] .ans,details .ans{display:block}
 }
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--ink-3);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--cool);border-bottom-color:var(--cool)}
+.crumbs a:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
 </style>
 </head>
 <body>
 <div class="shell">
 
 <header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a></nav>
   <p class="eyebrow">Revision notes &middot; inference &amp; serving economics</p>
   <h1>MHA, MQA, GQA from the bytes up</h1>
   <p class="standfirst">These three architectures differ in exactly one integer. Everything else &mdash; the quality gap, the throughput win, the reason 8 is the number everybody picked &mdash; falls out of what that integer does to the byte count during decode.</p>
@@ -717,7 +726,7 @@ I_A = 4sLD n_l B / (BLk) = s&middot;G</code></pre>
   <p>DeepSeek's MLA projects K and V into a shared low-rank latent (~512 dims) and caches only that, decompressing per head at compute time. It reports a <em>smaller</em> cache than GQA-8 <em>and</em> better quality than MHA.</p>
 
   <div class="mq"><span class="v">rank, not count</span><span class="k">the reason harder compression costs less quality</span></div>
-  <p><strong>Why compressing harder costs less.</strong> GQA constrains <strong>count</strong>: G query heads receive literally one index and one payload, so independent read channels fall from <code>H</code> to <code>n<sub>kv</sub></code>. MLA constrains <strong>rank</strong>: each head keeps its own up-projections <code>W<sub>UK</sub><sup>(i)</sup>, W<sub>UV</sub><sup>(i)</sup>, so at compute time there are still <code>H</code> distinct keys and values &mdash; heads specialise <em>within</em> a shared subspace rather than stopping. A rank constraint is far softer than a head-count constraint, and low-rank KV is a good inductive bias: these matrices are empirically near-low-rank already, so the bottleneck removes mostly noise. Beating MHA is not paradoxical &mdash; the up/down projections add parameters, so it is not iso-param, and the bottleneck regularises.</p>
+  <p><strong>Why compressing harder costs less.</strong> GQA constrains <strong>count</strong>: G query heads receive literally one index and one payload, so independent read channels fall from <code>H</code> to <code>n<sub>kv</sub></code>. MLA constrains <strong>rank</strong>: each head keeps its own up-projections <code>W<sub>UK</sub><sup>(i)</sup>, W<sub>UV</sub><sup>(i)</sup></code>, so at compute time there are still <code>H</code> distinct keys and values &mdash; heads specialise <em>within</em> a shared subspace rather than stopping. A rank constraint is far softer than a head-count constraint, and low-rank KV is a good inductive bias: these matrices are empirically near-low-rank already, so the bottleneck removes mostly noise. Beating MHA is not paradoxical &mdash; the up/down projections add parameters, so it is not iso-param, and the bottleneck regularises.</p>
 
   <p><strong>Why MLA's extra decode FLOPs are free.</strong> Decode sits at <code>I &asymp; 4&ndash;30</code> against a ridge of 300 &mdash; tensor cores idle 90&ndash;99% of the time. <strong>Trading bytes for FLOPs is the correct direction of trade in a memory-bound regime</strong>, and the intensity gap is the number that says so. MLA spends idle FLOPs to buy bytes, moving you <em>toward</em> the ridge. (<code>W<sub>UK</sub></code> also absorbs into <code>W<sub>Q</sub></code> at inference, so per-head K is never materialised.)</p>
 

@@ -79,13 +79,13 @@ a:hover{color:var(--in)}
 /* tabs */
 .tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
-.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
-  overflow-x:auto;scrollbar-width:none}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:4px 28px 0;display:flex;
+  flex-wrap:wrap;column-gap:1px;row-gap:0}
 .tabbar::-webkit-scrollbar{display:none}
 .tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
-  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  font-size:12.8px;font-weight:500;color:var(--muted);padding:10px 10px 8px;white-space:nowrap;
   border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
-  display:flex;align-items:baseline;gap:7px}
+  display:flex;align-items:baseline;gap:6px}
 .tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
 .tab:hover{color:var(--ink)}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
@@ -190,7 +190,12 @@ td code{font-size:.85em}
 
 @media (max-width:820px){
   .masthead{padding:36px 20px 0}
-  .tabbar{padding:0 20px}
+  .tabbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:0 16px}
+  .tabbar::-webkit-scrollbar{display:block;height:3px}
+  .tabbar::-webkit-scrollbar-thumb{background:var(--rule);border-radius:2px}
+  .tabbar-outer{position:sticky;overflow:hidden}
+  .tabbar-outer::after{content:"";position:absolute;right:0;top:0;bottom:0;width:26px;
+    pointer-events:none;background:linear-gradient(to left,rgba(231,234,238,.94),rgba(231,234,238,0))}
   main{padding:0 20px 90px}
   .ring-cell{height:40px;font-size:9.5px}
   .pc{height:26px;font-size:9.5px}
@@ -216,11 +221,20 @@ td code{font-size:.85em}
   .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
   .panel{display:block !important}
 }
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--muted);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--in);border-bottom-color:var(--in)}
+.crumbs a:focus-visible{outline:2px solid var(--in);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
 </style>
 </head>
 <body>
 
 <header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a></nav>
   <p class="eyebrow"><span>Interview notes</span><span>optimizers &middot; first principles</span></p>
   <h1>SGD, Adam, AdamW, Muon</h1>
   <div class="ring-wrap">
@@ -240,7 +254,7 @@ td code{font-size:.85em}
   <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-contents" aria-controls="pan-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-first-principles" aria-controls="pan-first-principles" aria-selected="false" tabindex="-1"><span class="num">02</span>1 · First principles</button><button class="tab" role="tab" id="t-derivation" aria-controls="pan-derivation" aria-selected="false" tabindex="-1"><span class="num">03</span>2 · The derivation</button><button class="tab" role="tab" id="t-sgd" aria-controls="pan-sgd" aria-selected="false" tabindex="-1"><span class="num">04</span>3 · SGD</button><button class="tab" role="tab" id="t-adam" aria-controls="pan-adam" aria-selected="false" tabindex="-1"><span class="num">05</span>4 · Adam</button><button class="tab" role="tab" id="t-adamw" aria-controls="pan-adamw" aria-selected="false" tabindex="-1"><span class="num">06</span>5 · AdamW</button><button class="tab" role="tab" id="t-muon" aria-controls="pan-muon" aria-selected="false" tabindex="-1"><span class="num">07</span>6 · Muon</button><button class="tab" role="tab" id="t-memory" aria-controls="pan-memory" aria-selected="false" tabindex="-1"><span class="num">08</span>7 · Memory</button><button class="tab" role="tab" id="t-remember" aria-controls="pan-remember" aria-selected="false" tabindex="-1"><span class="num">09</span>8 · Remember</button></div>
 </div>
 
-<main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 9</p><h2 id="contents">Table of contents</h2></div><div class="body">
+<main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="contents">Table of contents</h2></div><div class="body">
 <ol>
 <li><a href="#first-principles">First principles — one skeleton, four optimizers</a></li>
 <li><a href="#derivation">The derivation, in full</a></li>
@@ -255,7 +269,7 @@ td code{font-size:.85em}
 <p>The whole point of tab 2 is that you should <strong>not</strong> memorise four unrelated update rules. There is one derivation. You pick a norm, and the norm hands you the optimizer. Everything after that is bookkeeping — momentum, bias correction, where weight decay goes, how many bytes of state.</p>
 <p>If you have ten minutes before an interview: read tab 2, then tab 9. If you have an hour: read tab 3 as well and re-derive the four update rules on paper with the tabs closed.</p>
 </div>
-</div></section><section class="panel" id="pan-first-principles" role="tabpanel" aria-labelledby="t-first-principles" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 9</p><h2 id="first-principles">1. First principles — one skeleton, four optimizers</h2></div><div class="body">
+</div></section><section class="panel" id="pan-first-principles" role="tabpanel" aria-labelledby="t-first-principles" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 8</p><h2 id="first-principles">1. First principles — one skeleton, four optimizers</h2></div><div class="body">
 <div class="subnav"><a href="#skeleton">The skeleton</a><a href="#the-derivation">The one derivation</a><a href="#norm-table">The norm table</a><a href="#three-knobs">The three knobs</a></div>
 
 <h3 id="skeleton">The skeleton</h3>
@@ -334,7 +348,7 @@ td code{font-size:.85em}
 <div class="rulebox"><span class="tag">The compression</span>
 <p><strong>direction (norm) × smoothing (momentum) × decay (coupled or not).</strong> Four optimizers, three knobs. Everything else in this document is a consequence, a default value, or a byte count.</p>
 </div>
-</div></section><section class="panel" id="pan-derivation" role="tabpanel" aria-labelledby="t-derivation" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 9</p><h2 id="derivation">2. The derivation, in full</h2></div><div class="body">
+</div></section><section class="panel" id="pan-derivation" role="tabpanel" aria-labelledby="t-derivation" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 8</p><h2 id="derivation">2. The derivation, in full</h2></div><div class="body">
 <div class="subnav"><a href="#d-setup">Why you need a leash</a><a href="#d-theorem">The one theorem</a><a href="#d-l2">Case ℓ₂ → SGD</a><a href="#d-size">Where the step <em>size</em> comes from</a><a href="#d-linf">Case ℓ∞ → sign / Adam</a><a href="#d-spec">Case spectral → Muon</a><a href="#d-extreme">The geometric picture</a><a href="#d-pertensor">Why it acts per tensor</a><a href="#d-momentum">Where momentum plugs in</a><a href="#d-whichnorm">Which norm for which tensor</a><a href="#d-whiteboard">Whiteboard checklist</a></div>
 
 <h3 id="d-setup">Why you need a leash at all</h3>
@@ -487,7 +501,7 @@ td code{font-size:.85em}
 <li><code>r</code> and <code>η</code> are not the same object. <code>r</code> is a distance in weight space; <code>η</code> is whatever your implementation multiplies the normalised direction by.</li>
 </ul>
 </div>
-</div></section><section class="panel" id="pan-sgd" role="tabpanel" aria-labelledby="t-sgd" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 9</p><h2 id="sgd">3. SGD (and momentum)</h2></div><div class="body">
+</div></section><section class="panel" id="pan-sgd" role="tabpanel" aria-labelledby="t-sgd" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 8</p><h2 id="sgd">3. SGD (and momentum)</h2></div><div class="body">
 <div class="subnav"><a href="#sgd-update">The update</a><a href="#sgd-momentum">Momentum, and the 1/(1−μ) trap</a><a href="#sgd-nesterov">Nesterov</a><a href="#sgd-props">Properties</a></div>
 
 <h3 id="sgd-update">The update</h3>
@@ -523,7 +537,7 @@ td code{font-size:.85em}
 </table></div>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>opt = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9,
                       nesterov=True, weight_decay=5e-4)</pre></div>
-</div></section><section class="panel" id="pan-adam" role="tabpanel" aria-labelledby="t-adam" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 9</p><h2 id="adam">4. Adam</h2></div><div class="body">
+</div></section><section class="panel" id="pan-adam" role="tabpanel" aria-labelledby="t-adam" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 8</p><h2 id="adam">4. Adam</h2></div><div class="body">
 <div class="subnav"><a href="#adam-why">What it fixes</a><a href="#adam-update">The update</a><a href="#adam-bias">Bias correction, derived</a><a href="#adam-invariance">Why divide by √v</a><a href="#adam-sign">Adam is smoothed sign descent</a><a href="#adam-hypers">Hyperparameters</a></div>
 
 <h3 id="adam-why">What it fixes</h3>
@@ -578,7 +592,7 @@ td code{font-size:.85em}
 </table></div>
 <p><strong>Lineage in one line:</strong> Adagrad accumulates <em>all</em> past <code>g²</code> (so the step decays to zero) → RMSProp replaces the sum with an EMA → Adam adds momentum and bias correction.</p>
 <p><strong>Cost:</strong> 2 states × 4 bytes = <strong>8 bytes/param</strong>. FLOPs are trivial; the step is memory-bandwidth bound, which is why <code>foreach</code> / <code>fused</code> implementations are meaningfully faster.</p>
-</div></section><section class="panel" id="pan-adamw" role="tabpanel" aria-labelledby="t-adamw" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 9</p><h2 id="adamw">5. AdamW</h2></div><div class="body">
+</div></section><section class="panel" id="pan-adamw" role="tabpanel" aria-labelledby="t-adamw" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 8</p><h2 id="adamw">5. AdamW</h2></div><div class="body">
 <div class="subnav"><a href="#adamw-bug">The bug it fixes</a><a href="#adamw-update">The update</a><a href="#adamw-lr">Decay is coupled to the LR</a><a href="#adamw-practice">In practice</a></div>
 
 <h3 id="adamw-bug">The bug it fixes</h3>
@@ -630,7 +644,7 @@ opt = torch.optim.AdamW(
      {"params": no_decay, "weight_decay": 0.0}],
     lr=3e-4, betas=(0.9, 0.95), eps=1e-8, fused=True,
 )</pre></div>
-</div></section><section class="panel" id="pan-muon" role="tabpanel" aria-labelledby="t-muon" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 9</p><h2 id="muon">6. Muon</h2></div><div class="body">
+</div></section><section class="panel" id="pan-muon" role="tabpanel" aria-labelledby="t-muon" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 8</p><h2 id="muon">6. Muon</h2></div><div class="body">
 <div class="subnav"><a href="#muon-idea">The idea</a><a href="#muon-core">The core algorithm</a><a href="#muon-versions">Three versions, reconciled</a><a href="#muon-ns">Newton–Schulz</a><a href="#muon-cost">What it costs</a><a href="#muon-rms">The two scaling conventions</a><a href="#muon-scope">Scope</a><a href="#muon-scale">At scale</a><a href="#muon-sys">Systems friction</a></div>
 
 <h3 id="muon-idea">The idea</h3>
@@ -853,7 +867,7 @@ opt_muon.zero_grad(); opt_adamw.zero_grad()</pre></div>
 <h3>Lineage worth one sentence</h3>
 <p>Strip the preconditioner accumulation out of <strong>Shampoo</strong> and its update collapses algebraically to <code>UVᵀ</code> — the orthogonalised gradient. Add momentum <em>before</em> the orthogonalisation and you have Muon. So Muon is fairly described as "accumulation-free Shampoo, computed with Newton–Schulz instead of inverse fourth roots". Earlier orthogonalisation-based methods (Orthogonal-SGDM, stochastic spectral descent) either applied momentum <em>after</em> orthogonalising or had none at all — momentum-first is the empirical difference.</p>
 <p><strong>Memory:</strong> one buffer → <strong>4 bytes/param</strong>, half of AdamW's optimizer state (for the parameters it covers).</p>
-</div></section><section class="panel" id="pan-memory" role="tabpanel" aria-labelledby="t-memory" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 9</p><h2 id="memory">7. Memory: bytes per parameter</h2></div><div class="body">
+</div></section><section class="panel" id="pan-memory" role="tabpanel" aria-labelledby="t-memory" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 8</p><h2 id="memory">7. Memory: bytes per parameter</h2></div><div class="body">
 <div class="subnav"><a href="#mem-ledger">The ledger</a><a href="#mem-table">Bytes per param, by optimizer</a><a href="#mem-recipes">Real recipes, column by column</a><a href="#mem-shrink">Seven ways to shrink it</a><a href="#mem-8bit">8-bit optimizers</a></div>
 
 <h3 id="mem-ledger">The ledger</h3>
@@ -935,7 +949,7 @@ opt_muon.zero_grad(); opt_adamw.zero_grad()</pre></div>
 <div class="note"><span class="tag">Note — how these compose</span>
 <p>They stack, and the ordering of what to reach for is roughly: <strong>shard first</strong> (lossless), <strong>quantise second</strong> (cheap, near-lossless), <strong>offload third</strong> (costs throughput), <strong>change the algorithm last</strong> (costs retuning). Also remember activations are a separate budget entirely — activation checkpointing is orthogonal to everything on this page.</p>
 </div>
-</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 9</p><h2 id="remember">8. Things to remember</h2></div><div class="body">
+</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 8</p><h2 id="remember">8. Things to remember</h2></div><div class="body">
 <div class="subnav"><a href="#r-updates">The four updates</a><a href="#r-norms">The norm table</a><a href="#r-bytes">Bytes</a><a href="#r-defaults">Defaults</a><a href="#r-traps">Traps</a><a href="#r-drill">60-second drill</a></div>
 
 <h3 id="r-updates">The four updates, on one card</h3>

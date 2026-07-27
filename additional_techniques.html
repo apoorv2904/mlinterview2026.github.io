@@ -79,13 +79,13 @@ a:hover{color:var(--in)}
 /* tabs */
 .tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
-.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
-  overflow-x:auto;scrollbar-width:none}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:4px 28px 0;display:flex;
+  flex-wrap:wrap;column-gap:1px;row-gap:0}
 .tabbar::-webkit-scrollbar{display:none}
 .tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
-  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  font-size:12.8px;font-weight:500;color:var(--muted);padding:10px 10px 8px;white-space:nowrap;
   border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
-  display:flex;align-items:baseline;gap:7px}
+  display:flex;align-items:baseline;gap:6px}
 .tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
 .tab:hover{color:var(--ink)}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
@@ -190,7 +190,12 @@ td code{font-size:.85em}
 
 @media (max-width:820px){
   .masthead{padding:36px 20px 0}
-  .tabbar{padding:0 20px}
+  .tabbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:0 16px}
+  .tabbar::-webkit-scrollbar{display:block;height:3px}
+  .tabbar::-webkit-scrollbar-thumb{background:var(--rule);border-radius:2px}
+  .tabbar-outer{position:sticky;overflow:hidden}
+  .tabbar-outer::after{content:"";position:absolute;right:0;top:0;bottom:0;width:26px;
+    pointer-events:none;background:linear-gradient(to left,rgba(231,234,238,.94),rgba(231,234,238,0))}
   main{padding:0 20px 90px}
   .ring-cell{height:40px;font-size:9.5px}
   .pc{height:26px;font-size:9.5px}
@@ -216,11 +221,25 @@ td code{font-size:.85em}
   .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
   .panel{display:block !important}
 }
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--muted);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--in);border-bottom-color:var(--in)}
+.crumbs a:focus-visible{outline:2px solid var(--in);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
+
+.toc-appendix{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin:26px 0 8px}
+.toc-appendix-list{list-style:none;padding:0;margin:0}
+.toc-appendix-list li{margin:0 0 6px}
 </style>
 </head>
 <body>
 
 <header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a><span class="sep" aria-hidden="true">&middot;</span><a href="parallelisms.html">Large-Scale Model Training</a></nav>
   <p class="eyebrow"><span>Chapter 10</span><span>Large-Scale Model Training</span></p>
   <h1>Making Each GPU-Second Count</h1>
   <div class="ring-wrap">
@@ -244,7 +263,7 @@ td code{font-size:.85em}
   <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-1-kernel-fusion" aria-controls="pan-1-kernel-fusion" aria-selected="false" tabindex="-1"><span class="num">02</span>1 · Kernel fusion</button><button class="tab" role="tab" id="t-2-progressive-layer-dropping-pld" aria-controls="pan-2-progressive-layer-dropping-pld" aria-selected="false" tabindex="-1"><span class="num">03</span>2 · Layer dropping</button><button class="tab" role="tab" id="t-3-1-bit-compressive-optimizers" aria-controls="pan-3-1-bit-compressive-optimizers" aria-selected="false" tabindex="-1"><span class="num">04</span>3 · 1-bit optimizers</button><button class="tab" role="tab" id="t-4-curriculum-learning" aria-controls="pan-4-curriculum-learning" aria-selected="false" tabindex="-1"><span class="num">05</span>4 · Curriculum</button><button class="tab" role="tab" id="t-5-what-actually-matters-now" aria-controls="pan-5-what-actually-matters-now" aria-selected="false" tabindex="-1"><span class="num">06</span>5 · What matters now</button><button class="tab" role="tab" id="t-6-an-ordered-tuning-checklist" aria-controls="pan-6-an-ordered-tuning-checklist" aria-selected="false" tabindex="-1"><span class="num">07</span>6 · Tuning checklist</button><button class="tab" role="tab" id="t-7-quick-reference" aria-controls="pan-7-quick-reference" aria-selected="false" tabindex="-1"><span class="num">08</span>7 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">09</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">10</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">11</span>Exercises</button></div>
 </div>
 
-<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 11</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
 <li><a href="#1-kernel-fusion">Kernel Fusion</a></li>
 <li><a href="#2-progressive-layer-dropping-pld">Progressive Layer Dropping</a></li>
 <li><a href="#3-1-bit-compressive-optimizers">1-Bit Compressive Optimizers</a></li>
@@ -252,7 +271,13 @@ td code{font-size:.85em}
 <li><a href="#5-what-actually-matters-now">What actually matters now</a></li>
 <li><a href="#6-an-ordered-tuning-checklist">An ordered tuning checklist</a></li>
 <li><a href="#7-quick-reference">Quick reference</a></li>
-</ol></div></section><section class="panel" id="pan-1-kernel-fusion" role="tabpanel" aria-labelledby="t-1-kernel-fusion" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 11</p><h2 id="1-kernel-fusion">1. Kernel Fusion</h2></div><div class="body"><div class="subnav"><a href="#what-is-a-kernel">What is a kernel?</a><a href="#what-is-fusion">What is fusion?</a><a href="#but">But…</a></div><p>Kernel fusion is a method of improving computation speed using custom code implemented in CUDA.</p>
+</ol>
+<p class="toc-appendix">Appendix</p>
+<ul class="toc-appendix-list">
+<li><a href="#version-check">Version check</a></li>
+<li><a href="#further-reading">Further reading</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul></div></section><section class="panel" id="pan-1-kernel-fusion" role="tabpanel" aria-labelledby="t-1-kernel-fusion" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 7</p><h2 id="1-kernel-fusion">1. Kernel Fusion</h2></div><div class="body"><div class="subnav"><a href="#what-is-a-kernel">What is a kernel?</a><a href="#what-is-fusion">What is fusion?</a><a href="#but">But…</a></div><p>Kernel fusion is a method of improving computation speed using custom code implemented in CUDA.</p>
 <h3 id="what-is-a-kernel">What is a kernel?</h3>
 <p>Think of a kernel as code that runs directly on the GPU device. CUDA has the following syntax:</p>
 <div class="ascii-card"><pre>__device__ void func(){...}
@@ -378,7 +403,7 @@ loss = torch.nn.functional.linear_cross_entropy(
 loss_fn = torch.nn.LinearCrossEntropyLoss(hidden_size, vocab_size)
 loss    = loss_fn(hidden_states, targets)</pre></div>
 <p>Reported at <strong>up to 4× lower peak memory</strong> for large-vocabulary LM training. This is the same insight as §1 — don't write an intermediate to HBM if you can consume it in place — applied to the one tensor where it pays most.</p>
-<p><strong>Also fused, and easy to forget:</strong> optimizers. <code>torch.optim.AdamW(..., fused=True)</code> collapses the entire per-parameter update into one kernel instead of dozens of small elementwise launches. Free, and worth a few percent. As of 2.12, <code>Adagrad</code> joined <code>Adam</code>, <code>AdamW</code>, and <code>SGD</code> in having a fused implementation.</p></div></div></section><section class="panel" id="pan-2-progressive-layer-dropping-pld" role="tabpanel" aria-labelledby="t-2-progressive-layer-dropping-pld" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 11</p><h2 id="2-progressive-layer-dropping-pld">2. Progressive Layer Dropping (PLD)</h2></div><div class="body"><p>Progressive Layer Dropping is a method that randomly skips layers to improve training speed and performance. The paper's authors say they obtained the following two insights from BERT's training process.</p>
+<p><strong>Also fused, and easy to forget:</strong> optimizers. <code>torch.optim.AdamW(..., fused=True)</code> collapses the entire per-parameter update into one kernel instead of dozens of small elementwise launches. Free, and worth a few percent. As of 2.12, <code>Adagrad</code> joined <code>Adam</code>, <code>AdamW</code>, and <code>SGD</code> in having a fused implementation.</p></div></div></section><section class="panel" id="pan-2-progressive-layer-dropping-pld" role="tabpanel" aria-labelledby="t-2-progressive-layer-dropping-pld" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 7</p><h2 id="2-progressive-layer-dropping-pld">2. Progressive Layer Dropping (PLD)</h2></div><div class="body"><p>Progressive Layer Dropping is a method that randomly skips layers to improve training speed and performance. The paper's authors say they obtained the following two insights from BERT's training process.</p>
 <ul>
 <li><strong>Early in training</strong>, the difference in L2-norm and cosine similarity between a layer's input and output is large, but <strong>it gets smaller toward the end of training.</strong></li>
 <li>That is, early in training many things are newly learned and changed, but late in training it appears to make only fine corrections.</li>
@@ -407,7 +432,7 @@ loss    = loss_fn(hidden_states, targets)</pre></div>
 <li><strong>Compute stopped being the binding constraint</strong> in the way it was for BERT-era models. For LLM pre-training the constraints are memory, bandwidth, and <em>data</em>, and PLD doesn't help with any of them.</li>
 <li><strong>Scaling-law thinking took over.</strong> If you have a compute budget, the literature says spend it on more tokens through the full model rather than fewer FLOPs per token. Skipping layers means training a <em>slightly different, weaker</em> model.</li>
 </ol>
-<p>The closely related idea that <em>did</em> survive is <strong>layer dropout / stochastic depth as a regularizer</strong> for fine-tuning smaller models, where it's about generalization rather than speed. And the underlying observation — later layers change their input less — turned out to be robust and now motivates entirely different work: layer pruning, early-exit inference, and speculative decoding with a truncated draft model.</p></div></div></section><section class="panel" id="pan-3-1-bit-compressive-optimizers" role="tabpanel" aria-labelledby="t-3-1-bit-compressive-optimizers" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 11</p><h2 id="3-1-bit-compressive-optimizers">3. 1-Bit Compressive Optimizers</h2></div><div class="body"><ul>
+<p>The closely related idea that <em>did</em> survive is <strong>layer dropout / stochastic depth as a regularizer</strong> for fine-tuning smaller models, where it's about generalization rather than speed. And the underlying observation — later layers change their input less — turned out to be robust and now motivates entirely different work: layer pruning, early-exit inference, and speculative decoding with a truncated draft model.</p></div></div></section><section class="panel" id="pan-3-1-bit-compressive-optimizers" role="tabpanel" aria-labelledby="t-3-1-bit-compressive-optimizers" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 7</p><h2 id="3-1-bit-compressive-optimizers">3. 1-Bit Compressive Optimizers</h2></div><div class="body"><ul>
 <li>1-bit Adam</li>
 <li>1-bit LAMB</li>
 </ul>
@@ -467,7 +492,7 @@ loss    = loss_fn(hidden_states, targets)</pre></div>
 </table></div>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import bitsandbytes as bnb
 optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
-<p>Block-wise quantization of the optimizer states to 8 bits, with reported quality parity. That is the technique from this family that actually became common.</p></div></div></section><section class="panel" id="pan-4-curriculum-learning" role="tabpanel" aria-labelledby="t-4-curriculum-learning" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 11</p><h2 id="4-curriculum-learning">4. Curriculum Learning</h2></div><div class="body"><p>Curriculum learning mirrors human learning in neural-network training. Humans learn easy things first when young and gradually learn harder things as they get older. But modern neural-network training has no such tendency. So we train the network similarly — showing easy samples early and hard samples later.</p>
+<p>Block-wise quantization of the optimizer states to 8 bits, with reported quality parity. That is the technique from this family that actually became common.</p></div></div></section><section class="panel" id="pan-4-curriculum-learning" role="tabpanel" aria-labelledby="t-4-curriculum-learning" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 7</p><h2 id="4-curriculum-learning">4. Curriculum Learning</h2></div><div class="body"><p>Curriculum learning mirrors human learning in neural-network training. Humans learn easy things first when young and gradually learn harder things as they get older. But modern neural-network training has no such tendency. So we train the network similarly — showing easy samples early and hard samples later.</p>
 <p>Then how do we distinguish hard samples from easy ones? The paper's authors applied this to GPT model pre-training, and simply considered long samples to be hard and short samples to be easy. In Megatron-LM all samples are trained concatenated together, so early in training they deliberately chunk the input data and feed it in short form, and as training progresses they feed progressively longer samples.</p>
 <div class="ascii-card"><pre>   sequence length over training
 
@@ -519,7 +544,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
 </tbody>
 </table></div>
 <p>The through-line is that <strong>data ordering and composition are first-class training decisions</strong>, not preprocessing details. In 2021 that was a paper; now it's a standard part of how large models get trained.</p>
-<p>DeepSpeed's implementation still exists (<code>data_efficiency</code> config); most large projects implement their own scheduling in the data loader.</p></div></div></section><section class="panel" id="pan-5-what-actually-matters-now" role="tabpanel" aria-labelledby="t-5-what-actually-matters-now" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 11</p><h2 id="5-what-actually-matters-now">5. What actually matters now</h2></div><div class="body"><div class="subnav"><a href="#tier-1-do-these-on-every-job">Tier 1 — do these on every job</a><a href="#tier-2-architecture-choices-that-are-now-standard">Tier 2 — architecture choices that are now standard</a><a href="#tier-3-capacity-and-memory">Tier 3 — capacity and memory</a><a href="#tier-4-training-dynamics">Tier 4 — training dynamics</a></div><p>The four techniques above were a reasonable shortlist in their day. Here is what a comparable list looks like now, roughly ordered by how much difference each makes on a typical training job.</p>
+<p>DeepSpeed's implementation still exists (<code>data_efficiency</code> config); most large projects implement their own scheduling in the data loader.</p></div></div></section><section class="panel" id="pan-5-what-actually-matters-now" role="tabpanel" aria-labelledby="t-5-what-actually-matters-now" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 7</p><h2 id="5-what-actually-matters-now">5. What actually matters now</h2></div><div class="body"><div class="subnav"><a href="#tier-1-do-these-on-every-job">Tier 1 — do these on every job</a><a href="#tier-2-architecture-choices-that-are-now-standard">Tier 2 — architecture choices that are now standard</a><a href="#tier-3-capacity-and-memory">Tier 3 — capacity and memory</a><a href="#tier-4-training-dynamics">Tier 4 — training dynamics</a></div><p>The four techniques above were a reasonable shortlist in their day. Here is what a comparable list looks like now, roughly ordered by how much difference each makes on a typical training job.</p>
 <h3 id="tier-1-do-these-on-every-job">Tier 1 — do these on every job</h3>
 <div class="tablewrap"><table>
 <thead>
@@ -693,7 +718,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
    4. architecture details
    5. exotic optimizers and compression  ← where this chapter&#x27;s §2 and §3 sit</pre></div>
 <p>The 2021 chapter's four techniques are all in tier 5. That's not a criticism of the chapter — it's what the frontier looked like before FlashAttention and <code>torch.compile</code> existed.</p>
-</div></div></section><section class="panel" id="pan-6-an-ordered-tuning-checklist" role="tabpanel" aria-labelledby="t-6-an-ordered-tuning-checklist" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 11</p><h2 id="6-an-ordered-tuning-checklist">6. An ordered tuning checklist</h2></div><div class="body"><p><strong>When the job is too slow</strong>, in order:</p>
+</div></div></section><section class="panel" id="pan-6-an-ordered-tuning-checklist" role="tabpanel" aria-labelledby="t-6-an-ordered-tuning-checklist" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 7</p><h2 id="6-an-ordered-tuning-checklist">6. An ordered tuning checklist</h2></div><div class="body"><p><strong>When the job is too slow</strong>, in order:</p>
 <ol>
 <li><strong>Profile first.</strong> <code>torch.profiler</code> with a trace. Are you compute-bound, memory-bound, communication-bound, or data-starved? Guessing wastes days.</li>
 <li><strong>Check GPU utilization.</strong> Below ~90% and steady → data pipeline. Sawtooth → synchronization stalls (look for <code>.item()</code> in the loop).</li>
@@ -723,7 +748,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
 <li>Sequence-length warmup (§4).</li>
 <li>Inspect the data for pathological samples.</li>
 <li>Check init, and consider z-loss / QK-norm.</li>
-</ol></div></section><section class="panel" id="pan-7-quick-reference" role="tabpanel" aria-labelledby="t-7-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 11</p><h2 id="7-quick-reference">7. Quick reference</h2></div><div class="body"><div class="ascii-card"><pre>   THE FUSION PRINCIPLE
+</ol></div></section><section class="panel" id="pan-7-quick-reference" role="tabpanel" aria-labelledby="t-7-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 7</p><h2 id="7-quick-reference">7. Quick reference</h2></div><div class="body"><div class="ascii-card"><pre>   THE FUSION PRINCIPLE
    ────────────────────
    Most transformer ops are MEMORY-bound, not compute-bound.
    A100: ~312 TFLOPS bf16 vs ~2 TB/s HBM  →  ~150 FLOPs per byte to break even.
@@ -779,7 +804,7 @@ with torch.profiler.profile(
    1-bit Adam             ██            still works, rarely needed;
                                         8-bit optimizers won instead
    Curriculum learning    ████████      grew; generalized into data
-                                        curricula and length warmup</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 11</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+                                        curricula and length warmup</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -878,7 +903,7 @@ with torch.profiler.profile(
 </tr>
 </tbody>
 </table></div>
-<p><strong>Specific to this chapter:</strong> the arithmetic-intensity argument in §1 is hardware physics and is the part that will outlast everything else here — recompute the break-even for your own GPU and it still decides what fusion buys you. The tier lists in §5 are a July 2026 snapshot. Additions since drafting: FlashAttention-4 as a FlexAttention backend (2.11), <code>nn.LinearCrossEntropyLoss</code> (2.13), the CuTeDSL Inductor backend (2.13), fused Adagrad (2.12), FP4 on Blackwell via Transformer Engine, and dynamic context parallelism in Megatron Core.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 11</p><h2 id="further-reading">Further reading</h2></div><div class="body"><ul>
+<p><strong>Specific to this chapter:</strong> the arithmetic-intensity argument in §1 is hardware physics and is the part that will outlast everything else here — recompute the break-even for your own GPU and it still decides what fusion buys you. The tier lists in §5 are a July 2026 snapshot. Additions since drafting: FlashAttention-4 as a FlexAttention backend (2.11), <code>nn.LinearCrossEntropyLoss</code> (2.13), the CuTeDSL Inductor backend (2.13), fused Adagrad (2.12), FP4 on Blackwell via Transformer Engine, and dynamic context parallelism in Megatron Core.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="further-reading">Further reading</h2></div><div class="body"><ul>
 <li><strong>FlashAttention</strong> — Dao et al., 2022; <strong>FlashAttention-2/3/4</strong> — the follow-ups. FA-4 is available as a FlexAttention backend on Hopper and Blackwell from PyTorch 2.11. Start here if you read one thing from this chapter.</li>
 <li><code>torch.nn.LinearCrossEntropyLoss</code> and <code>torch.nn.attention.varlen_attn</code> — two recent additions that apply §1's principle to the two largest tensors in a language model.</li>
 <li><strong><code>torch.compile</code></strong> documentation and the PyTorch 2 paper — how the automatic fusion works.</li>
@@ -891,7 +916,7 @@ with torch.profiler.profile(
 <li><strong>LoRA</strong> — Hu et al., 2021; <strong>QLoRA</strong> — Dettmers et al., 2023.</li>
 <li><strong>Tensor Programs V (muP)</strong> — Yang et al., 2021, for hyperparameter transfer.</li>
 <li>Horace He's <em>"Making Deep Learning Go Brrrr From First Principles"</em> — the clearest explanation anywhere of the compute/memory/overhead framing this chapter's §1 is really about.</li>
-</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 11</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
 <li><strong>Measure fusion.</strong> Time <code>y = torch.matmul(x, w) * b</code> then <code>torch.gelu(y)</code> as separate ops, then wrap the whole thing in <code>torch.compile</code>. Compare. Then compute the theoretical HBM traffic for each and see whether the ratio matches.</li>
 </ol>
 <ol start="2">

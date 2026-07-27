@@ -79,13 +79,13 @@ a:hover{color:var(--in)}
 /* tabs */
 .tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
-.tabbar{max-width:var(--maxw);margin:0 auto;padding:0 28px;display:flex;gap:2px;
-  overflow-x:auto;scrollbar-width:none}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:4px 28px 0;display:flex;
+  flex-wrap:wrap;column-gap:1px;row-gap:0}
 .tabbar::-webkit-scrollbar{display:none}
 .tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
-  font-size:13.5px;font-weight:500;color:var(--muted);padding:15px 13px 13px;white-space:nowrap;
+  font-size:12.8px;font-weight:500;color:var(--muted);padding:10px 10px 8px;white-space:nowrap;
   border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
-  display:flex;align-items:baseline;gap:7px}
+  display:flex;align-items:baseline;gap:6px}
 .tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
 .tab:hover{color:var(--ink)}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
@@ -190,7 +190,12 @@ td code{font-size:.85em}
 
 @media (max-width:820px){
   .masthead{padding:36px 20px 0}
-  .tabbar{padding:0 20px}
+  .tabbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:0 16px}
+  .tabbar::-webkit-scrollbar{display:block;height:3px}
+  .tabbar::-webkit-scrollbar-thumb{background:var(--rule);border-radius:2px}
+  .tabbar-outer{position:sticky;overflow:hidden}
+  .tabbar-outer::after{content:"";position:absolute;right:0;top:0;bottom:0;width:26px;
+    pointer-events:none;background:linear-gradient(to left,rgba(231,234,238,.94),rgba(231,234,238,0))}
   main{padding:0 20px 90px}
   .ring-cell{height:40px;font-size:9.5px}
   .pc{height:26px;font-size:9.5px}
@@ -216,11 +221,25 @@ td code{font-size:.85em}
   .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
   .panel{display:block !important}
 }
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--muted);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--in);border-bottom-color:var(--in)}
+.crumbs a:focus-visible{outline:2px solid var(--in);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
+
+.toc-appendix{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin:26px 0 8px}
+.toc-appendix-list{list-style:none;padding:0;margin:0}
+.toc-appendix-list li{margin:0 0 6px}
 </style>
 </head>
 <body>
 
 <header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a><span class="sep" aria-hidden="true">&middot;</span><a href="parallelisms.html">Large-Scale Model Training</a></nav>
   <p class="eyebrow"><span>Chapter 04</span><span>Large-Scale Model Training</span></p>
   <h1>Parallelism Strategies — an Overview</h1>
   <div class="ring-wrap">
@@ -246,14 +265,12 @@ td code{font-size:.85em}
   <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-table-of-contents" aria-controls="pan-table-of-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-0-where-this-chapter-sits" aria-controls="pan-0-where-this-chapter-sits" aria-selected="false" tabindex="-1"><span class="num">02</span>0 · Where this sits</button><button class="tab" role="tab" id="t-1-parallelism" aria-controls="pan-1-parallelism" aria-selected="false" tabindex="-1"><span class="num">03</span>1 · Parallelism</button><button class="tab" role="tab" id="t-2-data-parallelism" aria-controls="pan-2-data-parallelism" aria-selected="false" tabindex="-1"><span class="num">04</span>2 · Data parallelism</button><button class="tab" role="tab" id="t-3-model-parallelism" aria-controls="pan-3-model-parallelism" aria-selected="false" tabindex="-1"><span class="num">05</span>3 · Model parallelism</button><button class="tab" role="tab" id="t-4-multi-dimensional-parallelism" aria-controls="pan-4-multi-dimensional-parallelism" aria-selected="false" tabindex="-1"><span class="num">06</span>4 · Multi-dimensional</button><button class="tab" role="tab" id="t-5-zero-and-fsdp" aria-controls="pan-5-zero-and-fsdp" aria-selected="false" tabindex="-1"><span class="num">07</span>5 · ZeRO &amp; FSDP</button><button class="tab" role="tab" id="t-6-the-newer-axes--sequence-context-and-expert-parallelism" aria-controls="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" aria-selected="false" tabindex="-1"><span class="num">08</span>6 · Newer axes</button><button class="tab" role="tab" id="t-7-how-to-actually-choose" aria-controls="pan-7-how-to-actually-choose" aria-selected="false" tabindex="-1"><span class="num">09</span>7 · Choosing</button><button class="tab" role="tab" id="t-8-glossary-and-quick-reference" aria-controls="pan-8-glossary-and-quick-reference" aria-selected="false" tabindex="-1"><span class="num">10</span>8 · Reference</button><button class="tab" role="tab" id="t-version-check" aria-controls="pan-version-check" aria-selected="false" tabindex="-1"><span class="num">11</span>Version check</button><button class="tab" role="tab" id="t-further-reading" aria-controls="pan-further-reading" aria-selected="false" tabindex="-1"><span class="num">12</span>Further reading</button><button class="tab" role="tab" id="t-exercises" aria-controls="pan-exercises" aria-selected="false" tabindex="-1"><span class="num">13</span>Exercises</button></div>
 </div>
 
-<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Section 1 of 13</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol>
+<main><section class="panel is-active" id="pan-table-of-contents" role="tabpanel" aria-labelledby="t-table-of-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="table-of-contents">Table of contents</h2></div><div class="body"><ol start="0">
 <li><a href="#0-where-this-chapter-sits">Where this chapter sits</a></li>
 <li><a href="#1-parallelism">Parallelism</a></li>
 <li><a href="#2-data-parallelism">Data Parallelism</a></li>
 <li><a href="#3-model-parallelism">Model Parallelism</a>
-   - <a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a>
-   - <a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a>
-   - <a href="#pipeline-parallelism">Pipeline Parallelism</a></li>
+<ul><li><a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a></li><li><a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a></li><li><a href="#pipeline-parallelism">Pipeline Parallelism</a></li></ul></li>
 <li><a href="#4-multi-dimensional-parallelism">Multi-dimensional Parallelism</a></li>
 <li><a href="#5-zero-and-fsdp">ZeRO and FSDP</a></li>
 <li><a href="#6-the-newer-axes--sequence-context-and-expert-parallelism">The newer axes — sequence, context, and expert parallelism</a></li>
@@ -261,7 +278,11 @@ td code{font-size:.85em}
 <li><a href="#8-glossary-and-quick-reference">Glossary and quick reference</a></li>
 <li><a href="#further-reading">Further reading</a></li>
 <li><a href="#exercises">Exercises</a></li>
-</ol></div></section><section class="panel" id="pan-0-where-this-chapter-sits" role="tabpanel" aria-labelledby="t-0-where-this-chapter-sits" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 13</p><h2 id="0-where-this-chapter-sits">0. Where this chapter sits</h2></div><div class="body"><div class="note"><span class="tag">Note — </span>
+</ol>
+<p class="toc-appendix">Appendix</p>
+<ul class="toc-appendix-list">
+<li><a href="#version-check">Version check</a></li>
+</ul></div></section><section class="panel" id="pan-0-where-this-chapter-sits" role="tabpanel" aria-labelledby="t-0-where-this-chapter-sits" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 0 of 8</p><h2 id="0-where-this-chapter-sits">0. Where this chapter sits</h2></div><div class="body"><div class="note"><span class="tag">Note — </span>
 <p>Chapter 03 gave you a vocabulary of communication primitives. This chapter gives you the sentences you can build with them. It's worth stating the mapping up front, because every section below is really "which primitive, applied to which tensor, between which ranks":</p>
 <div class="tablewrap"><table>
 <thead>
@@ -300,7 +321,7 @@ td code{font-size:.85em}
 </tbody>
 </table></div>
 <p>If you can hold that table in your head, the rest of this document is commentary on it.</p>
-</div></div></section><section class="panel" id="pan-1-parallelism" role="tabpanel" aria-labelledby="t-1-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 13</p><h2 id="1-parallelism">1. Parallelism</h2></div><div class="body"><p>Before getting into any one technique, here is the map: what the axes are, what each costs, and how they relate.</p>
+</div></div></section><section class="panel" id="pan-1-parallelism" role="tabpanel" aria-labelledby="t-1-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 8</p><h2 id="1-parallelism">1. Parallelism</h2></div><div class="body"><p>Before getting into any one technique, here is the map: what the axes are, what each costs, and how they relate.</p>
 <p>Parallelization is a technique for handling several things at the same time, and it is one of the most important techniques in large-scale modeling. In machine learning it is mainly used to parallelize computation across multiple devices in order to improve speed or memory efficiency.</p>
 <div class="note"><span class="tag">Note — there are two different reasons to parallelize, and confusing them causes bad design choices</span>
 <p>The stock description of parallelism — "improve speed <strong>or</strong> memory efficiency" — quietly contains both goals. They are not the same, and the right strategy depends entirely on which one is binding.</p>
@@ -360,7 +381,7 @@ td code{font-size:.85em}
 <li><strong>Weak scaling</strong>: work per device fixed, more devices → does time per step stay flat? This is what data-parallel training actually does, and it's the more achievable goal.</li>
 </ul>
 <p>When someone says "we got 90% scaling efficiency at 1,024 GPUs," they almost always mean weak scaling. Reported as <strong>MFU</strong> (Model FLOPs Utilization) — achieved FLOPs ÷ theoretical peak — which for well-tuned large-model training typically lands somewhere in the 35–55% range on modern hardware. It is essentially never close to 100%, and the gap is mostly communication and pipeline bubbles.</p>
-</div></div></section><section class="panel" id="pan-2-data-parallelism" role="tabpanel" aria-labelledby="t-2-data-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 13</p><h2 id="2-data-parallelism">2. Data Parallelism</h2></div><div class="body"><p>Data parallelism is a method for speeding up training when the number of data items is large, by processing the data in parallel. It works by <strong>replicating the model onto every device and feeding different data to each device</strong>. This lets you feed in a batch size that is larger by a factor of the number of devices. However, this kind of data parallelism is only possible when a single model can fit entirely onto a single device.</p>
+</div></div></section><section class="panel" id="pan-2-data-parallelism" role="tabpanel" aria-labelledby="t-2-data-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 8</p><h2 id="2-data-parallelism">2. Data Parallelism</h2></div><div class="body"><p>Data parallelism is a method for speeding up training when the number of data items is large, by processing the data in parallel. It works by <strong>replicating the model onto every device and feeding different data to each device</strong>. This lets you feed in a batch size that is larger by a factor of the number of devices. However, this kind of data parallelism is only possible when a single model can fit entirely onto a single device.</p>
 <div class="ascii-card"><pre>                  ┌──────────────── one global batch ────────────────┐
                   │  shard 0    shard 1    shard 2    shard 3        │
                   └────┬──────────┬──────────┬──────────┬────────────┘
@@ -575,7 +596,7 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
 <p><strong>Sharding is orthogonal, and it is the actual answer.</strong> ZeRO-2/3 and FSDP divide <em>every</em> number above by the shard count. Low precision and sharding compose; low precision alone was never going to be the answer, it just buys a slightly later crossover point. §5 is where that starts.</p>
 </div>
 <div class="warn"><span class="tag">the caveat is no longer absolute</span><p>"Data parallelism is only possible when one model fits on one device" was true of <em>classical</em> data parallelism, and it is the historical motivation for model parallelism. But <strong>ZeRO / FSDP break that assumption without changing the programming model</strong>: the model is still logically replicated and the batch is still split, but the 16 bytes/param of state are <em>sharded</em> across the same data-parallel ranks and reassembled layer-by-layer on demand.</p>
-<p>With FSDP, a 70B model trains across 64 GPUs using data parallelism alone — no tensor or pipeline parallelism required. This is the single biggest change in the field since 2021, and it's covered in <a href="#5-zero-and-fsdp">§5</a>.</p></div></div></section><section class="panel" id="pan-3-model-parallelism" role="tabpanel" aria-labelledby="t-3-model-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="3-model-parallelism">3. Model Parallelism</h2></div><div class="body"><div class="subnav"><a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a><a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a><a href="#pipeline-parallelism">Pipeline Parallelism</a></div><p>If a model is so large that it cannot fit entirely onto a single device, you have to split the parameters and place them across multiple devices. Each device therefore holds a portion of the parameters. This makes it possible to handle even a large model by using several small devices, and depending on which dimension is parallelized, we can distinguish <strong>inter-layer</strong> and <strong>intra-layer</strong> model parallelism.</p>
+<p>With FSDP, a 70B model trains across 64 GPUs using data parallelism alone — no tensor or pipeline parallelism required. This is the single biggest change in the field since 2021, and it's covered in <a href="#5-zero-and-fsdp">§5</a>.</p></div></div></section><section class="panel" id="pan-3-model-parallelism" role="tabpanel" aria-labelledby="t-3-model-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 8</p><h2 id="3-model-parallelism">3. Model Parallelism</h2></div><div class="body"><div class="subnav"><a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a><a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a><a href="#pipeline-parallelism">Pipeline Parallelism</a></div><p>If a model is so large that it cannot fit entirely onto a single device, you have to split the parameters and place them across multiple devices. Each device therefore holds a portion of the parameters. This makes it possible to handle even a large model by using several small devices, and depending on which dimension is parallelized, we can distinguish <strong>inter-layer</strong> and <strong>intra-layer</strong> model parallelism.</p>
 <div class="ascii-card"><pre>        The model is a stack of layers, each layer a set of tensors.
         There are two independent directions you can cut it.
 
@@ -902,7 +923,7 @@ else:
 <li><strong>The loss is computed only on the last stage</strong>, so logging and metrics need to be gathered or handled rank-conditionally.</li>
 <li><strong>Pipeline + activation checkpointing interact.</strong> Both trade compute for activation memory; applying both blindly can recompute more than necessary.</li>
 </ul>
-</div></div></section><section class="panel" id="pan-4-multi-dimensional-parallelism" role="tabpanel" aria-labelledby="t-4-multi-dimensional-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 13</p><h2 id="4-multi-dimensional-parallelism">4. Multi-dimensional Parallelism</h2></div><div class="body"><p>The various parallelization techniques mentioned above can also be applied several at a time, and the number of dimensions increases with the number of parallelization schemes applied. You can perform n-dimensional parallelization in various ways, as below.</p>
+</div></div></section><section class="panel" id="pan-4-multi-dimensional-parallelism" role="tabpanel" aria-labelledby="t-4-multi-dimensional-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 8</p><h2 id="4-multi-dimensional-parallelism">4. Multi-dimensional Parallelism</h2></div><div class="body"><p>The various parallelization techniques mentioned above can also be applied several at a time, and the number of dimensions increases with the number of parallelization schemes applied. You can perform n-dimensional parallelization in various ways, as below.</p>
 <ul>
 <li>e.g. 2-D parallelism: data parallelism + inter-layer parallelism</li>
 <li>e.g. 2-D parallelism: data parallelism + intra-layer parallelism</li>
@@ -1035,7 +1056,7 @@ dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</p
 <li><strong>Activation checkpointing</strong> — the last lever; trades ~33% extra compute for a large activation-memory reduction.</li>
 </ol>
 <p>Sanity check that <code>TP × PP × DP (× CP × EP) = world_size</code> exactly. Mismatches here produce confusing hangs rather than clean errors.</p>
-</div></div></section><section class="panel" id="pan-5-zero-and-fsdp" role="tabpanel" aria-labelledby="t-5-zero-and-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 13</p><h2 id="5-zero-and-fsdp">5. ZeRO and FSDP</h2></div><div class="body"><div class="subnav"><a href="#the-stages">The stages</a><a href="#why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</a><a href="#zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</a></div><p>ZeRO was once a footnote to the three classic axes. It became the default, so it belongs in the overview.</p>
+</div></div></section><section class="panel" id="pan-5-zero-and-fsdp" role="tabpanel" aria-labelledby="t-5-zero-and-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 8</p><h2 id="5-zero-and-fsdp">5. ZeRO and FSDP</h2></div><div class="body"><div class="subnav"><a href="#the-stages">The stages</a><a href="#why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</a><a href="#zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</a></div><p>ZeRO was once a footnote to the three classic axes. It became the default, so it belongs in the overview.</p>
 <p><strong>The observation ZeRO starts from:</strong> in plain data parallelism, every replica stores an <em>identical</em> copy of all 16 bytes/param of model state. Across <code>N</code> GPUs that's <code>N</code> redundant copies. But at any given moment, a rank only needs the parameters of the layer it is currently computing.</p>
 <p>So: <strong>shard the state across the data-parallel ranks, and reconstruct each layer just in time.</strong></p>
 <div class="ascii-card"><pre>   Plain DDP (N=4)                     ZeRO-3 / FSDP (N=4)
@@ -1175,7 +1196,7 @@ dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</p
 for layer in model.layers:
     fully_shard(layer, mesh=mesh[&quot;dp&quot;])   # shard each block
 fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
-<p>DeepSpeed remains a fine choice and is where ZeRO originated; the concepts are identical and the stage numbers mean the same thing.</p></div></div></section><section class="panel" id="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" role="tabpanel" aria-labelledby="t-6-the-newer-axes--sequence-context-and-expert-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 13</p><h2 id="6-the-newer-axes--sequence-context-and-expert-parallelism">6. The newer axes — sequence, context, and expert parallelism</h2></div><div class="body"><div class="subnav"><a href="#sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</a><a href="#context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</a><a href="#expert-parallelism-moe">Expert parallelism (MoE)</a></div><p>Two axes that barely existed when the classic three-axis taxonomy was fixed are now routine. Both exist because the <em>shape</em> of the problem changed: contexts got much longer, and models got sparse.</p>
+<p>DeepSpeed remains a fine choice and is where ZeRO originated; the concepts are identical and the stage numbers mean the same thing.</p></div></div></section><section class="panel" id="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" role="tabpanel" aria-labelledby="t-6-the-newer-axes--sequence-context-and-expert-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 8</p><h2 id="6-the-newer-axes--sequence-context-and-expert-parallelism">6. The newer axes — sequence, context, and expert parallelism</h2></div><div class="body"><div class="subnav"><a href="#sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</a><a href="#context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</a><a href="#expert-parallelism-moe">Expert parallelism (MoE)</a></div><p>Two axes that barely existed when the classic three-axis taxonomy was fixed are now routine. Both exist because the <em>shape</em> of the problem changed: contexts got much longer, and models got sparse.</p>
 <h3 id="sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</h3>
 <div class="note"><span class="tag">&#128221; Note &mdash; these two axes have a chapter of their own</span><p>Sequence and context parallelism split the same dimension and share almost the same name, for reasons that are historical rather than logical. <strong>Chapter 11</strong> separates them properly: the naming history, the one test that distinguishes them, ring attention, and the causal load-balance trap. The summaries below are enough to place them on the map.</p></div>
 <p>Recall the gotcha from §3: under vanilla tensor parallelism, LayerNorm and dropout are <strong>replicated</strong> on every TP rank — each holds the full <code>batch × seq × hidden</code> activation. For long sequences this dominates memory.</p>
@@ -1202,7 +1223,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
               ▼
             all_to_all  ──────────────────▶   back to sharded by token</pre></div>
 <p>Two <code>all_to_all</code>s per MoE layer. This makes <code>all_to_all</code> — the collective most introductions skip — arguably the most important primitive in modern sparse models.</p>
-<p>The characteristic difficulty is <strong>load imbalance</strong>: routing is learned, so some experts get far more tokens than others, and the slowest device gates the step. Hence capacity factors, auxiliary load-balancing losses, and token dropping.</p></div></section><section class="panel" id="pan-7-how-to-actually-choose" role="tabpanel" aria-labelledby="t-7-how-to-actually-choose" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="7-how-to-actually-choose">7. How to actually choose</h2></div><div class="body"><p>A decision procedure that matches how practitioners actually reason:</p>
+<p>The characteristic difficulty is <strong>load imbalance</strong>: routing is learned, so some experts get far more tokens than others, and the slowest device gates the step. Hence capacity factors, auxiliary load-balancing losses, and token dropping.</p></div></section><section class="panel" id="pan-7-how-to-actually-choose" role="tabpanel" aria-labelledby="t-7-how-to-actually-choose" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 8</p><h2 id="7-how-to-actually-choose">7. How to actually choose</h2></div><div class="body"><p>A decision procedure that matches how practitioners actually reason:</p>
 <div class="ascii-card"><pre>                   Does the model state fit on ONE GPU?
                           │                    │
                         YES                   NO
@@ -1268,7 +1289,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
 </table></div>
 <div class="note"><span class="tag">Note — the failure modes scale with the number of axes</span>
 <p>Each axis is a set of process groups, and chapter 03's cardinal rule applies to each of them independently: <em>every rank must call every collective, in the same order, with matching shapes.</em> A 4-D job has four independent chances to violate it. Practical advice: bring the axes up <strong>one at a time</strong>, verifying loss curves match the single-GPU baseline at each step. Debugging a 4-D configuration that was never correct at 2-D is genuinely miserable.</p>
-</div></div></section><section class="panel" id="pan-8-glossary-and-quick-reference" role="tabpanel" aria-labelledby="t-8-glossary-and-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 13</p><h2 id="8-glossary-and-quick-reference">8. Glossary and quick reference</h2></div><div class="body"><div class="tablewrap"><table>
+</div></div></section><section class="panel" id="pan-8-glossary-and-quick-reference" role="tabpanel" aria-labelledby="t-8-glossary-and-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 8</p><h2 id="8-glossary-and-quick-reference">8. Glossary and quick reference</h2></div><div class="body"><div class="tablewrap"><table>
 <thead>
 <tr>
 <th>Term</th>
@@ -1354,7 +1375,7 @@ EP    split the EXPERTS                             → all_to_all</pre></div>
              ▲    ▲    ▲
              │    │    └── across nodes (tolerates slow links)
              │    └─────── inside a node (needs NVLink)
-             └──────────── outermost, most scalable</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 11 of 13</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
+             └──────────── outermost, most scalable</pre></div></div></section><section class="panel" id="pan-version-check" role="tabpanel" aria-labelledby="t-version-check" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="version-check">Version check</h2></div><div class="body"><p>Everything in this document was verified against the releases below on <strong>25 July 2026</strong>. Distributed APIs move quickly; if your versions differ, trust your installed docs over this page.</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -1453,7 +1474,7 @@ EP    split the EXPERTS                             → all_to_all</pre></div>
 </tr>
 </tbody>
 </table></div>
-<p><strong>Specific to this chapter:</strong> the taxonomy and the decision procedure are conceptual and unchanged. Two notes on the surrounding tooling. First, <code>DeviceMesh</code> — which this chapter recommends as the way to express multi-axis layouts — now requires <code>init_process_group</code> to be called <strong>before</strong> the mesh is built (PyTorch 2.11). Second, <code>torch.distributed</code> now has a <strong>fourth backend</strong>, <code>xccl</code>, for Intel XPU, alongside NCCL, Gloo and MPI; the rule "NCCL for NVIDIA GPUs, Gloo for CPU" is otherwise unchanged.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 12 of 13</p><h2 id="further-reading">Further reading</h2></div><div class="body"><p><strong>Papers, roughly in the order the ideas arrived</strong></p>
+<p><strong>Specific to this chapter:</strong> the taxonomy and the decision procedure are conceptual and unchanged. Two notes on the surrounding tooling. First, <code>DeviceMesh</code> — which this chapter recommends as the way to express multi-axis layouts — now requires <code>init_process_group</code> to be called <strong>before</strong> the mesh is built (PyTorch 2.11). Second, <code>torch.distributed</code> now has a <strong>fourth backend</strong>, <code>xccl</code>, for Intel XPU, alongside NCCL, Gloo and MPI; the rule "NCCL for NVIDIA GPUs, Gloo for CPU" is otherwise unchanged.</p></div></section><section class="panel" id="pan-further-reading" role="tabpanel" aria-labelledby="t-further-reading" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="further-reading">Further reading</h2></div><div class="body"><p><strong>Papers, roughly in the order the ideas arrived</strong></p>
 <ul>
 <li><em>GPipe</em> (Huang et al., 2018) — microbatching and the bubble</li>
 <li><em>PipeDream</em> (Narayanan et al., 2019) — 1F1B scheduling</li>
@@ -1472,7 +1493,7 @@ EP    split the EXPERTS                             → all_to_all</pre></div>
 <li><code>DeviceMesh</code> and <code>DTensor</code> documentation — how n-D parallelism is expressed today</li>
 <li><strong>torchtitan</strong> — PyTorch's own reference implementation of multi-dimensional parallel training; the clearest place to read this chapter as working code</li>
 <li>Megatron-LM and DeepSpeed source — the original implementations, still the most battle-tested</li>
-</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 13</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
+</ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Appendix</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
 <li><strong>Bubble arithmetic.</strong> You have 8 pipeline stages and a global batch of 1,024. Compute the bubble fraction for <code>m</code> = 8, 32, and 128. At <code>m = 128</code>, how large is each microbatch — and is that still big enough to keep an H100 busy? What does that tell you about the real limit on <code>m</code>?</li>
 </ol>
 <ol start="2">
