@@ -308,6 +308,12 @@ td code{font-size:.85em}
         <p>Once parallelism gets the model to fit, everything else is throughput. Fusion, attention kernels, precision, and what actually moves the needle.</p>
         <div class="chips"><span class="chip">Kernel fusion</span><span class="chip">FlashAttention</span><span class="chip">torch.compile</span><span class="chip">Tuning checklist</span></div>
       </a>
+      <a class="card" href="sequence_and_context_parallelism.html">
+        <div class="card-top"><span class="card-num">11</span><span class="card-kind">deep dive &middot; pairs with 07</span></div>
+        <h3>Sequence and Context Parallelism</h3>
+        <p>Two axes split the same dimension and share almost the same name. Why the vocabulary is a historical accident, the one test that tells them apart, and how ring attention makes long context possible.</p>
+        <div class="chips"><span class="chip">SP vs CP</span><span class="chip">Ring attention</span><span class="chip">Online softmax</span><span class="chip">Zigzag balancing</span><span class="chip">Ulysses</span></div>
+      </a>
     </div>
 
     <h2 class="sec" id="how-to-read">Reading order</h2>
@@ -319,6 +325,9 @@ td code{font-size:.85em}
        +---&gt; 05  DATA       all_reduce of gradients        &lt;- start here if impatient
        +---&gt; 06  PIPELINE   send/recv between stages
        +---&gt; 07  TENSOR     all_reduce inside every layer
+       |          |
+       |          +--&gt; 11  SEQ / CONTEXT  sharding the token axis;
+       |                    long context, ring attention
        +---&gt; 08  MEMORY     reduce_scatter + all_gather instead
        |
        v
@@ -329,7 +338,7 @@ td code{font-size:.85em}
 </pre></div>
 
     <div class="note"><span class="tag">&#128221; If you only have time for three</span>
-      <p><strong>03, 05, 08.</strong> Chapter 03 gives you the vocabulary, 05 is the axis most jobs actually use, and 08 is the one that decides whether your model fits at all. Chapters 06 and 07 matter once a single GPU cannot hold one layer; 09 only once you are running all of them together.</p>
+      <p><strong>03, 05, 08.</strong> Chapter 03 gives you the vocabulary, 05 is the axis most jobs actually use, and 08 is the one that decides whether your model fits at all. Chapters 06 and 07 matter once a single GPU cannot hold one layer; 09 only once you are running all of them together; 11 once your context gets long.</p>
       <p>If your model already fits and you just want it faster, read <strong>10</strong> first and work backwards.</p>
     </div>
 
