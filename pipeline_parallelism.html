@@ -548,7 +548,7 @@ if __name__ == &quot;__main__&quot;:
 </tbody>
 </table></div>
 <p>Practical advice: <strong>profile one step, then partition by measured time.</strong> DeepSpeed's <code>partition_method="parameters"</code> balances parameter counts, which is a decent proxy but not the same thing. <code>balance=[4,3,3,4]</code> in the GPipe script above is this same reasoning applied by hand.</p>
-</div></div></section><section class="panel" id="pan-4-variations-of-1f1b-pipelining" role="tabpanel" aria-labelledby="t-4-variations-of-1f1b-pipelining" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="4-variations-of-1f1b-pipelining">4. Variations of 1F1B Pipelining</h2></div><div class="body"><div class="subnav"><a href="#1-pipedream-2bw-2-buffered-weight-update">1) PipeDream 2BW (2-buffered weight update)</a><a href="#2-pipedream-flush">2) PipeDream Flush</a><a href="#hold-on-what-is-activation-memory">Hold on… what is Activation Memory?</a><a href="#the-same-thing-in-deepspeed-and-a-trap-worth-knowing">The same thing in DeepSpeed, and a trap worth knowing</a></div><p>We introduce two versions of pipeline strategies that improve on PipeDream's 1F1B pipelining.</p>
+</div></div></section><section class="panel" id="pan-4-variations-of-1f1b-pipelining" role="tabpanel" aria-labelledby="t-4-variations-of-1f1b-pipelining" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="4-variations-of-1f1b-pipelining">4. Variations of 1F1B Pipelining</h2></div><div class="body"><div class="subnav"><a href="#1-pipedream-2bw-2-buffered-weight-update">1) PipeDream 2BW (2-buffered weight update)</a><a href="#2-pipedream-flush">2) PipeDream Flush</a><a href="#hold-on-what-is-activation-memory">Hold on… what is Activation Memory?</a></div><p>We introduce two versions of pipeline strategies that improve on PipeDream's 1F1B pipelining.</p>
 <h3 id="1-pipedream-2bw-2-buffered-weight-update">1) PipeDream 2BW (2-buffered weight update)</h3>
 <p>PipeDream-2BW appeared in order to improve PipeDream's memory inefficiency. The core idea is to perform <strong>gradient accumulation</strong> during pipelining. It solves the memory-inefficiency problem by collecting several gradients and performing the update all at once. Unlike before, 2BW only needs to maintain <strong>two</strong> weight versions.</p>
 <div class="ascii-card"><pre>   PipeDream-2BW: accumulate gradients, update every m micro-batches
@@ -662,123 +662,8 @@ class ReLU(torch.autograd.Function):
 <li><strong>1F1B scheduling.</strong> Exactly what §4.2 described — cap the number of in-flight micro-batches at <code>p</code> instead of <code>m</code>.</li>
 </ul>
 <p>They compose, but apply both carelessly and you can recompute more than necessary.</p>
-<p>With activation memory defined, here is PipeDream in practice. <strong>PipeDream-Flush is implemented in Microsoft's distributed-processing library DeepSpeed.</strong> (Reference: https://github.com/microsoft/DeepSpeed/issues/1110) So let's use DeepSpeed.</p>
 </div>
-<h3 id="the-same-thing-in-deepspeed-and-a-trap-worth-knowing">The same thing in DeepSpeed, and a trap worth knowing</h3>
-<p>DeepSpeed's <code>PipelineModule</code> implements 1F1B-with-flush and is still in wide use. It ships its own launcher — <code>deepspeed --num_gpus=n script.py</code>, or the shorter alias <code>ds</code> — which is equivalent to <code>torchrun</code> for single-node jobs.</p>
-<p>The example below is worth walking through less for the API than for the configuration trap that follows it.</p>
-<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
-src/pipe_dream.py
-&quot;&quot;&quot;
-import deepspeed
-import torch
-import torch.nn as nn
-from datasets import load_dataset
-from deepspeed import PipelineModule
-from torch.optim import Adam
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch.distributed as dist
-
-# PipelineModule needs an nn.Sequential of tensor-in/tensor-out modules, so a
-# Hugging Face model still has to be rebuilt into that shape here — the same
-# surgery the historical note in §2 describes. Omitted for brevity.
-
-def collate_fn(batch):
-    batch_encoding = tokenizer.pad(
-        {&quot;input_ids&quot;: batch}, padding=&quot;max_length&quot;, max_length=1024
-    )
-    return batch_encoding.input_ids
-
-def batch_fn(data):
-    input_ids = data
-    labels = data
-    return input_ids, labels
-
-def loss_fn(logits, labels):
-    logits = logits[..., :-1, :].contiguous()
-    labels = labels[..., 1:].contiguous()
-
-    return nn.CrossEntropyLoss()(
-        logits.view(-1, logits.size(-1)),
-        labels.view(-1),
-    )
-
-if __name__ == &quot;__main__&quot;:
-    dist.init_process_group(&quot;nccl&quot;)
-    world_size, rank = dist.get_world_size(), dist.get_rank()
-    batch_size, train_steps = 16, 300
-    train_samples = batch_size * train_steps
-
-    tokenizer = AutoTokenizer.from_pretrained(&quot;gpt2&quot;)
-    tokenizer.pad_token = tokenizer.eos_token
-
-    model = PipelineModule(
-        create_model_from_pretrained(model_name=&quot;gpt2&quot;),
-        loss_fn=loss_fn,
-        num_stages=world_size,
-        partition_method=&quot;type:GPT2Block&quot;
-        # partition_method lets you choose which layers to parallelize.
-    )
-    engine, optimizer, _, _ = deepspeed.initialize(
-        model=model,
-        optimizer=Adam(model.parameters(), lr=3e-5),
-        config={
-            &quot;train_batch_size&quot;: batch_size,
-            &quot;steps_per_print&quot;: 9999999,
-            # turn off: https://github.com/microsoft/DeepSpeed/issues/1119
-        },
-    )
-    engine.set_batch_fn(batch_fn)
-
-    datasets = load_dataset(&quot;rajpurkar/squad&quot;)[&quot;train&quot;][&quot;context&quot;][:train_samples]
-    datasets = [
-        tokenizer(data, return_tensors=&quot;pt&quot;, max_length=1024).input_ids[0]
-        for data in tqdm(datasets)
-    ]
-    data_loader = iter(
-        DataLoader(
-            sorted(datasets, key=len, reverse=True),
-            # uniform length batching
-            # https://mccormickml.com/2020/07/29/smart-batching-tutorial/
-            batch_size=batch_size,
-            num_workers=8,
-            collate_fn=collate_fn,
-            shuffle=False,
-        )
-    )
-
-    for i in range(train_steps):
-        loss = engine.train_batch(data_loader)
-
-        if i % 10 == 0 and rank == 0:
-            print(f&quot;step: {i}, loss: {loss}&quot;)</pre></div>
-<div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>$ ds --num_gpus=4 ../src/pipe_dream.py
-[INFO] [engine.py:77:__init__] CONFIG: micro_batches=1 micro_batch_size=16</pre></div>
-<div class="warn"><span class="tag">Read that log line carefully: `micro_batches=1`. This example is not actually pipelining</span><p>DeepSpeed derives the micro-batch count from an identity:</p>
-<div class="ascii-card"><pre>train_batch_size = train_micro_batch_size_per_gpu
-                 × gradient_accumulation_steps
-                 × data_parallel_world_size</pre></div>
-<p>Here all 4 GPUs are pipeline stages, so <code>data_parallel_world_size = 1</code>. With only <code>train_batch_size: 16</code> specified, DeepSpeed solves the identity as <code>16 = 16 × 1 × 1</code> — giving <strong>one micro-batch</strong>, i.e. <code>m = 1</code>.</p>
-<p>From the bubble table in §2, <code>m=1, p=4</code> is a <strong>75% bubble</strong>. This run is the naive inter-layer schedule of §1, with all of pipelining's machinery and none of its benefit.</p>
-<p>The fix is to pin the micro-batch size so accumulation steps become the micro-batch count:</p>
-<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>config={
-    &quot;train_batch_size&quot;: 16,
-    &quot;train_micro_batch_size_per_gpu&quot;: 1,   # → gradient_accumulation_steps = 16
-    &quot;steps_per_print&quot;: 9999999,
-}</pre></div>
-<p>That gives <code>m = 16</code>, <code>p = 4</code>, bubble ≈ 16%. <strong>Always check the <code>micro_batches=</code> value DeepSpeed prints at startup</strong> — it is the single number that determines whether your pipeline is working.</p></div>
-<div class="note"><span class="tag">Note — three other things this script quietly teaches</span>
-<ol>
-<li><strong><code>engine.train_batch()</code> replaces the whole loop.</strong> No <code>forward</code>, no <code>loss.backward()</code>, no <code>optimizer.step()</code> — the engine drives the schedule, pulling micro-batches from the iterator itself. This is characteristic of pipeline APIs: the schedule owns control flow, and you hand it a data source rather than a batch.</li>
-<li><strong><code>loss_fn</code> is passed to <code>PipelineModule</code>, not called by you.</strong> The loss can only be computed on the last stage, so the framework needs to own it. Same reason <code>batch_fn</code> exists — it tells the engine how to derive <code>(inputs, labels)</code> from one dataset item.</li>
-<li><strong><code>padding="max_length", max_length=1024</code> — every sequence padded to full length.</strong> This looks wasteful, and for ordinary training it would be. Here it's deliberate: <code>recv</code> needs a pre-allocated buffer of known shape, so pipelines strongly prefer <strong>fixed</strong> shapes. Combined with the sort-by-length "uniform length batching" trick, this is the script working around the shape-rigidity of P2P transfer that chapter 03 warned about.</li>
-</ol>
-</div>
-<div class="note"><span class="tag">Note — partition_method options</span>
-<p><code>"type:GPT2Block"</code> splits so that each stage gets an equal number of modules of that class — i.e. balance by transformer block. Alternatives: <code>"parameters"</code> (balance parameter counts, the usual default choice) and <code>"uniform"</code> (equal module counts). None of them balance by <em>measured time</em>, which is what you actually want; for serious runs, profile and specify the partition explicitly.</p>
-</div></div></section><section class="panel" id="pan-5-interleaved-scheduling" role="tabpanel" aria-labelledby="t-5-interleaved-scheduling" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 13</p><h2 id="5-interleaved-scheduling">5. Interleaved Scheduling</h2></div><div class="body"><p>Previously, one stage (a set of contiguous layers) was computed sequentially to produce the result. For example, if there are 8 layers and 2 devices, normally layers 1–4 would be assigned to device 1 and layers 5–8 to device 2. Then device 1 would process layers 1 through 4 sequentially and emit the output. (Both GPipe and 1F1B work this way.)</p>
+</div></section><section class="panel" id="pan-5-interleaved-scheduling" role="tabpanel" aria-labelledby="t-5-interleaved-scheduling" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 13</p><h2 id="5-interleaved-scheduling">5. Interleaved Scheduling</h2></div><div class="body"><p>Previously, one stage (a set of contiguous layers) was computed sequentially to produce the result. For example, if there are 8 layers and 2 devices, normally layers 1–4 would be assigned to device 1 and layers 5–8 to device 2. Then device 1 would process layers 1 through 4 sequentially and emit the output. (Both GPipe and 1F1B work this way.)</p>
 <div class="ascii-card"><pre>   contiguous (standard)                interleaved (v = 2 chunks/device)
 
    GPU0 │ layers 1 2 3 4 │             GPU0 │ layers 1 2 │ … │ layers 5 6 │
@@ -1057,7 +942,7 @@ if __name__ == &quot;__main__&quot;:
 </div>
 <div class="warn"><span class="tag">Two live caveats, as of PyTorch 2.13</span><ol>
 <li><strong><code>torch.distributed.pipelining</code> is still labelled alpha.</strong> It has been stable enough that torchtitan builds on it and it is the recommended path, but the docs continue to warn that API changes are possible. Pin your PyTorch version for a long run.</li>
-<li><strong><code>scale_grads</code> must match your loss function.</strong> It defaults to <code>True</code>, which divides gradients by <code>n_microbatches</code> — correct if your <code>loss_fn</code> <em>averages</em> over the micro-batch. If your loss <em>sums</em>, set <code>scale_grads=False</code>. Getting this wrong silently scales your effective learning rate by <code>m</code>, which is exactly the class of bug §4's DeepSpeed <code>micro_batches=1</code> finding belongs to: no error, just a different training run.</li>
+<li><strong><code>scale_grads</code> must match your loss function.</strong> It defaults to <code>True</code>, which divides gradients by <code>n_microbatches</code> — correct if your <code>loss_fn</code> <em>averages</em> over the micro-batch. If your loss <em>sums</em>, set <code>scale_grads=False</code>. Getting this wrong silently scales your effective learning rate by <code>m</code>, and it is the worst class of pipeline bug: no error, no crash, just a different training run than the one you thought you launched.</li>
 </ol></div></div></section><section class="panel" id="pan-8-making-it-actually-work" role="tabpanel" aria-labelledby="t-8-making-it-actually-work" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="8-making-it-actually-work">8. Making it actually work</h2></div><div class="body"><div class="note"><span class="tag">Note — the failure modes, roughly in order of how often they occur</span>
 <div class="tablewrap"><table>
 <thead>
@@ -1165,14 +1050,7 @@ else:                         schedule.step()
 # schedules: ScheduleGPipe | Schedule1F1B | ScheduleInterleaved1F1B
 #            ScheduleLoopedBFS | ScheduleInterleavedZeroBubble
 #            ScheduleZBVZeroBubble | ScheduleDualPipeV
-
-# ── DeepSpeed (still fine) ─────────────────────────────────
-# ds --num_gpus=4 train.py
-config = {
-    &quot;train_batch_size&quot;: 16,
-    &quot;train_micro_batch_size_per_gpu&quot;: 1,   # ← or you silently get m=1
-}
-# CHECK the startup log:  CONFIG: micro_batches=16 micro_batch_size=1</pre></div>
+</pre></div>
 <p><strong>The chapter in one diagram:</strong></p>
 <div class="ascii-card"><pre>   naive       F ▁▁▁ F ▁▁▁ F ▁▁▁ F        75% idle at p=4
                  │ split the batch into m micro-batches
@@ -1214,7 +1092,7 @@ config = {
 <tr>
 <td><strong>DeepSpeed</strong></td>
 <td><strong>0.18.x</strong></td>
-<td>Still maintained; ZeRO config keys in this chapter unchanged</td>
+<td>Still maintained; its <code>PipelineModule</code> is an alternative to <code>torch.distributed.pipelining</code></td>
 </tr>
 <tr>
 <td><strong>CUDA</strong></td>
@@ -1295,7 +1173,7 @@ config = {
 <li>DeepSpeed pipeline-parallelism tutorial — <code>PipelineModule</code>, <code>partition_method</code>, and the batch-size identity.</li>
 <li><code>torch.utils.checkpoint</code> — activation checkpointing, the other half of the memory story.</li>
 </ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 13</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
-<li><strong>Verify the bubble.</strong> Run the DeepSpeed script as written, note the printed <code>micro_batches=1</code>, and time 50 steps. Then set <code>train_micro_batch_size_per_gpu: 1</code> and time again. Compare the ratio to <code>(1 + 3/16) / (1 + 3/1)</code> &mdash; that is the overhead form <code>(p−1)/m</code> at m=16 and m=1, not the bubble fractions. It predicts roughly 0.30.</li>
+<li><strong>Verify the bubble.</strong> Build a 4-stage pipeline with <code>ScheduleGPipe</code> (§7) and time 50 steps at <code>n_microbatches=1</code>, then again at <code>n_microbatches=16</code>, holding the global batch fixed. Compare the ratio to <code>(1 + 3/16) / (1 + 3/1)</code> &mdash; the overhead form <code>(p−1)/m</code> at m=16 and m=1, not the bubble fractions. It predicts roughly 0.30. Whatever framework you use, find the number it reports for the micro-batch count and confirm it is what you intended before trusting any timing.</li>
 </ol>
 <ol start="2">
 <li><strong>Feel the memory difference.</strong> Run GPipe with <code>chunks</code> = 4, 8, 16, 32 and record peak memory on stage 0. Then do the same under 1F1B. Plot both — one curve should rise linearly and one should be flat.</li>
