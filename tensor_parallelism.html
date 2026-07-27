@@ -527,8 +527,61 @@ def forward(self, input_):
 </table></div>
 <p>Look at <code>ColumnParallelLinear.forward</code>: it opens with <code>copy_to_...</code>, which does <em>nothing</em> in the forward pass. Why call it at all? Because in the backward pass, every TP rank computes a gradient w.r.t. the <em>shared</em> input <code>X</code>, and those must be summed. <code>copy_to_...</code> is a no-op forward whose only job is to install that all-reduce on the backward. <strong>Communication operations come in adjoint pairs</strong>, and half of them are invisible in the forward pass.</p>
 </div>
+<div class="warn"><span class="tag">Why the identities are identities &mdash; the table above shows only what is <em>implemented</em></span>
+<p>Two entries read as wrong until you separate what the operator <em>means</em> from what it has to <em>execute</em>. Both identities are cases where the work was already done elsewhere.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr><th></th><th>Conceptual forward</th><th>Implemented forward</th><th>Conceptual backward</th><th>Implemented backward</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code> &mdash; <code>copy_to_...</code></td><td>broadcast</td><td><strong>identity</strong> &#10003;</td><td>sum</td><td>all_reduce</td></tr>
+<tr><td><code>g</code> &mdash; <code>reduce_from_...</code></td><td>sum</td><td>all_reduce</td><td>broadcast</td><td><strong>identity</strong> &#10003;</td></tr>
+</tbody>
+</table></div>
+<p><strong><code>f</code>&#8217;s forward.</strong> Conceptually it broadcasts <code>X</code> to every rank. In practice <code>X</code> is <em>already replicated</em> when <code>f</code> is called &mdash; it arrived that way from the <code>g</code> all-reduce that ended the previous block, or from the initial broadcast. There is nothing left to move, so the broadcast degenerates to a no-op. The name describes a layout relationship (&quot;this tensor is replicated across the TP region&quot;), not an action.</p>
+<div class="ascii-card"><pre>   before f:   r0 [X]   r1 [X]   r2 [X]   r3 [X]     already identical
+   f forward:  ............ zero bytes moved ............
+
+   f backward: r0 [dX]0 r1 [dX]1 r2 [dX]2 r3 [dX]3   partials, all different
+               |________ all_reduce (sum) __________|
+                     every rank now holds the true dL/dX
+</pre></div>
+<p>The adjoint of copy is sum: for <code>B(x) = (x, x, &hellip;, x)</code>, <code>B&#7488;(g&#8320;, &hellip;, g&#8345;) = &Sigma; g&#7522;</code>. Each rank holds a different weight shard, so each produces a different <em>partial</em> <code>&part;L/&part;X</code>, and only their sum is the real gradient.</p>
+<p><strong><code>g</code>&#8217;s backward.</strong> The adjoint of <code>y = x&#8320; + x&#8321; + x&#8322;</code> is copy &mdash; <code>&part;L/&part;x&#7522; = &part;L/&part;y</code> for every <code>i</code> &mdash; so the gradient really should be broadcast back. It already has been. Note that <code>g</code> is <code>all_reduce</code>, not <code>reduce</code>: it leaves <code>y</code> on <em>every</em> rank, so every rank ran the identical downstream computation and independently arrived at the identical <code>&part;L/&part;y</code>.</p>
+<div class="ascii-card"><pre>   g forward:  r0 [x0]  r1 [x1]  r2 [x2]            partials, different
+               |_________ all_reduce _________|
+               r0 [y]   r1 [y]   r2 [y]              same value everywhere
+
+   g backward: r0 [dy]  r1 [dy]  r2 [dy]
+                        ^ the broadcast you expect is already satisfied
+</pre></div>
+<p>So the copy is not skipped because it is unnecessary in theory &mdash; it is skipped because <strong>it already happened, on the forward pass, inside the all_reduce</strong>.</p>
+<p><strong>The symmetry.</strong> <code>all_reduce = reduce + broadcast</code>, and that trailing broadcast is what pre-pays the adjoint in both directions. Exactly one member of each pair pays, and never the same one:</p>
+<div class="ascii-card"><pre>   f :  fwd free  ->  bwd all_reduce
+   g :  fwd all_reduce  ->  bwd free
+</pre></div>
+<p>Per transformer block you pay <code>f</code>-backward once for attention and once for the MLP, and <code>g</code>-forward once each &mdash; the <strong>4 all-reduces per layer</strong> that &sect;6&#8217;s cost model rests on. Had Megatron used a plain <code>reduce</code> for <code>g</code>, its backward would need a real broadcast and the count would be 8.</p>
+</div>
 <div class="note"><span class="tag">Note — bias handling and skip_bias_add</span>
 <p>Under column parallelism the bias splits with the columns, so each rank adds its own slice — fine. Under row parallelism the bias belongs to the <em>full</em> output, so it must be added <strong>after</strong> the all-reduce, not before (adding it on every rank would add it <code>n</code> times). That's why <code>RowParallelLinear</code> adds bias only after <code>reduce_from_...</code>. <code>skip_bias_add</code> exists so the caller can fuse the bias-add with a following operation like dropout or GeLU.</p>
+<p><strong>Reading the two <code>bias</code> lines in <code>ColumnParallelLinear.forward</code>.</strong> They look like the bias is never applied. It is &mdash; they are mutually exclusive branches of one switch:</p>
+<div class="ascii-card"><pre>   bias        = self.bias if not self.skip_bias_add else None   # line 1
+   F.linear(input_parallel, self.weight, bias)                   # ...applied here
+   output_bias = self.bias if     self.skip_bias_add else None   # ...or handed back
+
+   skip_bias_add = False  ->  bias added inside F.linear   |  output_bias = None
+   skip_bias_add = True   ->  bias NOT added (bias = None) |  output_bias = self.bias
+
+   never both, never neither
+</pre></div>
+<p>When <code>skip_bias_add=True</code> the layer is saying: <em>here is your output, and here is a bias you still owe it &mdash; I deliberately did not apply it.</em> The caller settles the debt inside a fused kernel:</p>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># ParallelMLP &mdash; the caller
+intermediate, bias = self.dense_h_to_4h(hidden)      # skip_bias_add=True
+intermediate = bias_gelu_impl(intermediate, bias)    # fused: bias + GeLU, one pass
+
+output, bias = self.dense_4h_to_h(intermediate)
+output = bias_dropout_add(output, bias, residual, p) # fused: bias + dropout + residual</pre></div>
+<p>The motive is bandwidth, not elegance. A bias-add is memory-bound: it reads a full activation tensor and writes it straight back just to add a vector. Unfused, <code>XW&#8321; + b&#8321;</code> followed by <code>GeLU</code> touches the <code>4h</code>-wide intermediate <em>twice</em>; fused, once. At batch &times; seq &times; 4h that is a large amount of HBM traffic to save. For <code>RowParallelLinear</code> deferral is also the <em>correct</em> thing to do, for the all-reduce reason above.</p>
 </div>
 <h3 id="transformer-block">Transformer Block</h3>
 <p>Now that we understand column and row parallelism, let's look properly at how to parallelize a Transformer. The Transformer block we commonly know is composed as follows. In Megatron-LM, the Layer Norm layers — whose parameters are very small — are <strong>replicated to all devices</strong>, while the other layers (Attention, MLP) are parallelized via column and row parallelism as above.</p>
