@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 08</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 08</span><span>Large-Scale Model Training</span></p>
   <h1>Memory: Mixed Precision, ZeRO, and FSDP</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -602,6 +602,18 @@ def step(self, closure=None):
                          ▲▲
                          only 2 of the 16 are &quot;the model&quot;
                          → 87.5% of it is bookkeeping</pre></div>
+<div class="warn"><span class="tag">16 is one recipe on a 5&ndash;20 range — and it sets the whole chapter&#x27;s scale</span>
+<p>Chapter 04 §2 works through the full range; the short version matters here because <em>every stage formula below is expressed as a multiple of it</em>. Two knobs move the number, and neither is the tensor-core format:</p>
+<div class="ascii-card"><pre>  Megatron default (fp32 grad accumulation buffer)   20 B/param
+  textbook bf16 + AdamW                              16
+  bf16 moments (DeepSeek-V3 style)                    12
+  Muon, fp32 momentum (one moment, not two)           12
+  8-bit AdamW (blockwise)                             10
+  FP8-LM style                                        ~6   <- practical floor
+</pre></div>
+<p>Note what does <em>not</em> appear: fp8 and fp4 GEMMs. Low-precision compute buys throughput and activation memory; the pieces that resist quantization — master weights and the Adam second moment — are exactly the pieces that dominate this census. The second moment is the hard one: non-negative, heavy-tailed, and in a denominator.</p>
+<p>Two consequences for the rest of the chapter. The stage formulas (4Ψ + 12Ψ/N and friends) assume the 4/12 split of the textbook recipe, so re-derive them if your optimizer state is 8-bit or your optimizer is Muon — under Muon the shardable part is 4Ψ + 4Ψ, not 4Ψ + 12Ψ. And because these recipes cut the same 12Ψ that ZeRO-1 shards, they <em>compose weakly</em> with stage 1 and strongly with nothing else: sharding divides every row by N, which is a bigger lever than any of them. That is the argument for §3 in one line.</p>
+</div>
 <p>Additionally, <strong>data tensors</strong> and <strong>activation tensors</strong> are allocated in memory. Data tensors mean the token-state tensors before they enter the model, and activation tensors mean the hidden states and other tensors computed during forward and backward. On top of that, when you do distributed processing you also need <strong>bucket space to hold tensors during communication.</strong> We already covered buckets as gradient bucketing in the Data Parallelism session. So we need to manage not only the model and the data but also these <strong>optimizer states (variance, momentum) and data &amp; activation memory.</strong></p>
 <p>Zero Redundancy Optimization (ZeRO) is <strong>a collection of memory-optimization techniques</strong> that helps manage these parts very efficiently. There are broadly two families of solutions: <strong>ZeRO-DP</strong> (ZeRO Data Parallelism) and <strong>ZeRO-R</strong> (ZeRO Residual States). Let's work through them step by step.</p>
 <div class="note"><span class="tag">Note — the word &quot;redundancy&quot; is the whole thesis, so make it concrete</span>
@@ -654,7 +666,7 @@ def step(self, closure=None):
 <p>Stage 1 shards the fp32 master weights, momentum, and variance — <strong>12 of the 16 bytes</strong>, three quarters of the total — and costs nothing extra in communication. That's why it's stage 1: it's nearly free.</p>
 </div>
 <div class="note"><span class="tag">Note — why stages 1 and 2 are communication-neutral, which sounds too good to be true</span>
-<p>Straight from notebook 03's identity:</p>
+<p>Straight from chapter 03's identity:</p>
 <div class="ascii-card"><pre>   all_reduce  =  reduce_scatter  +  all_gather      (and costs exactly 2× either half)
 
    DDP:      all_reduce(gradients)                       → 2Ψ moved per rank
@@ -876,7 +888,6 @@ class ReLU(torch.autograd.Function):
         grad_input[input &lt; 0] = 0
         return grad_input</pre></div>
 <p>In the Pipeline Parallelism session we mentioned that the activation tensors used during forward are stored for the backward pass. As above, to compute the derivative of a max-pooling layer you need the original positions of the pooled values, so the tensor input during forward is absolutely required. Also, looking at the <code>ReLU</code> implementation above, you can see the <code>input</code> tensor being saved via <code>ctx.save_for_backward</code>.</p>
-<p><em>(diagrams: <code>../images/checkpoint_full_act.gif</code>, <code>checkpoint_no_act.gif</code>, <code>checkpoint_act.gif</code>)</em></p>
 <p><strong>That is, to perform the backward step you must store the inputs from the forward step.</strong> But if you store activations everywhere like this, memory consumption becomes very large.</p>
 <div class="ascii-card"><pre>   (a) store everything  — the default
    layers:  1─2─3─4─5─6─7─8
@@ -891,7 +902,7 @@ class ReLU(torch.autograd.Function):
    layers:  1─2─3─4─5─6─7─8
    stored:  ●─○─○─●─○─○─●─○        memory: O(√L)  recompute: O(L)
             ▲     ▲     ▲          re-run only from the nearest checkpoint</pre></div>
-<p>Storing only at intervals like this lets you save computation time by not redoing forward from the very beginning every time, and greatly reduces memory consumption by removing almost all activations. This technique — <strong>storing activations at intervals</strong> and, when a forward is needed, running forward from the checkpointed location — is called activation checkpointing. PyTorch already has checkpointing built in. Let's practise with PyTorch.</p>
+<p>Storing only at intervals like this lets you save computation time by not redoing forward from the very beginning every time, and greatly reduces memory consumption by removing almost all activations. This technique — <strong>storing activations at intervals</strong> and, when a forward is needed, running forward from the checkpointed location — is called activation checkpointing. PyTorch has checkpointing built in.</p>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>&quot;&quot;&quot;
 src/checkpointing.py
 &quot;&quot;&quot;
@@ -921,7 +932,7 @@ for i, layer_module in enumerate(layers):
 
 print(f&quot;output: {hidden_states}&quot;)</pre></div>
 <p>Usage is simply changing what you used to write as <strong><code>module(a, b, c)</code> into <code>checkpoint(module, a, b, c)</code></strong> — that's it.</p>
-<p>Also, the Hugging Face <code>transformers</code> we use frequently has this activation-checkpointing feature built into almost every model. <strong>You can simply turn it on and off with <code>model.gradient_checkpointing_enable()</code> and <code>model.gradient_checkpointing_disable()</code>.</strong> Really easy, right?</p>
+<p>Also, the Hugging Face <code>transformers</code> we use frequently has this activation-checkpointing feature built into almost every model. <strong>You can simply turn it on and off with <code>model.gradient_checkpointing_enable()</code> and <code>model.gradient_checkpointing_disable()</code>.</strong></p>
 <div class="note"><span class="tag">Note — the trade, quantified</span>
 <p>The rule of thumb for transformers:</p>
 <div class="tablewrap"><table>
@@ -956,7 +967,7 @@ print(f&quot;output: {hidden_states}&quot;)</pre></div>
 <div class="warn"><span class="tag">`use_reentrant` is now required</span><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>layer_outputs = checkpoint(layer_module, hidden_states, attention_mask,
                            use_reentrant=False)</pre></div>
 <p>The old reentrant implementation had real limitations: it broke with <code>torch.autograd.grad</code>, didn't handle keyword arguments, mis-handled modules with no <code>requires_grad</code> inputs, and interacted badly with DDP's unused-parameter detection. <code>use_reentrant=False</code> is the non-reentrant implementation and is now the recommended path; omitting the argument raises a warning and will eventually change behaviour.</p>
-<p>One more modern caveat: <strong>checkpointing re-runs the forward, so anything stochastic must be replayed identically.</strong> PyTorch handles RNG state for you by default (<code>preserve_rng_state=True</code>), but dropout inside a checkpointed region is a classic source of subtle bugs in hand-rolled implementations.</p></div></div></section><section class="panel" id="pan-5-zero-r" role="tabpanel" aria-labelledby="t-5-zero-r" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 15</p><h2 id="5-zero-r">5. ZeRO-R</h2></div><div class="body"><div class="subnav"><a href="#1-activation-memory-partitioning">1) Activation Memory Partitioning</a><a href="#2-constant-memory-buffer">2) Constant Memory Buffer</a><a href="#3-memory-defragmentation-contiguous-checkpointing">3) Memory Defragmentation (Contiguous Checkpointing)</a></div><div class="warn"><p><strong>📝 Older material numbers this section "4" as well; it is renumbered 5 here, and the two sections after it shift accordingly.</strong></p></div>
+<p>One more modern caveat: <strong>checkpointing re-runs the forward, so anything stochastic must be replayed identically.</strong> PyTorch handles RNG state for you by default (<code>preserve_rng_state=True</code>), but dropout inside a checkpointed region is a classic source of subtle bugs in hand-rolled implementations.</p></div></div></section><section class="panel" id="pan-5-zero-r" role="tabpanel" aria-labelledby="t-5-zero-r" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 15</p><h2 id="5-zero-r">5. ZeRO-R</h2></div><div class="body"><div class="subnav"><a href="#1-activation-memory-partitioning">1) Activation Memory Partitioning</a><a href="#2-constant-memory-buffer">2) Constant Memory Buffer</a><a href="#3-memory-defragmentation-contiguous-checkpointing">3) Memory Defragmentation (Contiguous Checkpointing)</a></div><div class="warn"><p><strong></strong></p></div>
 <p>ZeRO-R is a set of techniques for highly optimizing regions such as activation memory and communication buckets.</p>
 <p>Through the ZeRO-DP we looked at in the previous chapter we efficiently improved model-state memory (FP16 &amp; 32 parameters, gradients, optimizer states). ZeRO-R proposes the following three solutions:</p>
 <ul>
@@ -1112,7 +1123,7 @@ print(f&quot;output: {hidden_states}&quot;)</pre></div>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>from deepspeed.ops.adam import DeepSpeedCPUAdam
 optimizer = DeepSpeedCPUAdam(model.parameters(), lr=3e-5)</pre></div>
 <p>Using plain <code>torch.optim.Adam</code> with offload enabled is a common and severe performance mistake — the CPU step becomes the bottleneck for the entire cluster.</p>
-<p>Let's practise ZeRO-Offload. Likewise, first change the configuration. To offload both the optimizer and the parameters we set the ZeRO stage to 3 and added <code>offload_param</code> and <code>offload_optimizer</code>.</p>
+<p>To use ZeRO-Offload, change the configuration. To offload both the optimizer and the parameters we set the ZeRO stage to 3 and added <code>offload_param</code> and <code>offload_optimizer</code>.</p>
 <div class="ascii-card"><pre>{
   &quot;train_batch_size&quot;: 16,
   &quot;gradient_accumulation_steps&quot;: 1,
@@ -1323,14 +1334,14 @@ for batch in loader:                 # DistributedSampler as usual
                             peak = full model    ← no saving at all</pre></div>
 </div>
 <div class="note"><span class="tag">Note — new in 2.13: FSDP2 can overlap its two collectives</span>
-<p>Historically FSDP's <code>reduce_scatter</code> (gradients, on the backward) and <code>all_gather</code> (parameters, prefetching the next layer) shared a stream and serialized against each other. PyTorch 2.13 adds an <strong>opt-in dedicated process group</strong> so the two overlap, which directly attacks the 1.5× communication cost that §3 attributes to stage 3. If you are FSDP-bound, this is the first knob to try, ahead of anything in §10.</p>
+<p>Historically FSDP's <code>reduce_scatter</code> (gradients, on the backward) and <code>all_gather</code> (parameters, prefetching the next layer) shared a stream and serialized against each other. PyTorch 2.13 adds an <strong>opt-in dedicated process group</strong> so the two overlap, which directly attacks the 1.5× communication cost that §3 attributes to stage 3. Enable it per module with <code>FSDPModule.set_separate_reduce_scatter_group(enable=True)</code>. If you are FSDP-bound, this is the first knob to try, ahead of anything in §10.</p>
 </div>
 <div class="note"><span class="tag">Note — reduce_dtype=torch.float32 is a detail worth keeping</span>
 <p>Gradients are summed across the world; in bf16, with only 7 mantissa bits, summing many small values loses precision fast. Reducing in fp32 costs a bit of bandwidth and removes a class of subtle convergence problems. Most production configs do this.</p>
 </div>
 <div class="note"><span class="tag">Note — checkpointing under FSDP</span>
 <p>State is sharded, so <code>torch.save(model.state_dict())</code> gives you one rank's shard. Use <code>torch.distributed.checkpoint</code>, which saves DTensors with their sharding metadata and can <strong>resume at a different world size or parallel layout</strong> — a capability you will want and will not have if you roll your own.</p>
-</div></div></section><section class="panel" id="pan-9-the-memory-ledger-worked" role="tabpanel" aria-labelledby="t-9-the-memory-ledger-worked" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 15</p><h2 id="9-the-memory-ledger-worked">9. The memory ledger, worked</h2></div><div class="body"><p>Everything in this chapter is one accounting exercise. Here it is end to end for a <strong>7B model on 8× 80 GB GPUs</strong>, mixed-precision Adam.</p>
+</div></div></section><section class="panel" id="pan-9-the-memory-ledger-worked" role="tabpanel" aria-labelledby="t-9-the-memory-ledger-worked" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 15</p><h2 id="9-the-memory-ledger-worked">9. The memory ledger, worked</h2></div><div class="body"><p>Everything in this chapter is one accounting exercise. Here it is end to end for a <strong>7B model on 8× 80 GB GPUs</strong>, mixed-precision Adam at the textbook 16 B/param. Rerun it with your own figure from the recipe table in §2 — at 10 B/param every row below shrinks by five-eighths, which changes which stage you need but not their ordering.</p>
 <div class="ascii-card"><pre>   Ψ = 7e9 parameters,  N = 8</pre></div>
 <div class="tablewrap"><table>
 <thead>
@@ -1401,7 +1412,7 @@ for batch in loader:                 # DistributedSampler as usual
 <li><strong>ZeRO-1 → 2 → 3.</strong> Stages 1 and 2 are communication-free; stage 3 costs 1.5×.</li>
 <li><strong><code>reduce_bucket_size</code> / <code>allgather_bucket_size</code> down.</strong> Small effect, no downside.</li>
 <li><strong>Fuse the loss.</strong> <code>nn.LinearCrossEntropyLoss</code> (2.13) never materializes <code>[batch, seq, vocab]</code>. For large vocabularies this is frequently the single largest allocation in the model — up to 4× off peak memory, for one line.</li>
-<li><strong>8-bit optimizer</strong> (<code>bitsandbytes</code>): 12Ψ → ~3Ψ for optimizer state.</li>
+<li><strong>Cheapen the optimizer state.</strong> 8-bit AdamW (<code>bitsandbytes</code>) takes 12Ψ → ~3Ψ; bf16 moments take it to 4Ψ for one line of config; Muon keeps one moment rather than two. All three attack the same 12Ψ that ZeRO-1 shards, so count one of them, not both.</li>
 <li><strong>Add tensor parallelism</strong> (chapter 07) — the only technique here that also cuts <em>activation</em> memory.</li>
 <li><strong>Offload to CPU.</strong> Big capacity win, big speed cost.</li>
 <li><strong>Offload to NVMe.</strong> Bigger win, bigger cost.</li>
@@ -1538,7 +1549,8 @@ out = checkpoint(layer, x, use_reentrant=False)     # note the argument
 model.gradient_checkpointing_enable()               # HF one-liner
 
 # fused loss — often the single biggest allocation in a large-vocab LM
-loss = torch.nn.LinearCrossEntropyLoss()(hidden, lm_head.weight, targets)   # 2.13
+loss = F.linear_cross_entropy(hidden, lm_head.weight, targets)   # 2.13, fused
+# (nn.LinearCrossEntropyLoss is the module form; it owns its own weight)
 
 # compile BEFORE sharding (2.12 changed FSDP2 + compiled-autograd behaviour)
 model = torch.compile(model); fully_shard(model)
@@ -1659,7 +1671,7 @@ model = torch.compile(model); fully_shard(model)
 <li><strong>ZeRO-Offload: Democratizing Billion-Scale Model Training</strong> — Ren et al., 2021. CPU Adam and DPU.</li>
 <li><strong>ZeRO-Infinity</strong> — Rajbhandari et al., 2021. The NVMe tier and the <code>aio</code> engine.</li>
 <li><strong>Mixed Precision Training</strong> — Micikevicius et al., 2017. Loss scaling and fp32 master weights.</li>
-<li><strong>Training Deep Nets with Sublinear Memory Cost</strong> — Chen et al., 2016. Older material activation-checkpointing result (<code>O(√L)</code> memory).</li>
+<li><strong>Training Deep Nets with Sublinear Memory Cost</strong> — Chen et al., 2016. The original activation-checkpointing result (<code>O(√L)</code> memory).</li>
 <li><strong>8-bit Optimizers via Block-wise Quantization</strong> — Dettmers et al., 2021. The alternative to offloading optimizer state.</li>
 <li>PyTorch FSDP documentation and <code>torch.distributed.checkpoint</code>.</li>
 <li>DeepSpeed <code>config-json</code> reference — every option in this chapter and many more.</li>

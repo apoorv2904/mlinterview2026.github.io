@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 04</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 04</span><span>Large-Scale Model Training</span></p>
   <h1>Parallelism Strategies — an Overview</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -262,7 +262,7 @@ td code{font-size:.85em}
 <li><a href="#further-reading">Further reading</a></li>
 <li><a href="#exercises">Exercises</a></li>
 </ol></div></section><section class="panel" id="pan-0-where-this-chapter-sits" role="tabpanel" aria-labelledby="t-0-where-this-chapter-sits" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 13</p><h2 id="0-where-this-chapter-sits">0. Where this chapter sits</h2></div><div class="body"><div class="note"><span class="tag">Note — </span>
-<p>Notebook 03 gave you a vocabulary of communication primitives. This chapter gives you the sentences you can build with them. It's worth stating the mapping up front, because every section below is really "which primitive, applied to which tensor, between which ranks":</p>
+<p>Chapter 03 gave you a vocabulary of communication primitives. This chapter gives you the sentences you can build with them. It's worth stating the mapping up front, because every section below is really "which primitive, applied to which tensor, between which ranks":</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -303,7 +303,7 @@ td code{font-size:.85em}
 </div></div></section><section class="panel" id="pan-1-parallelism" role="tabpanel" aria-labelledby="t-1-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 13</p><h2 id="1-parallelism">1. Parallelism</h2></div><div class="body"><p>Before getting into any one technique, here is the map: what the axes are, what each costs, and how they relate.</p>
 <p>Parallelization is a technique for handling several things at the same time, and it is one of the most important techniques in large-scale modeling. In machine learning it is mainly used to parallelize computation across multiple devices in order to improve speed or memory efficiency.</p>
 <div class="note"><span class="tag">Note — there are two different reasons to parallelize, and confusing them causes bad design choices</span>
-<p>Older material sentence quietly contains both: "improve speed <strong>or</strong> memory efficiency." These are not the same goal, and the right strategy depends entirely on which one is binding.</p>
+<p>The stock description of parallelism — "improve speed <strong>or</strong> memory efficiency" — quietly contains both goals. They are not the same, and the right strategy depends entirely on which one is binding.</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -390,7 +390,7 @@ td code{font-size:.85em}
 </ol>
 <p>Break any one and the replicas silently diverge — no error, just a model that trains worse than it should. This is why "just call <code>.backward()</code> on each GPU and average the weights occasionally" (sometimes proposed as a cheaper alternative) is a different algorithm with different convergence properties, not an optimization.</p>
 </div>
-<div class="warn"><span class="tag">`DataParallel` vs `DistributedDataParallel`</span><p>Older material chapter says "data parallelism" without distinguishing the two PyTorch implementations. In 2021 <code>nn.DataParallel</code> was still commonly used. It shouldn't be now.</p>
+<div class="warn"><span class="tag">`DataParallel` vs `DistributedDataParallel`</span><p>PyTorch ships two implementations of data parallelism, and material that says only "data parallelism" often fails to distinguish them. <code>nn.DataParallel</code> was once commonly used. It should not be now.</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -455,7 +455,7 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
 </ul>
 </div>
 <div class="note"><span class="tag">Note — what &quot;larger batch size&quot; actually buys you, and where it stops</span>
-<p>Older material correctly says you can feed a batch larger by a factor of the device count. Three refinements:</p>
+<p>You can feed a batch larger by a factor of the device count. Three refinements:</p>
 <div class="ascii-card"><pre>global_batch = per_device_batch × world_size × grad_accumulation_steps</pre></div>
 <ol>
 <li><strong>Learning rate must scale with it.</strong> The standard recipe (Goyal et al., 2017) is the <em>linear scaling rule</em>: multiply the LR by the same factor you multiplied the batch by, and add a few hundred steps of warmup to avoid blowing up early. Skipping this is the most common reason "it trained fine on 1 GPU but diverges on 8."</li>
@@ -508,38 +508,71 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
 </tbody>
 </table></div>
 <p>Plus activations, which depend on batch size, sequence length, and whether you use activation checkpointing.</p>
+</div>
+
+<div class="warn"><span class="tag">16 is a recipe, not a constant — and it was often the optimistic figure</span>
+<p>Treat 16 B/param as one point on a range that now runs from about 5 to 20. Two things set it, and <em>neither is the tensor-core format</em>: which optimizer you use, and what precision you store its state in.</p>
+<p>This is the single most misread number in low-precision training. FP8 and FP4 headlines are almost entirely about <strong>GEMM throughput and activation memory</strong>, not persistent model state. DeepSeek-V3, the NVFP4 recipes and MXFP8 all still keep master weights and optimizer moments wider than the GEMM format; NVFP4-style recipes hold optimizer state in FP8/FP16/BF16 with moments accumulated higher, and keep some layers in BF16 outright for stability — NVIDIA&#x27;s 12B run kept the last eight blocks in BF16, about 15% of the model. Anyone arriving from &quot;FP4 is 4× smaller than BF16&quot; will expect this table to shrink 4× and it will not.</p>
 <div class="tablewrap"><table>
 <thead>
-<tr>
-<th>Model</th>
-<th>State at 16 B/param</th>
-<th>Fits on 80 GB?</th>
-</tr>
+<tr><th>Recipe</th><th>Working weights</th><th>Master</th><th>Grads</th><th>Optimizer state</th><th>Total</th></tr>
 </thead>
 <tbody>
-<tr>
-<td>1.5B</td>
-<td>24 GB</td>
-<td>✓ comfortably</td>
-</tr>
-<tr>
-<td>7B</td>
-<td>112 GB</td>
-<td>✗</td>
-</tr>
-<tr>
-<td>13B</td>
-<td>208 GB</td>
-<td>✗</td>
-</tr>
-<tr>
-<td>70B</td>
-<td>1.1 TB</td>
-<td>✗ (needs ~14+ GPUs just for state)</td>
-</tr>
+<tr><td>fp32 everything</td><td>4</td><td>—</td><td>4</td><td>4 + 4</td><td><strong>16</strong></td></tr>
+<tr><td>Textbook bf16 + AdamW</td><td>2</td><td>4</td><td>2</td><td>4 + 4</td><td><strong>16</strong></td></tr>
+<tr><td>Megatron default (fp32 grad accumulation)</td><td>2</td><td>4</td><td>2 + 4</td><td>4 + 4</td><td><strong>20</strong></td></tr>
+<tr><td>bf16 moments (DeepSeek-V3 style)</td><td>2</td><td>4</td><td>2</td><td>2 + 2</td><td><strong>12</strong></td></tr>
+<tr><td>8-bit AdamW (blockwise)</td><td>2</td><td>4</td><td>2</td><td>1 + 1</td><td><strong>10</strong></td></tr>
+<tr><td>FP8-LM style (fp16 master, fp8 grads + m)</td><td>2</td><td>—</td><td>1</td><td>1 + 2</td><td><strong>~6</strong></td></tr>
+<tr><td>Muon, fp32 momentum</td><td>2</td><td>4</td><td>2</td><td>4</td><td><strong>12</strong></td></tr>
+<tr><td>Muon, bf16 momentum</td><td>2</td><td>4</td><td>2</td><td>2</td><td><strong>10</strong></td></tr>
+<tr><td>Muon, 8-bit momentum, bf16 master w/ stochastic rounding</td><td>2</td><td>—</td><td>2</td><td>1</td><td><strong>~5</strong></td></tr>
 </tbody>
 </table></div>
-<p>So plain DDP tops out somewhere around a few billion parameters on current hardware. Everything in §3 onward is a response to this table.</p>
+<p><strong>16 was frequently optimistic, not conservative.</strong> Megatron-style fp32 gradient-accumulation buffers push the real figure to 18–20, and an EMA weight copy for checkpoint averaging adds another 2–4. Plenty of production runs were nearer 22 B/param than 16.</p>
+<p><strong>The floor is about 5–6, not 4.</strong> Below that you are fighting the second moment, which is the genuinely fragile piece: non-negative, heavy-tailed, and sitting in a denominator — exactly the worst profile for aggressive quantization. COAT measured Llama-2-7B optimizer memory falling from 26.2 GB to 6.4 GB with fp8 optimizer states, which is roughly the 16 → 6 move in the table.</p>
+</div>
+
+<div class="note"><span class="tag">Note — Muon halves the optimizer state, weighted by the 2-D fraction</span>
+<p>Muon keeps only a first moment, so it allocates <em>one</em> buffer per parameter where AdamW allocates two. That is the lightest footprint of any optimizer in common use.</p>
+<p>The asterisk: Muon is a hybrid. It applies Newton–Schulz orthogonalization to the momentum matrix, which requires the weight to be 2-D, so embeddings, norms, biases and the LM head fall back to AdamW. The saving is therefore weighted by the 2-D fraction — and that fraction is strongly scale-dependent:</p>
+<div class="ascii-card"><pre>   7B, 128K vocab, untied embeddings
+     ~1B params in embed + lm_head  ->  ~15% still on AdamW
+     blended moment cost  ~4.6 B/param   (not 8, not 4)
+
+   70B
+     embedding fraction below 5%    ->  close to the full 2x saving
+</pre></div>
+<p>Worth noticing because it is a rare case where the memory arithmetic gets <em>better</em> as you scale.</p>
+<p>The momentum buffer also quantizes far more gracefully than Adam&#x27;s second moment, precisely because there is no denominator. 8-bit Muon has been reported around 74% below full-precision Muon while staying stable under both linear and dynamic quantization, where 8-bit AdamW is typically stable only under dynamic. That asymmetry is why the Muon row bottoms out lower than the AdamW row. The honest cost: Newton–Schulz needs transient workspace for the largest weight matrix and adds roughly 1.0–1.2× per-step overhead, and the distributed implementation is more involved than AdamW&#x27;s under FSDP/ZeRO. Chapter 10 §5 places it among the not-yet-settled choices.</p>
+</div>
+
+<div class="note"><span class="tag">Note — what this does to the &quot;does it fit&quot; question</span>
+<div class="tablewrap"><table>
+<thead>
+<tr><th>Model</th><th>@20 B/param</th><th>@16</th><th>@12</th><th>@10</th><th>@6</th></tr>
+</thead>
+<tbody>
+<tr><td>1.5B</td><td>30 GB</td><td>24 GB</td><td>18 GB</td><td>15 GB</td><td>9 GB</td></tr>
+<tr><td>7B</td><td>140 GB</td><td>112 GB</td><td>84 GB</td><td>70 GB</td><td><strong>42 GB</strong></td></tr>
+<tr><td>13B</td><td>260 GB</td><td>208 GB</td><td>156 GB</td><td>130 GB</td><td>78 GB</td></tr>
+<tr><td>30B</td><td>600 GB</td><td>480 GB</td><td>360 GB</td><td>300 GB</td><td>180 GB</td></tr>
+<tr><td>70B</td><td>1.4 TB</td><td>1.1 TB</td><td>840 GB</td><td>700 GB</td><td>420 GB</td></tr>
+</tbody>
+</table></div>
+<p>Against 80 GB (H100), 141 GB (H200) and ~180–192 GB (B200-class; MI355X at 288 GB), leaving realistic headroom for activations:</p>
+<div class="ascii-card"><pre>   80 GB,  aggressive recipe        ~55 GB for state   -> ceiling ~8-9B
+  192 GB,  aggressive recipe       ~130 GB for state   -> ceiling ~20B
+  192 GB,  recipe you would trust for a long run
+           (~10-12 B/param)                            -> ceiling ~10-13B
+</pre></div>
+<p>So: <strong>plain DDP topped out around 3–4B a few years ago and tops out around 10–20B today</strong>, depending on how much optimizer-state risk you are willing to carry. That is roughly a 4× move against frontier models that grew far more than 4×. The conclusion of this section does not merely survive the arithmetic getting cheaper — it strengthens. Everything in §3 onward is a response to that gap.</p>
+</div>
+
+<div class="warn"><span class="tag">Three things the per-parameter table leaves out</span>
+<p><strong>Activations are the term that actually moves.</strong> This is where low precision pays real memory dividends: COAT reports Llama-2-7B activation memory falling from 25.8 GB to 16.9 GB in fp8, with peak memory going from OOM to 35.6 GB on two GPUs once fp8 optimizer states are combined with it. Past 128K context, activations dominate model state even without checkpointing — so &quot;plus activations&quot; is not a footnote at long context, it is the budget.</p>
+<p><strong>MoE breaks the arithmetic.</strong> State memory scales with <em>total</em> parameters; FLOPs scale with <em>active</em> ones. DeepSeek-V3 at 671B total is ~8 TB of persistent state even at a lean 12 B/param — around 45 H100s just to hold it — while its per-token compute is that of a ~37B dense model. Kimi K2 at ~1T total is worse. Every sparse frontier model makes the &quot;must fit on one device&quot; caveat more absurd, not less.</p>
+<p><strong>Sharding is orthogonal, and it is the actual answer.</strong> ZeRO-2/3 and FSDP divide <em>every</em> number above by the shard count. Low precision and sharding compose; low precision alone was never going to be the answer, it just buys a slightly later crossover point. §5 is where that starts.</p>
 </div>
 <div class="warn"><span class="tag">the caveat is no longer absolute</span><p>"Data parallelism is only possible when one model fits on one device" was true of <em>classical</em> data parallelism, and it is the historical motivation for model parallelism. But <strong>ZeRO / FSDP break that assumption without changing the programming model</strong>: the model is still logically replicated and the batch is still split, but the 16 bytes/param of state are <em>sharded</em> across the same data-parallel ranks and reassembled layer-by-layer on demand.</p>
 <p>With FSDP, a 70B model trains across 64 GPUs using data parallelism alone — no tensor or pipeline parallelism required. This is the single biggest change in the field since 2021, and it's covered in <a href="#5-zero-and-fsdp">§5</a>.</p></div></div></section><section class="panel" id="pan-3-model-parallelism" role="tabpanel" aria-labelledby="t-3-model-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="3-model-parallelism">3. Model Parallelism</h2></div><div class="body"><div class="subnav"><a href="#inter-layer-model-parallelism">Inter-layer Model Parallelism</a><a href="#intra-layer-model-parallelism">Intra-layer Model Parallelism</a><a href="#pipeline-parallelism">Pipeline Parallelism</a></div><p>If a model is so large that it cannot fit entirely onto a single device, you have to split the parameters and place them across multiple devices. Each device therefore holds a portion of the parameters. This makes it possible to handle even a large model by using several small devices, and depending on which dimension is parallelized, we can distinguish <strong>inter-layer</strong> and <strong>intra-layer</strong> model parallelism.</p>
@@ -614,7 +647,7 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
                         activations cross here
                         via send/recv  (P2P)</pre></div>
 <div class="note"><span class="tag">Note — this is the easiest form of model parallelism to implement and the worst-performing if you stop here</span>
-<p>Splitting a <code>nn.Sequential</code> across devices is almost trivial, which is why it's often someone's first attempt. But note what the diagram implies about <em>time</em>: GPU 2 cannot start until GPU 1 finishes, and GPU 1 has nothing to do while GPU 2 works. With <code>p</code> stages you are using <code>1/p</code> of your hardware. Older material addresses this directly in the pipeline section below — inter-layer parallelism is best understood as <em>the naive version that pipelining fixes</em>.</p>
+<p>Splitting a <code>nn.Sequential</code> across devices is almost trivial, which is why it's often someone's first attempt. But note what the diagram implies about <em>time</em>: GPU 2 cannot start until GPU 1 finishes, and GPU 1 has nothing to do while GPU 2 works. With <code>p</code> stages you are using <code>1/p</code> of your hardware. The pipeline section below addresses this directly — inter-layer parallelism is best understood as <em>the naive version that pipelining fixes</em>.</p>
 </div>
 <div class="note"><span class="tag">Note — a second, subtler cost: it splits parameters but not activations well</span>
 <p>Each stage stores the activations it needs for its own backward pass. With a naive schedule and one large batch, the first stage holds activations for the entire batch across all its layers. Activation memory is often the <em>actual</em> constraint in transformer training, so a scheme that only addresses parameter memory solves half the problem.</p>
@@ -651,7 +684,7 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
           all_reduce bwd)                identity bwd)</pre></div>
 <p>Attention is split the same way: <strong>each rank owns a subset of the attention heads</strong> (Q/K/V projections column-parallel), and the output projection is row-parallel. Heads are independent, so this is clean.</p>
 </div>
-<div class="note"><span class="tag">Note — the f/g operators are the autograd pairing from notebook 03</span>
+<div class="note"><span class="tag">Note — the f/g operators are the autograd pairing from chapter 03</span>
 <p>That chapter's <code>_ScatterToModelParallelRegion</code> snippet, with <code>forward=_split</code> and <code>backward=_gather</code>, is one of these. Megatron defines four:</p>
 <div class="tablewrap"><table>
 <thead>
@@ -746,7 +779,7 @@ comm:            all_reduce   all_reduce   all_reduce   all_reduce   ← overlap
          ███ = working      (blank) = IDLE
 
    Utilization ≈ 1/4.  Three quarters of your cluster is doing nothing.</pre></div>
-<p>This is very inefficient. Even though there are several GPUs, in practice only one GPU can be used at a time. To solve this problem, pipeline parallelism pipelines the computation process in parallel as shown below. (Sounds difficult? We'll explain it in detail later.)</p>
+<p>This is very inefficient. Even though there are several GPUs, in practice only one GPU can be used at a time. To solve this problem, pipeline parallelism pipelines the computation process in parallel as shown below.</p>
 <div class="ascii-card"><pre>   Pipelined execution — the batch is split into m microbatches
 
    time ─────────────────────────────────────────────────────────────▶
@@ -854,12 +887,12 @@ elif rank == world_size - 1:
 else:
     schedule.step()</pre></div>
 <p>Available schedules: <code>ScheduleGPipe</code>, <code>Schedule1F1B</code>, <code>ScheduleInterleaved1F1B</code>, <code>ScheduleLoopedBFS</code>, <code>ScheduleInterleavedZeroBubble</code>, <code>ScheduleZBVZeroBubble</code>, <code>ScheduleDualPipeV</code>. Start with <code>ScheduleGPipe</code> to get it working, then switch to <code>Schedule1F1B</code> for memory, then interleaved for throughput.</p></div>
-<div class="note"><span class="tag">Note — pipeline parallelism is where notebook 03&#x27;s P2P section pays off</span>
+<div class="note"><span class="tag">Note — pipeline parallelism is where chapter 03&#x27;s P2P section pays off</span>
 <p>Stage boundaries are <code>send</code>/<code>recv</code> of activations forward and activation-gradients backward. Three things carry over directly:</p>
 <ul>
 <li><code>recv</code> needs a <strong>pre-allocated buffer of the correct shape</strong> — it doesn't infer shape. Pipeline implementations either fix shapes by construction or exchange shape metadata first. This is why variable sequence lengths are awkward under pipelining.</li>
 <li>Use <code>batch_isend_irecv</code>, not paired blocking <code>send</code>/<code>recv</code>. Every stage wanting to send downstream and receive upstream simultaneously is the textbook deadlock.</li>
-<li>P2P over NCCL is fine on modern PyTorch. The notebook-03 comment that "NCCL doesn't support send/recv" was true in 2021 and is not now — which matters enormously here, since pipelining over GLOO would be crippling.</li>
+<li>P2P over NCCL is fine on modern PyTorch. The chapter-03 comment that "NCCL doesn't support send/recv" was true in 2021 and is not now — which matters enormously here, since pipelining over GLOO would be crippling.</li>
 </ul>
 </div>
 <div class="note"><span class="tag">Note — practical gotchas that surprise people</span>
@@ -892,7 +925,7 @@ else:
         └───────────────────────────────────────────────────────┘</pre></div>
 <p>This kind of multi-dimensional parallelism is the most highly regarded approach in large-scale modeling these days. Besides the methods mentioned above there are additional techniques such as ZeRO, but we'll explain those in detail in a later chapter.</p>
 <div class="note"><span class="tag">Note — the modern axis list</span>
-<p>Older material names three axes. As of now there are six in common use, and a large training run may use four or five simultaneously.</p>
+<p>The classic taxonomy names three axes. Six are now in common use, and a large training run may use four or five simultaneously.</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>
@@ -968,7 +1001,7 @@ else:
 <p>With TP innermost, DP middle, PP outermost, the mapping is:</p>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>global_rank = (pp_rank * dp_size + dp_rank) * tp_size + tp_rank</pre></div>
 <p>Every collective names its group, and each collective touches only the ranks it should. <strong>That is all "3-D parallelism" is, mechanically</strong> — three overlapping sets of process groups created with <code>new_group</code>, each rank belonging to one group per axis.</p>
-<p>Recall from notebook 03: <strong><code>new_group</code> is a collective call. Every rank must call it, in the same order, with the same arguments — including ranks that won't be members.</strong> Building a 3-D layout means many <code>new_group</code> calls, so this is the single most likely place to introduce a silent hang.</p>
+<p>Recall from chapter 03: <strong><code>new_group</code> is a collective call. Every rank must call it, in the same order, with the same arguments — including ranks that won't be members.</strong> Building a 3-D layout means many <code>new_group</code> calls, so this is the single most likely place to introduce a silent hang.</p>
 </div>
 <div class="note"><span class="tag">Note — the ordering is not arbitrary; it&#x27;s dictated by bandwidth</span>
 <p>Assign the chattiest axis to the fastest link:</p>
@@ -999,10 +1032,10 @@ dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</p
 <li><strong>DP degree</strong> — whatever GPUs remain (<code>world / (TP × PP)</code>). Free scaling, mostly.</li>
 <li><strong>Microbatches</strong> <code>m</code> — as large as you can while keeping per-microbatch work meaningful. Target <code>m ≥ 4p</code>.</li>
 <li><strong>FSDP/ZeRO stage on the DP axis</strong> — reclaim memory without touching the other axes.</li>
-<li><strong>Activation checkpointing</strong> — the last lever; trades ~30% extra compute for a large activation-memory reduction.</li>
+<li><strong>Activation checkpointing</strong> — the last lever; trades ~33% extra compute for a large activation-memory reduction.</li>
 </ol>
 <p>Sanity check that <code>TP × PP × DP (× CP × EP) = world_size</code> exactly. Mismatches here produce confusing hangs rather than clean errors.</p>
-</div></div></section><section class="panel" id="pan-5-zero-and-fsdp" role="tabpanel" aria-labelledby="t-5-zero-and-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 13</p><h2 id="5-zero-and-fsdp">5. ZeRO and FSDP</h2></div><div class="body"><div class="subnav"><a href="#the-stages">The stages</a><a href="#why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</a><a href="#zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</a></div><p>Older material ends with "there are additional techniques such as ZeRO, but we'll explain those later." Since 2021 this stopped being a footnote and became the default, so it deserves a place in the overview.</p>
+</div></div></section><section class="panel" id="pan-5-zero-and-fsdp" role="tabpanel" aria-labelledby="t-5-zero-and-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 13</p><h2 id="5-zero-and-fsdp">5. ZeRO and FSDP</h2></div><div class="body"><div class="subnav"><a href="#the-stages">The stages</a><a href="#why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</a><a href="#zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</a></div><p>ZeRO was once a footnote to the three classic axes. It became the default, so it belongs in the overview.</p>
 <p><strong>The observation ZeRO starts from:</strong> in plain data parallelism, every replica stores an <em>identical</em> copy of all 16 bytes/param of model state. Across <code>N</code> GPUs that's <code>N</code> redundant copies. But at any given moment, a rank only needs the parameters of the layer it is currently computing.</p>
 <p>So: <strong>shard the state across the data-parallel ranks, and reconstruct each layer just in time.</strong></p>
 <div class="ascii-card"><pre>   Plain DDP (N=4)                     ZeRO-3 / FSDP (N=4)
@@ -1087,7 +1120,7 @@ dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</p
 </table></div>
 <p>The <code>1/N</code> in stage 3 is the important part: <strong>memory per GPU falls as you add GPUs</strong>, so there is no model size that's out of reach given enough devices. That is qualitatively different from DDP, where adding GPUs doesn't help capacity at all.</p>
 <h3 id="why-zero-2-is-nearly-free">Why ZeRO-2 is nearly free</h3>
-<p>From notebook 03's cost model: <code>all_reduce = reduce_scatter + all_gather</code>, and it moves exactly twice what either half moves alone. Plain DDP all-reduces gradients. ZeRO-2 needs only the <em>shard</em> of the gradient matching its optimizer shard — so it does a <code>reduce_scatter</code> instead, then <code>all_gather</code>s the updated parameters after the step. Same total volume, less memory. <strong>That's the whole trick</strong>, and it's why ZeRO-1 and ZeRO-2 are essentially strict improvements over DDP.</p>
+<p>From chapter 03's cost model: <code>all_reduce = reduce_scatter + all_gather</code>, and it moves exactly twice what either half moves alone. Plain DDP all-reduces gradients. ZeRO-2 needs only the <em>shard</em> of the gradient matching its optimizer shard — so it does a <code>reduce_scatter</code> instead, then <code>all_gather</code>s the updated parameters after the step. Same total volume, less memory. <strong>That's the whole trick</strong>, and it's why ZeRO-1 and ZeRO-2 are essentially strict improvements over DDP.</p>
 <p>ZeRO-3 costs extra because parameters must be gathered in <em>both</em> the forward and backward pass — roughly 1.5× DDP's communication. Usually worth it, and much of it can be prefetched and overlapped with compute.</p>
 <h3 id="zerofsdp-vs-tensor-parallelism">ZeRO/FSDP vs. tensor parallelism</h3>
 <p>They solve the same problem — "parameters don't fit" — in very different ways, and the difference determines when to use which:</p>
@@ -1142,7 +1175,7 @@ dp_mesh  = mesh[&quot;dp&quot;]                  # pass to FSDP / fully_shard</p
 for layer in model.layers:
     fully_shard(layer, mesh=mesh[&quot;dp&quot;])   # shard each block
 fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
-<p>DeepSpeed remains a fine choice and is where ZeRO originated; the concepts are identical and the stage numbers mean the same thing.</p></div></div></section><section class="panel" id="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" role="tabpanel" aria-labelledby="t-6-the-newer-axes--sequence-context-and-expert-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 13</p><h2 id="6-the-newer-axes--sequence-context-and-expert-parallelism">6. The newer axes — sequence, context, and expert parallelism</h2></div><div class="body"><div class="subnav"><a href="#sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</a><a href="#context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</a><a href="#expert-parallelism-moe">Expert parallelism (MoE)</a></div><p>Two axes that barely existed when this notebook was written are now routine. Both exist because the <em>shape</em> of the problem changed: contexts got much longer, and models got sparse.</p>
+<p>DeepSpeed remains a fine choice and is where ZeRO originated; the concepts are identical and the stage numbers mean the same thing.</p></div></div></section><section class="panel" id="pan-6-the-newer-axes--sequence-context-and-expert-parallelism" role="tabpanel" aria-labelledby="t-6-the-newer-axes--sequence-context-and-expert-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 8 of 13</p><h2 id="6-the-newer-axes--sequence-context-and-expert-parallelism">6. The newer axes — sequence, context, and expert parallelism</h2></div><div class="body"><div class="subnav"><a href="#sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</a><a href="#context-parallelism-making-long-contexts-possible-at-all">Context parallelism (making long contexts possible at all)</a><a href="#expert-parallelism-moe">Expert parallelism (MoE)</a></div><p>Two axes that barely existed when the classic three-axis taxonomy was fixed are now routine. Both exist because the <em>shape</em> of the problem changed: contexts got much longer, and models got sparse.</p>
 <h3 id="sequence-parallelism-the-memory-saving-companion-to-tp">Sequence parallelism (the memory-saving companion to TP)</h3>
 <p>Recall the gotcha from §3: under vanilla tensor parallelism, LayerNorm and dropout are <strong>replicated</strong> on every TP rank — each holds the full <code>batch × seq × hidden</code> activation. For long sequences this dominates memory.</p>
 <p>Sequence parallelism splits <em>those</em> regions along the sequence dimension, so no activation is ever fully replicated:</p>
@@ -1156,7 +1189,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
 <p>Attention memory and compute scale with sequence length, so 128k-token contexts need the sequence split across devices for the attention computation itself. Two main approaches:</p>
 <ul>
 <li><strong>Ring Attention</strong> — each rank holds a contiguous chunk of the sequence; K/V blocks circulate around a ring of devices while each rank accumulates its partial attention. Communication overlaps with the attention compute.</li>
-<li><strong>DeepSpeed-Ulysses</strong> — <code>all_to_all</code> to switch the sharding <em>axis</em>: shard by sequence outside attention, transpose to shard by attention head inside it, transpose back. Exactly the distributed-transpose use of <code>all_to_all</code> from notebook 03.</li>
+<li><strong>DeepSpeed-Ulysses</strong> — <code>all_to_all</code> to switch the sharding <em>axis</em>: shard by sequence outside attention, transpose to shard by attention head inside it, transpose back. Exactly the distributed-transpose use of <code>all_to_all</code> from chapter 03.</li>
 </ul>
 <h3 id="expert-parallelism-moe">Expert parallelism (MoE)</h3>
 <p>In a Mixture-of-Experts layer, each token is routed to a small number of experts (often 1 or 2) out of many. Experts are placed on different devices, so tokens must travel to wherever their expert lives — and come back:</p>
@@ -1220,7 +1253,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
 </tr>
 <tr>
 <td>Activation checkpointing before more parallelism</td>
-<td>~30% extra compute is usually cheaper than another axis</td>
+<td>~33% extra compute is usually cheaper than another axis</td>
 </tr>
 <tr>
 <td>Measure before adding an axis</td>
@@ -1233,7 +1266,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])       # then the root</pre></div>
 </tbody>
 </table></div>
 <div class="note"><span class="tag">Note — the failure modes scale with the number of axes</span>
-<p>Each axis is a set of process groups, and notebook 03's cardinal rule applies to each of them independently: <em>every rank must call every collective, in the same order, with matching shapes.</em> A 4-D job has four independent chances to violate it. Practical advice: bring the axes up <strong>one at a time</strong>, verifying loss curves match the single-GPU baseline at each step. Debugging a 4-D configuration that was never correct at 2-D is genuinely miserable.</p>
+<p>Each axis is a set of process groups, and chapter 03's cardinal rule applies to each of them independently: <em>every rank must call every collective, in the same order, with matching shapes.</em> A 4-D job has four independent chances to violate it. Practical advice: bring the axes up <strong>one at a time</strong>, verifying loss curves match the single-GPU baseline at each step. Debugging a 4-D configuration that was never correct at 2-D is genuinely miserable.</p>
 </div></div></section><section class="panel" id="pan-8-glossary-and-quick-reference" role="tabpanel" aria-labelledby="t-8-glossary-and-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 13</p><h2 id="8-glossary-and-quick-reference">8. Glossary and quick reference</h2></div><div class="body"><div class="tablewrap"><table>
 <thead>
 <tr>
@@ -1451,7 +1484,7 @@ EP    split the EXPERTS                             → all_to_all</pre></div>
 <li><strong>Derive the pairing.</strong> Show why Megatron splits the first MLP weight column-wise and the second row-wise. Specifically: what goes wrong if you split the <em>first</em> one row-wise instead? (Hint: where does GeLU sit relative to the summation?)</li>
 </ol>
 <ol start="5">
-<li><strong>Implement scatter without scatter.</strong> Using only notebook 03's primitives, implement a two-stage pipeline: rank 0 runs the first half of an MLP, sends activations to rank 1, which runs the second half and sends gradients back. Use <code>batch_isend_irecv</code>. Then break it deliberately by using blocking <code>send</code>/<code>recv</code> on both ranks in the same order, and observe the deadlock.</li>
+<li><strong>Implement scatter without scatter.</strong> Using only chapter 03's primitives, implement a two-stage pipeline: rank 0 runs the first half of an MLP, sends activations to rank 1, which runs the second half and sends gradients back. Use <code>batch_isend_irecv</code>. Then break it deliberately by using blocking <code>send</code>/<code>recv</code> on both ranks in the same order, and observe the deadlock.</li>
 </ol>
 <ol start="6">
 <li><strong>Measure the wrong layout.</strong> If you have multi-node access, run the same job twice — once with the TP group node-local, once with it spanning nodes — and measure step time. The gap you find is the whole argument of §4 in one number.</li>

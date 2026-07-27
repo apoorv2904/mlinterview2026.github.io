@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 05</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 05</span><span>Large-Scale Model Training</span></p>
   <h1>Data Parallelism</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -298,9 +298,9 @@ td code{font-size:.85em}
 <h3 id="1-forward-pass">1) Forward Pass</h3>
 <ol>
 <li><strong>Scatter</strong> the input mini-batch and send the pieces to each device.</li>
-<li><strong>Broadcast</strong> the model parameters sitting on GPU-1 to GPUs 2, 3, 4.</li>
+<li><strong>Broadcast</strong> the model parameters sitting on GPU 0 to GPUs 1, 2, 3.</li>
 <li><strong>Forward</strong> through the model replicated on each device to compute logits.</li>
-<li><strong>Gather</strong> the computed logits back onto GPU-1.</li>
+<li><strong>Gather</strong> the computed logits back onto GPU 0.</li>
 <li>Compute the <strong>loss</strong> from the logits (with loss reduction).</li>
 </ol>
 <div class="ascii-card"><pre>                          ┌── mini-batch (128) ──┐
@@ -353,8 +353,8 @@ def data_parallel(module, inputs, labels, device_ids, output_device):
 <ol>
 <li><strong>Scatter</strong> the computed loss to each device.</li>
 <li>Using the received loss, perform <strong>backward</strong> on each device to compute gradients.</li>
-<li><strong>Reduce</strong> all computed gradients onto GPU-1, summing them there.</li>
-<li>Update the model on GPU-1 using the summed gradients.</li>
+<li><strong>Reduce</strong> all computed gradients onto GPU 0, summing them there.</li>
+<li>Update the model on GPU 0 using the summed gradients.</li>
 </ol>
 <div class="ascii-card"><pre>                              ┌───────────────┐
                               │ GPU 0: loss   │
@@ -436,7 +436,7 @@ for i, batch in enumerate(loader):
    GPU 2  ███████████                 9.4 GB
    GPU 3  ███████████                 9.4 GB
                                       ▲ the imbalance the next paragraph is about</pre></div>
-<p>Training works fine on multiple GPUs. The problem, though, is that because logits pile up on GPU 0, a <strong>GPU memory imbalance</strong> occurs. You can mitigate this to some extent by changing the design so that what gets gathered onto device 0 is the <strong>loss</strong> rather than the logits — because compared to logits, a loss is a scalar and therefore far smaller. This is the same thing as <code>DataParallelCriterion</code> from <a href="https://github.com/zhanghang1989/PyTorch-Encoding">PyTorch-Encoding</a>, introduced in the <a href="https://medium.com/daangn/pytorch-multi-gpu-%ED%95%99%EC%8A%B5-%EC%A0%9C%EB%8C%80%EB%A1%9C-%ED%95%98%EA%B8%B0-27270617936b">Danggeun Market blog post</a>. It's explained in a fairly complicated way on that blog, but instead of the complicated approach you can implement the same functionality very easily just by <strong>overriding the forward function</strong>.</p>
+<p>Training works fine on multiple GPUs. The problem, though, is that because logits pile up on GPU 0, a <strong>GPU memory imbalance</strong> occurs. You can mitigate this to some extent by changing the design so that what gets gathered onto device 0 is the <strong>loss</strong> rather than the logits — because compared to logits, a loss is a scalar and therefore far smaller. This is the same idea as <code>DataParallelCriterion</code> from <a href="https://github.com/zhanghang1989/PyTorch-Encoding">PyTorch-Encoding</a>, and you can get it simply by <strong>overriding the forward function</strong>.</p>
 <div class="ascii-card"><pre>   Before: gather LOGITS            After: gather LOSS
    ───────────────────────          ──────────────────────
    [B/4, seq, vocab] per GPU        [1] per GPU
@@ -583,7 +583,7 @@ for i, data in enumerate(data_loader):
 <tbody>
 <tr>
 <td>Reduce + Broadcast</td>
-<td><code>(N−1)·D</code> <strong>on the master</strong>, ~0 elsewhere</td>
+<td><code>(N−1)·D</code> <strong>at the master</strong>; <code>D</code> up + <code>D</code> down on every other rank</td>
 <td>one device's link; grows linearly with <code>N</code></td>
 </tr>
 <tr>
@@ -594,17 +594,16 @@ for i, data in enumerate(data_loader):
 <tr>
 <td><strong>Ring all-reduce</strong></td>
 <td><code>2·(N−1)/N·D</code> ≈ <strong><code>2D</code></strong></td>
-<td>none — <strong>independent of <code>N</code></strong></td>
+<td>no hot spot; <strong>volume bounded in <code>N</code></strong>, though the <code>2(N−1)</code> steps mean latency still grows</td>
 </tr>
 </tbody>
 </table></div>
 <p>Both naive schemes get worse as you add GPUs, which is fatal for a technique whose entire purpose is adding GPUs. The next section's algorithm is the fix.</p>
 </div></div></section><section class="panel" id="pan-3-torchnnparalleldistributeddataparallel-henceforth-ddp" role="tabpanel" aria-labelledby="t-3-torchnnparalleldistributeddataparallel-henceforth-ddp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 13</p><h2 id="3-torchnnparalleldistributeddataparallel-henceforth-ddp">3. `torch.nn.parallel.DistributedDataParallel` (henceforth DDP)</h2></div><div class="body"><div class="subnav"><a href="#ring-all-reduce">Ring All-reduce 💍</a><a href="#what-is-ddp">What is DDP?</a><a href="#but-wait-when-is-the-best-time-to-run-the-all-reduce">But wait — when is the best time to run the all-reduce?</a><a href="#in-the-end-overlapping-backward-and-all-reduce-is-better">In the end, overlapping backward() and all-reduce is better.</a><a href="#questions-that-might-come-up-here">Questions that might come up here…</a><a href="#gradient-bucketing">Gradient Bucketing</a></div><h3 id="ring-all-reduce">Ring All-reduce 💍</h3>
-<p>Ring all-reduce is a new operation developed by Baidu researchers in 2017. It showed dramatically better performance than the existing approaches, and so became the core of DDP's development.</p>
+<p>Ring all-reduce comes from HPC — Patarasuk and Yuan described the bandwidth-optimal ring algorithm in 2009. Baidu's 2017 release brought it into deep learning, where it showed dramatically better performance than the existing approaches and became the core of DDP's design.</p>
 <ul>
 <li>https://github.com/baidu-research/baidu-allreduce</li>
 </ul>
-<p><em>(diagram: <code>../images/ring_allreduce.gif</code> and <code>../images/ring_allreduce.png</code>)</em></p>
 <div class="ascii-card"><pre>   Arrange the ranks in a ring. Split each gradient tensor into N chunks.
 
               ┌──────▶ GPU0 ──────▶ GPU1 ──────┐
@@ -624,7 +623,7 @@ for i, data in enumerate(data_loader):
 <div class="note"><span class="tag">Note — the identity from chapter 03, made concrete</span>
 <p>That two-phase structure is exactly</p>
 <div class="ascii-card"><pre>   all_reduce  =  reduce_scatter  +  all_gather</pre></div>
-<p>which chapter 03 introduced as an algebraic curiosity. It isn't a curiosity — it <em>is</em> the implementation. And it explains the factor of 2 in the cost: an all-reduce moves twice what either half moves alone, which is the reason ZeRO-2 (chapter 08) can halve gradient communication by keeping only the reduce-scatter half.</p>
+<p>which chapter 03 introduced as an algebraic curiosity. It isn't a curiosity — it <em>is</em> the implementation. And it explains the factor of 2 in the cost: an all-reduce moves twice what either half moves alone, which is the reason ZeRO-2 (chapter 08) can drop the gradient step to half its cost by keeping only the reduce-scatter half. Note that ZeRO-2&#x27;s <em>total</em> volume still matches DDP&#x27;s: it all-gathers the updated parameters after the step instead of all-reducing the gradients before it.</p>
 <p>You will not implement this yourself. NCCL picks ring or tree automatically based on message size and topology — ring for large tensors (bandwidth-optimal), tree for small ones (latency-optimal, <code>O(log N)</code> depth instead of <code>2(N−1)</code> steps). This is also why bucketing matters so much: it converts many latency-bound small reductions into a few bandwidth-bound large ones.</p>
 </div>
 <h3 id="what-is-ddp">What is DDP?</h3>
@@ -759,7 +758,7 @@ finally:
    8 bucketed all-reduces: ████ ████ ████ ████   latency amortized, full bandwidth</pre></div>
 </div>
 <h3 id="gradient-bucketing">Gradient Bucketing</h3>
-<p>Gradient bucketing is a scheme that stores gradients in buckets of a fixed size and sends them to the other processes when a bucket fills up. During the <code>backward()</code> computation, the gradients computed starting from the back are stored in a bucket in order, and when the bucket's capacity is full it performs all-reduce to deliver the sum of the gradients to each device. This may be confusing because of the figure, but what gets stored in the bucket is <strong>not the model's parameters</strong> but the gradients output at that layer. Every bucket has a fixed size, and you can set the capacity in megabytes via the <code>bucket_size_mb</code> argument.</p>
+<p>Gradient bucketing is a scheme that stores gradients in buckets of a fixed size and sends them to the other processes when a bucket fills up. During the <code>backward()</code> computation, the gradients computed starting from the back are stored in a bucket in order, and when the bucket's capacity is full it performs all-reduce to deliver the sum of the gradients to each device. This may be confusing because of the figure, but what gets stored in the bucket is <strong>not the model's parameters</strong> but the gradients output at that layer. Every bucket has a fixed size, and you can set the capacity in megabytes via the <code>bucket_cap_mb</code> argument.</p>
 <div class="ascii-card"><pre>   backward proceeds right → left (output layer first)
 
    layers:   [ 1 ][ 2 ][ 3 ][ 4 ][ 5 ][ 6 ][ 7 ][ 8 ]
@@ -843,8 +842,9 @@ def main():
     ).to(local_rank)
     model = DDP(model, device_ids=[local_rank], bucket_cap_mb=25)
 
-    optimizer = AdamW(model.parameters(), lr=3e-5)
-    scaler = torch.amp.GradScaler(&quot;cuda&quot;)
+    optimizer = AdamW(model.parameters(), lr=3e-5, fused=True)
+    # No GradScaler: bf16 has fp32&#x27;s exponent range, so gradients do not
+    # underflow and loss scaling is unnecessary. Use one only for fp16.
 
     try:
         for epoch in range(EPOCHS):
@@ -858,11 +858,9 @@ def main():
                 with torch.autocast(&quot;cuda&quot;, dtype=torch.bfloat16):
                     loss = model(**batch).loss
 
-                scaler.scale(loss).backward()  # all_reduce happens in here, overlapped
-                scaler.unscale_(optimizer)
+                loss.backward()                # all_reduce happens in here, overlapped
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
 
                 if step % 50 == 0:
                     # loss is this rank&#x27;s LOCAL loss; reduce it before logging
@@ -918,16 +916,16 @@ if __name__ == &quot;__main__&quot;:
 <td>Rust-backed fast tokenizer; often a large fraction of step time in this script</td>
 </tr>
 <tr>
-<td><code>torch.autocast</code> + <code>GradScaler</code></td>
-<td>bf16/fp16 compute — typically 2–3× throughput on modern GPUs</td>
+<td><code>torch.autocast</code> with bf16</td>
+<td>Mixed-precision compute — typically 2–3× throughput on modern GPUs. bf16 needs no <code>GradScaler</code>; add one only for fp16</td>
 </tr>
 <tr>
 <td><code>zero_grad(set_to_none=True)</code></td>
 <td>Frees the gradient buffers rather than filling them with zeros</td>
 </tr>
 <tr>
-<td><code>clip_grad_norm_</code> after <code>unscale_</code></td>
-<td>Clipping must see true, unscaled gradients</td>
+<td><code>clip_grad_norm_</code> before <code>step()</code></td>
+<td>Bounds the update. Under fp16 it must come after <code>scaler.unscale_()</code>, so clipping sees true gradients</td>
 </tr>
 <tr>
 <td><code>all_reduce(..., AVG)</code> before logging</td>
@@ -1107,7 +1105,7 @@ model.register_comm_hook(state=None, hook=hooks.bf16_compress_hook)</pre></div>
 <div class="code shell"><div class="code-bar"><span>bash</span><button class="copy" type="button">copy</button></div><pre>NCCL_DEBUG=INFO torchrun --standalone --nproc_per_node=4 ddp_modern.py</pre></div>
 <p>prints the topology NCCL detected and the algorithm it chose. For the real answer, use <code>torch.profiler</code> and look at whether the NCCL kernels overlap the backward kernels or sit in their own gap. A gap means the overlap isn't working — usually because of an <code>unused parameters</code> stall, a synchronizing <code>.item()</code> call inside the loop, or buckets that are too large to start early.</p>
 <p>The most common self-inflicted wound: calling <code>loss.item()</code> or <code>print(loss)</code> every step. That forces a device synchronization, which stalls the CPU, which prevents it from running ahead to enqueue the next iteration's kernels, which destroys the overlap the whole design is built around.</p>
-</div></div></section><section class="panel" id="pan-7-beyond-ddp--when-to-switch-to-fsdp" role="tabpanel" aria-labelledby="t-7-beyond-ddp--when-to-switch-to-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="7-beyond-ddp--when-to-switch-to-fsdp">7. Beyond DDP — when to switch to FSDP</h2></div><div class="body"><p>DDP's assumption is the one chapter 04 flagged: <strong>the full model state must fit on one device.</strong> At ~16 bytes per parameter for mixed-precision Adam:</p>
+</div></div></section><section class="panel" id="pan-7-beyond-ddp--when-to-switch-to-fsdp" role="tabpanel" aria-labelledby="t-7-beyond-ddp--when-to-switch-to-fsdp" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 9 of 13</p><h2 id="7-beyond-ddp--when-to-switch-to-fsdp">7. Beyond DDP — when to switch to FSDP</h2></div><div class="body"><p>DDP's assumption is the one chapter 04 flagged: <strong>the full model state must fit on one device.</strong> At the textbook ~16 bytes per parameter for mixed-precision Adam &mdash; see chapter 04 §2 for why that figure ranges from about 5 to 20 depending on optimizer and state precision, which shifts the crossover below but not its existence:</p>
 <div class="tablewrap"><table>
 <thead>
 <tr>

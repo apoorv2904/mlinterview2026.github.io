@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 09</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 09</span><span>Large-Scale Model Training</span></p>
   <h1>Multi-dimensional Parallelism</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -262,7 +262,7 @@ td code{font-size:.85em}
         one PP group   ← the ranks it send/recvs activations with, at stage edges
         one DP group   ← the ranks it all_reduces gradients with, once per step</pre></div>
 <p>Nothing else is going on. The whole difficulty of "3-D parallelism" is bookkeeping: deciding <em>which</em> ranks land in which group. That's precisely what the MPU below exists to do.</p>
-</div></div></section><section class="panel" id="pan-2-mpu-model-parallel-unit" role="tabpanel" aria-labelledby="t-2-mpu-model-parallel-unit" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 12</p><h2 id="2-mpu-model-parallel-unit">2. MPU (Model Parallel Unit)</h2></div><div class="body"><p>https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/mpu/initialize.py#L57</p>
+</div></div></section><section class="panel" id="pan-2-mpu-model-parallel-unit" role="tabpanel" aria-labelledby="t-2-mpu-model-parallel-unit" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 12</p><h2 id="2-mpu-model-parallel-unit">2. MPU (Model Parallel Unit)</h2></div><div class="body"><p>https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/parallel_state.py</p>
 <p>MPU is a concept proposed in Megatron-LM that provides various modules related to model parallel processing. In particular, <strong>MPU has the ability to automatically create and manage process groups so that multi-dimensional parallelization can be performed very easily.</strong></p>
 <p>Let's look at an example of process groups for multi-dimensional parallelization.</p>
 <p>Suppose we have 16 GPUs, and suppose we parallelize the model with dimensions (Data:2 × Tensor:2 × Pipeline:4). Then 8 tensor-parallelism groups, 8 data-parallelism groups, and 4 pipeline-parallelism groups are created. That is, as many process groups are created as the total number of GPUs divided by the number of dimensions allocated to that parallelization.</p>
@@ -489,7 +489,7 @@ class MPU(object):
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>group = dist.new_group(ranks)            # ← called by EVERY rank, every iteration
 if current_rank in ranks:                # ← but each rank keeps only ITS group
     self._data_parallel_group = group</pre></div>
-<p><code>new_group</code> is a <strong>collective</strong>. Every rank in the job must call it, in the same order, with the same arguments — <em>including ranks that will not be members</em>. That's why the loop runs to completion on every process and the membership test happens afterwards. Skipping the call on non-members is the classic silent hang, and it's the single most likely bug when hand-rolling multi-dimensional groups. (Notebook 03's cardinal rule, in its most consequential setting.)</p>
+<p><code>new_group</code> is a <strong>collective</strong>. Every rank in the job must call it, in the same order, with the same arguments — <em>including ranks that will not be members</em>. That's why the loop runs to completion on every process and the membership test happens afterwards. Skipping the call on non-members is the classic silent hang, and it's the single most likely bug when hand-rolling multi-dimensional groups. (Chapter 03's cardinal rule, in its most consequential setting.)</p>
 <p>The class also exposes the derived quantities a training loop needs:</p>
 <div class="ascii-card"><pre>   get_{tensor,pipeline,data}_model_parallel_group()
    get_{tensor,pipeline,data}_model_parallel_world_size()
@@ -586,7 +586,7 @@ print(a)</pre></div>
        the optimizer state across the DP replicas.</pre></div>
 <p>In most cases, as in the figure above, TP is used for parallelization within a node and PP for inter-node communication, with ZeRO-1 applied on top. However, as mentioned in the ZeRO paper, for the same resources the maximum trainable model size is far larger with ZeRO — so please choose your parallelization strategy carefully according to your resources, target model size, and server configuration.</p>
 <div class="note"><span class="tag">Note — why ZeRO-2/3 and pipeline parallelism conflict</span>
-<p>Older material states the restriction without explaining it, and the reason is instructive.</p>
+<p>The restriction is usually stated without explanation, and the reason is instructive.</p>
 <p>Pipeline parallelism relies on <strong>gradient accumulation across micro-batches</strong>: <code>m</code> micro-batches flow through, each contributing gradients, and only then does the optimizer step. ZeRO stage 2 shards gradients and reduces them <em>as they're produced</em>; stage 3 additionally frees parameters after each layer's use.</p>
 <div class="ascii-card"><pre>   PP wants:     hold gradients locally for m micro-batches, then reduce once
    ZeRO-2 wants: reduce_scatter each gradient as soon as it exists
@@ -606,8 +606,8 @@ print(a)</pre></div>
 <li>https://github.com/EleutherAI/deeperspeed</li>
 </ul>
 <p>GPT-NeoX is the GPU-version code base being built by the EleutherAI team, famous for GPT-Neo. GPT-NeoX is <strong>a project that adds various modelling components to the "3D parallelism (Megatron 1.1.5) + ZeRO-1" code in DeepSpeed Examples.</strong> For example, ScaleNorm, RMSNorm, Rotary Embedding, Alibi Embedding, Shampoo Optimizer, SM3 Optimizer, and so on have been added, and it supports DeepSpeed Sparse Attention. They are developing English models, and GPT-NeoX <strong>implements only the GPT model</strong> — other architectures (BERT, T5, …) have been removed.</p>
-<p>One thing to watch: the upstream with Megatron-LM is currently not maintained and the two have diverged quite a bit. Megatron-LM is also continuously updated, so <strong>whether upstream is maintained or not is something to consider.</strong> Also, GPT-NeoX develops and uses a DeepSpeed fork called DeeperSpeed, which likewise does not maintain upstream.</p>
-<div class="note"><span class="tag">Note — the &quot;is upstream maintained?&quot; question is the single most useful piece of advice in this section, and it aged perfectly</span>
+<p>One thing to watch: its upstream with Megatron-LM is not maintained and the two have diverged considerably. Megatron-LM is also continuously updated, so <strong>whether upstream is maintained or not is something to consider.</strong> Also, GPT-NeoX develops and uses a DeepSpeed fork called DeeperSpeed, which likewise does not maintain upstream.</p>
+<div class="note"><span class="tag">Note — the &quot;is upstream maintained?&quot; question is the durable lesson here</span>
 <p>A fork that diverges from Megatron-LM stops receiving: new fused kernels, FlashAttention integration, bf16 and fp8 support, new pipeline schedules, and the entire Megatron Core reorganization. That's the difference between a repo you can run on current hardware and an archaeology project.</p>
 <p>Rotary embeddings and RMSNorm, listed here as GPT-NeoX novelties, are now standard in essentially every open model — a good indicator of how much the modelling layer moved while the parallelism layer stayed put.</p>
 </div>
@@ -616,7 +616,7 @@ print(a)</pre></div>
 <li>Maintainer: Stas, Wang, … Hugging Face Team</li>
 <li>https://github.com/bigscience-workshop/Megatron-DeepSpeed: upstream maintained</li>
 </ul>
-<p>The Big Science Workshop is a one-year workshop in which Hugging Face leads code-base development and, using computing equipment under the French government, aims to develop a <strong>multilingual big model.</strong> It is a fork of <a href="https://github.com/microsoft/Megatron-DeepSpeed">latest Megatron + DeepSpeed</a>; it started most recently but is developing fastest because many people participate. They too are continuously adding components recently known to perform well, such as ScaleNorm, RMSNorm, Rotary Embedding, Alibi Embedding, and they operate <strong>BERT, T5, Prefix-LM and others in addition to GPT.</strong> Big-Science also has the characteristic of maintaining Megatron-LM's upstream.</p>
+<p>The BigScience Workshop was a year-long collaboration in which Hugging Face led code-base development and, on computing equipment funded by the French government, trained a <strong>multilingual large model</strong>. It was a fork of <a href="https://github.com/microsoft/Megatron-DeepSpeed">Megatron + DeepSpeed</a> that tracked Megatron-LM&#x27;s upstream, and it operated <strong>BERT, T5, Prefix-LM and others in addition to GPT.</strong> It concluded in 2022 having trained BLOOM; its value now is documentary rather than as a code base, and the table below says why.</p>
 <div class="warn"><span class="tag">where these projects landed, and what to use now</span><div class="tablewrap"><table>
 <thead>
 <tr>
@@ -652,12 +652,24 @@ print(a)</pre></div>
 <td><strong>Megatron Core</strong></td>
 <td>NVIDIA's refactor of Megatron into a reusable library rather than a fork-me script. Now at 0.18 (June 2026), versioned on PyPI, developed in the open on GitHub since Dec 2025. Adds Megatron-FSDP, asymmetric pipeline layouts (<code>--pipeline-model-parallel-layout</code>), HSDP for MoE (<code>--num-distributed-optimizer-instances</code>), and dynamic context parallelism</td>
 </tr>
+<tr>
+<td><strong>Megatron Bridge</strong></td>
+<td>Bidirectional HF ↔ Megatron checkpoint conversion with per-model recipes — the answer to the "checkpoint won't load at a new layout" row below</td>
+</tr>
+<tr>
+<td><strong>torchtitan</strong></td>
+<td>PyTorch-native reference for 4-D parallelism (FSDP2 + TP + PP + CP) on <code>DeviceMesh</code>. The clearest modern code for everything in this chapter</td>
+</tr>
+<tr>
+<td><strong>NVIDIA NeMo</strong></td>
+<td>Production framework built on Megatron Core</td>
+</tr>
+<tr>
+<td><strong>Hugging Face <code>accelerate</code></strong></td>
+<td>Lower-effort path to FSDP/DeepSpeed for smaller-scale work</td>
+</tr>
 </tbody>
-</table></div></div>
-<p>| <strong>Megatron Bridge</strong> | Bidirectional HF ↔ Megatron checkpoint conversion with per-model recipes — the answer to the "checkpoint won't load at a new layout" row below |</p>
-<div class="warn"><p>| <strong>torchtitan</strong> | PyTorch-native reference for 4-D parallelism (FSDP2 + TP + PP + CP) on <code>DeviceMesh</code>. The clearest modern code for everything in this chapter |
-| <strong>NVIDIA NeMo</strong> | Production framework built on Megatron Core |
-| <strong>Hugging Face <code>accelerate</code></strong> | Lower-effort path to FSDP/DeepSpeed for smaller-scale work |</p>
+</table></div>
 <p><strong>If you're starting today</strong>, read torchtitan first — it does in a few hundred readable lines what the MPU class above does in six hundred, and it composes all the axes rather than restricting their combinations.</p></div></div></section><section class="panel" id="pan-4-devicemesh-the-modern-mpu" role="tabpanel" aria-labelledby="t-4-devicemesh-the-modern-mpu" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 12</p><h2 id="4-devicemesh-the-modern-mpu">4. DeviceMesh, the modern MPU</h2></div><div class="body"><p>The MPU class exists to answer one question — "which ranks are in my group for axis X?" — and PyTorch now answers it declaratively.</p>
 <div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
@@ -799,7 +811,7 @@ fully_shard(model, mesh=mesh[&quot;dp&quot;])</pre></div>
                             × (1 − bubble)              ← PP tax
                             × (TP communication factor)  ← ~0.85–0.95 on NVLink
                             × (DP scaling efficiency)    ← ~0.9+</pre></div>
-<p>With PP=4, m=16 → bubble ≈ 16%, so ~0.84 × 0.9 × 0.95 ≈ <strong>0.72</strong>. An MFU in the 35–50% range for a well-tuned large run is normal; if you're expecting 90%, recalibrate.</p>
+<p>With PP=4, m=16 → bubble ≈ 16%, so ~0.84 × 0.9 × 0.95 ≈ <strong>0.72</strong>. An MFU in the 35–55% range for a well-tuned large run is normal; if you're expecting 90%, recalibrate.</p>
 </div></div></section><section class="panel" id="pan-6-the-axes-that-came-later" role="tabpanel" aria-labelledby="t-6-the-axes-that-came-later" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 12</p><h2 id="6-the-axes-that-came-later">6. The axes that came later</h2></div><div class="body"><p>The chapter's 3-D model was the state of the art in 2021. Two axes joined since, and a large run today is commonly 4-D or 5-D.</p>
 <div class="tablewrap"><table>
 <thead>

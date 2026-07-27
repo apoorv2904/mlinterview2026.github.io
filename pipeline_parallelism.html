@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 06</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 06</span><span>Large-Scale Model Training</span></p>
   <h1>Pipeline Parallelism</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -264,7 +264,6 @@ td code{font-size:.85em}
                                        activations cross the boundary
                                        via send/recv  (P2P)</pre></div>
 <p>However, due to the nature of neural networks — where the output of the previous layer is the input of the next — another GPU can only begin its computation once a particular GPU has finished. In other words, as in the figure below, inter-layer model parallelism has the fatal limitation that <strong>only one GPU can be used at a time</strong>.</p>
-<p><em>(diagrams: <code>../images/inter_layer_2.png</code>, <code>../images/inter_layer_3.gif</code>)</em></p>
 <div class="ascii-card"><pre>   time ──────────────────────────────────────────────────────────────▶
 
    GPU0  ███████                                            ███████
@@ -279,7 +278,6 @@ td code{font-size:.85em}
 <div class="note"><span class="tag">Note — the term &quot;stage&quot; is worth pinning down now</span>
 <p>, because the rest of the chapter counts in stages. A stage is <em>one contiguous chunk of layers assigned to one device</em>. <code>p</code> = number of stages = pipeline-parallel degree. Stage 0 owns the embedding; the last stage owns the LM head and computes the loss. Everything else in this chapter is about scheduling work <em>through</em> these stages — the partitioning itself doesn't change.</p>
 </div></div></section><section class="panel" id="pan-2-gpipe" role="tabpanel" aria-labelledby="t-2-gpipe" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 13</p><h2 id="2-gpipe">2. GPipe</h2></div><div class="body"><div class="subnav"><a href="#micro-batch">Micro-batch</a><a href="#pipelining">Pipelining</a><a href="#gpipe-in-code">GPipe in code</a></div><p>GPipe is a pipeline-parallelism technique developed at Google. It appeared in order to reduce the idle time of GPUs during inter-layer model parallelism, and it works by splitting the mini-batch once more into <strong>micro-batches</strong> and pipelining the training process.</p>
-<p><em>(diagrams: <code>../images/gpipe_1.png</code>, <code>../images/pipeline_parallelism2.png</code>)</em></p>
 <h3 id="micro-batch">Micro-batch</h3>
 <ul>
 <li>A <strong>mini-batch</strong> is a subsample set obtained by dividing the whole dataset into n pieces.</li>
@@ -562,7 +560,6 @@ if __name__ == &quot;__main__&quot;:
         update        update</pre></div>
 <h3 id="2-pipedream-flush">2) PipeDream Flush</h3>
 <p>PipeDream-Flush is a pipelining method that combines 1F1B with a pipeline flush. Because a flush happens, the idle time is similar to GPipe, but the <strong>activation memory that must be maintained during the forward-backward process is reduced.</strong> Because PipeDream-Flush flushes, there is no need to manage multiple parameter versions. So only a single weight needs to be maintained, making it even more memory-efficient than PipeDream-2BW. (It is the most memory-efficient of the techniques introduced so far.)</p>
-<p><em>(diagrams: <code>../images/pipe_dream_flush.png</code>, <code>../images/pipe_dream_flush_2.png</code>)</em></p>
 <div class="ascii-card"><pre>   GPipe vs PipeDream-Flush — SAME bubble, very different memory
 
    GPipe        F1 F2 F3 F4 F5 F6 F7 F8 B8 B7 B6 B5 B4 B3 B2 B1
@@ -661,11 +658,11 @@ class ReLU(torch.autograd.Function):
 <p>Concretely: a 40-layer model, batch 8, sequence 2048, hidden 5120 can run to <em>tens of GB</em> of activations — often more than the parameters, gradients, and optimizer states put together.</p>
 <p>Two standard countermeasures, both of which interact with pipelining:</p>
 <ul>
-<li><strong>Activation checkpointing (gradient checkpointing).</strong> Don't store intermediates; store only the stage boundaries and <em>recompute</em> the forward during backward. Typically ~30% more compute for a large memory reduction. This is why <code>torch.utils.checkpoint</code> exists.</li>
+<li><strong>Activation checkpointing (gradient checkpointing).</strong> Don't store intermediates; store only the stage boundaries and <em>recompute</em> the forward during backward. Typically ~33% more compute for a large memory reduction &mdash; one extra forward on top of forward + backward. Chapter 08 §4 derives it. This is why <code>torch.utils.checkpoint</code> exists.</li>
 <li><strong>1F1B scheduling.</strong> Exactly what §4.2 described — cap the number of in-flight micro-batches at <code>p</code> instead of <code>m</code>.</li>
 </ul>
 <p>They compose, but apply both carelessly and you can recompute more than necessary.</p>
-<p>Now that we know what activation memory is, shall we try PipeDream? <strong>PipeDream-Flush is implemented in Microsoft's distributed-processing library DeepSpeed.</strong> (Reference: https://github.com/microsoft/DeepSpeed/issues/1110) So let's use DeepSpeed.</p>
+<p>With activation memory defined, here is PipeDream in practice. <strong>PipeDream-Flush is implemented in Microsoft's distributed-processing library DeepSpeed.</strong> (Reference: https://github.com/microsoft/DeepSpeed/issues/1110) So let's use DeepSpeed.</p>
 </div>
 <h3 id="the-same-thing-in-deepspeed-and-a-trap-worth-knowing">The same thing in DeepSpeed, and a trap worth knowing</h3>
 <p>DeepSpeed's <code>PipelineModule</code> implements 1F1B-with-flush and is still in wide use. It ships its own launcher — <code>deepspeed --num_gpus=n script.py</code>, or the shorter alias <code>ds</code> — which is equivalent to <code>torchrun</code> for single-node jobs.</p>
@@ -776,7 +773,7 @@ if __name__ == &quot;__main__&quot;:
 <ol>
 <li><strong><code>engine.train_batch()</code> replaces the whole loop.</strong> No <code>forward</code>, no <code>loss.backward()</code>, no <code>optimizer.step()</code> — the engine drives the schedule, pulling micro-batches from the iterator itself. This is characteristic of pipeline APIs: the schedule owns control flow, and you hand it a data source rather than a batch.</li>
 <li><strong><code>loss_fn</code> is passed to <code>PipelineModule</code>, not called by you.</strong> The loss can only be computed on the last stage, so the framework needs to own it. Same reason <code>batch_fn</code> exists — it tells the engine how to derive <code>(inputs, labels)</code> from one dataset item.</li>
-<li><strong><code>padding="max_length", max_length=1024</code> — every sequence padded to full length.</strong> This looks wasteful, and for ordinary training it would be. Here it's deliberate: <code>recv</code> needs a pre-allocated buffer of known shape, so pipelines strongly prefer <strong>fixed</strong> shapes. Combined with the sort-by-length "uniform length batching" trick, this is the script working around the shape-rigidity of P2P transfer that notebook 03 warned about.</li>
+<li><strong><code>padding="max_length", max_length=1024</code> — every sequence padded to full length.</strong> This looks wasteful, and for ordinary training it would be. Here it's deliberate: <code>recv</code> needs a pre-allocated buffer of known shape, so pipelines strongly prefer <strong>fixed</strong> shapes. Combined with the sort-by-length "uniform length batching" trick, this is the script working around the shape-rigidity of P2P transfer that chapter 03 warned about.</li>
 </ol>
 </div>
 <div class="note"><span class="tag">Note — partition_method options</span>
@@ -1138,8 +1135,15 @@ if __name__ == &quot;__main__&quot;:
 <div class="note"><span class="tag">Note — a sanity check that catches most misconfigurations</span>
 <p>Before trusting a pipeline run:</p>
 <div class="ascii-card"><pre>   expected step time  ≈  (single-GPU step time for the whole model)
-                          × (1 + bubble fraction)
-                          / 1                     ← PP gives no compute speedup!</pre></div>
+                          × (1 + (p-1)/m)         ← overhead vs ideal, NOT the
+                                                    bubble fraction itself
+
+   the two are different numbers:
+     bubble fraction  = (p-1)/(m+p-1)   share of elapsed time spent idle
+     overhead         = (p-1)/m         what you multiply ideal time by
+     p=4, m=16        ->  15.8% idle,  but  x1.1875 on the clock
+
+   and note there is no /p term: PP gives no compute speedup.</pre></div>
 <p>Pipeline parallelism does <strong>not</strong> make a fixed amount of work finish faster in the way data parallelism does — it makes a model <em>fit</em> that otherwise wouldn't, and keeps the devices busy while doing so. If you're benchmarking PP expecting linear speedup, you're measuring the wrong thing.</p>
 </div></div></section><section class="panel" id="pan-9-quick-reference" role="tabpanel" aria-labelledby="t-9-quick-reference" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 10 of 13</p><h2 id="9-quick-reference">9. Quick reference</h2></div><div class="body"><div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># ── the two numbers that matter ────────────────────────────
 p = 4      # pipeline stages  (= number of devices in the PP group)
@@ -1291,7 +1295,7 @@ config = {
 <li>DeepSpeed pipeline-parallelism tutorial — <code>PipelineModule</code>, <code>partition_method</code>, and the batch-size identity.</li>
 <li><code>torch.utils.checkpoint</code> — activation checkpointing, the other half of the memory story.</li>
 </ul></div></section><section class="panel" id="pan-exercises" role="tabpanel" aria-labelledby="t-exercises" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 13 of 13</p><h2 id="exercises">Exercises</h2></div><div class="body"><ol>
-<li><strong>Verify the bubble.</strong> Run the DeepSpeed script as written, note the printed <code>micro_batches=1</code>, and time 50 steps. Then set <code>train_micro_batch_size_per_gpu: 1</code> and time again. Compare the ratio to <code>(1+3/19) / (1+3/4)</code>.</li>
+<li><strong>Verify the bubble.</strong> Run the DeepSpeed script as written, note the printed <code>micro_batches=1</code>, and time 50 steps. Then set <code>train_micro_batch_size_per_gpu: 1</code> and time again. Compare the ratio to <code>(1 + 3/16) / (1 + 3/1)</code> &mdash; that is the overhead form <code>(p−1)/m</code> at m=16 and m=1, not the bubble fractions. It predicts roughly 0.30.</li>
 </ol>
 <ol start="2">
 <li><strong>Feel the memory difference.</strong> Run GPipe with <code>chunks</code> = 4, 8, 16, 32 and record peak memory on stage 0. Then do the same under 1F1B. Plot both — one curve should rise linearly and one should be flat.</li>

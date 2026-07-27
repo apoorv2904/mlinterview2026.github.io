@@ -221,7 +221,7 @@ td code{font-size:.85em}
 <body>
 
 <header class="masthead">
-  <p class="eyebrow"><span>Chapter 10</span><span>tunib-ai / large-scale-lm-tutorials</span></p>
+  <p class="eyebrow"><span>Chapter 10</span><span>Large-Scale Model Training</span></p>
   <h1>Making Each GPU-Second Count</h1>
   <div class="ring-wrap">
     <div class="pipe" aria-hidden="true">
@@ -327,7 +327,7 @@ __host__ void func(){...}</pre></div>
 <p>So the <em>majority of the operations</em> in a transformer are memory-bound. For those, the only thing that matters is how many times you traverse HBM — and fusion is precisely the technique that reduces that count. This is why fusion often yields 1.5–3× on real models: you are not making the arithmetic faster, you are removing trips to memory that were never necessary.</p>
 </div>
 <h3 id="but">But…</h3>
-<p>However, including CUDA programming content from scratch in this presentation would blow up the length, so I'll skip CUDA-programming-related material. Instead let me recommend the effective Transformer kernels released so far. Usage is well documented, so please refer to them to improve your computation performance.</p>
+<p>Writing CUDA from scratch is beyond this chapter's scope. What follows instead is the set of transformer kernels that were the standard recommendations, and then what replaced them.</p>
 <h4 id="training-kernels">Training Kernels</h4>
 <ul>
 <li><a href="https://github.com/NVIDIA/apex/tree/master/csrc">Apex Fused Kernel</a></li>
@@ -370,7 +370,13 @@ out = varlen_attn(q, k, v, cu_seq_q, cu_seq_k, max_q, max_k,
 <p>NVIDIA's current answer for Hopper and later: pre-fused attention and MLP blocks plus automatic fp8 scaling. It's what Megatron Core uses now, and it's the direct successor to the Apex kernels listed above.</p>
 <p><strong>5. <code>nn.LinearCrossEntropyLoss</code> — fusion applied to the loss.</strong></p>
 <p>The last layer of a language model produces <code>[batch, seq, vocab]</code> logits purely so cross-entropy can consume them. For a 128k vocabulary that tensor, plus its fp32 softmax intermediate, is routinely the largest allocation in the model. PyTorch 2.13 fuses the projection and the loss so it is never materialized:</p>
-<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre>loss = torch.nn.LinearCrossEntropyLoss()(hidden_states, lm_head.weight, targets)</pre></div>
+<div class="code"><div class="code-bar"><span>python</span><button class="copy" type="button">copy</button></div><pre># functional form: use when the projection weight already exists (a tied lm_head)
+loss = torch.nn.functional.linear_cross_entropy(
+    hidden_states, lm_head.weight, targets)
+
+# module form: owns its own weight, so it is built with the shapes instead
+loss_fn = torch.nn.LinearCrossEntropyLoss(hidden_size, vocab_size)
+loss    = loss_fn(hidden_states, targets)</pre></div>
 <p>Reported at <strong>up to 4× lower peak memory</strong> for large-vocabulary LM training. This is the same insight as §1 — don't write an intermediate to HBM if you can consume it in place — applied to the one tensor where it pays most.</p>
 <p><strong>Also fused, and easy to forget:</strong> optimizers. <code>torch.optim.AdamW(..., fused=True)</code> collapses the entire per-parameter update into one kernel instead of dozens of small elementwise launches. Free, and worth a few percent. As of 2.12, <code>Adagrad</code> joined <code>Adam</code>, <code>AdamW</code>, and <code>SGD</code> in having a fused implementation.</p></div></div></section><section class="panel" id="pan-2-progressive-layer-dropping-pld" role="tabpanel" aria-labelledby="t-2-progressive-layer-dropping-pld" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 11</p><h2 id="2-progressive-layer-dropping-pld">2. Progressive Layer Dropping (PLD)</h2></div><div class="body"><p>Progressive Layer Dropping is a method that randomly skips layers to improve training speed and performance. The paper's authors say they obtained the following two insights from BERT's training process.</p>
 <ul>
@@ -387,7 +393,7 @@ out = varlen_attn(q, k, v, cu_seq_q, cu_seq_k, max_q, max_k,
 <div class="ascii-card"><pre>   G = 1                              G = 0
    x ──▶ [ Attention + MLP ] ──▶ y    x ──────────────────────▶ x
               (computed)                    (identity — skipped)</pre></div>
-<p>This is a feature currently included in DeepSpeed, but it isn't yet compatible with ZeRO and so on, so it will probably be hard to use when actually developing large-scale models. I hope PLD gets combined with the other features in DeepSpeed soon :) For more detail see the paper https://arxiv.org/abs/2010.13369.</p>
+<p>This is a feature currently included in DeepSpeed, but it isn't yet compatible with ZeRO and so on, so it is hard to use when actually developing large-scale models. For more detail see the paper https://arxiv.org/abs/2010.13369.</p>
 <div class="note"><span class="tag">Note — why this only works with Pre-LN, which is worth understanding</span>
 <p>The insight depends on the residual structure:</p>
 <div class="ascii-card"><pre>   Post-LN:  x → LayerNorm(x + Sublayer(x))     removing Sublayer changes what LN sees
@@ -471,7 +477,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
         │               ┌──────┘
     128 │───────┬───────┘
         └───────────────────────────────────────────────▶ steps</pre></div>
-<p>It's a very simple method but showed quite surprising performance. Looking at the graph, you can see the loss measured is lower when curriculum learning is applied. Curriculum learning is also currently implemented in DeepSpeed. I recommend making good use of these features. For details see the paper https://arxiv.org/abs/2108.06084.</p>
+<p>It's a very simple method but showed quite surprising performance. Looking at the graph, you can see the loss measured is lower when curriculum learning is applied. Curriculum learning is implemented in DeepSpeed. For details see the paper https://arxiv.org/abs/2108.06084.</p>
 <div class="note"><span class="tag">Note — there is a second, purely mechanical benefit, and it may be the larger one</span>
 <p>Attention costs <code>O(seq²)</code>. Training at length 128 instead of 2048 is <strong>256× cheaper per token of attention</strong>, and the memory footprint shrinks correspondingly, so you can use a much larger batch. In other words, sequence-length curriculum isn't only pedagogically motivated — the early phase is nearly free:</p>
 <div class="ascii-card"><pre>   early phase:  short seq → cheap attention → big batch → many steps per hour
@@ -513,7 +519,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
 </tbody>
 </table></div>
 <p>The through-line is that <strong>data ordering and composition are first-class training decisions</strong>, not preprocessing details. In 2021 that was a paper; now it's a standard part of how large models get trained.</p>
-<p>DeepSpeed's implementation still exists (<code>data_efficiency</code> config); most large projects implement their own scheduling in the data loader.</p></div></div></section><section class="panel" id="pan-5-what-actually-matters-now" role="tabpanel" aria-labelledby="t-5-what-actually-matters-now" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 11</p><h2 id="5-what-actually-matters-now">5. What actually matters now</h2></div><div class="body"><div class="subnav"><a href="#tier-1-do-these-on-every-job">Tier 1 — do these on every job</a><a href="#tier-2-architecture-choices-that-are-now-standard">Tier 2 — architecture choices that are now standard</a><a href="#tier-3-capacity-and-memory">Tier 3 — capacity and memory</a><a href="#tier-4-training-dynamics">Tier 4 — training dynamics</a></div><p>Older material's four techniques were a reasonable 2021 shortlist. Here is what a comparable list looks like now, roughly ordered by how much difference each makes on a typical training job.</p>
+<p>DeepSpeed's implementation still exists (<code>data_efficiency</code> config); most large projects implement their own scheduling in the data loader.</p></div></div></section><section class="panel" id="pan-5-what-actually-matters-now" role="tabpanel" aria-labelledby="t-5-what-actually-matters-now" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 11</p><h2 id="5-what-actually-matters-now">5. What actually matters now</h2></div><div class="body"><div class="subnav"><a href="#tier-1-do-these-on-every-job">Tier 1 — do these on every job</a><a href="#tier-2-architecture-choices-that-are-now-standard">Tier 2 — architecture choices that are now standard</a><a href="#tier-3-capacity-and-memory">Tier 3 — capacity and memory</a><a href="#tier-4-training-dynamics">Tier 4 — training dynamics</a></div><p>The four techniques above were a reasonable shortlist in their day. Here is what a comparable list looks like now, roughly ordered by how much difference each makes on a typical training job.</p>
 <h3 id="tier-1-do-these-on-every-job">Tier 1 — do these on every job</h3>
 <div class="tablewrap"><table>
 <thead>
@@ -667,7 +673,7 @@ optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=3e-5)</pre></div>
 </tr>
 <tr>
 <td><strong>Muon and other emerging optimizers</strong></td>
-<td>Active area since 2024; Megatron Core is adding distributed Muon. Treat as promising, not settled</td>
+<td>Active area since 2024; Megatron Core is adding distributed Muon. Muon also halves optimizer-state memory (one moment, not two) on 2-D weights — chapter 04 §2 has the arithmetic. Treat as promising, not settled</td>
 </tr>
 <tr>
 <td><strong>z-loss, QK-norm, careful init</strong></td>
@@ -735,7 +741,7 @@ model = torch.compile(model)                            # 1.1-1.5×
 
 optimizer = torch.optim.AdamW(params, lr=3e-5, fused=True)
 
-loss = torch.nn.LinearCrossEntropyLoss()(h, lm_head.weight, tgt)  # 2.13, big vocab
+loss = F.linear_cross_entropy(h, lm_head.weight, tgt)   # 2.13, big vocab
 
 model.gradient_checkpointing_enable()                   # memory
 
