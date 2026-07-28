@@ -377,7 +377,7 @@ td code{font-size:.85em}
 
         no   ->  sequence parallelism    (layout change, free)
         yes  ->  context parallelism     (new axis, real cost)
-</pre></div></div></section><section class="panel" id="pan-3-sequence-parallelism" role="tabpanel" aria-labelledby="t-3-sequence-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 7</p><h2 id="3-sequence-parallelism">3. Sequence parallelism, mechanically</h2></div><div class="body"><div class="subnav"><a href="#what-tp-leaves-replicated">What TP leaves replicated</a><a href="#the-operator-swap">The operator swap</a><a href="#why-it-is-free">Why it is free</a></div>
+</pre></div></div></section><section class="panel" id="pan-3-sequence-parallelism" role="tabpanel" aria-labelledby="t-3-sequence-parallelism" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 7</p><h2 id="3-sequence-parallelism">3. Sequence parallelism, mechanically</h2></div><div class="body"><div class="subnav"><a href="#what-tp-leaves-replicated">What TP leaves replicated</a><a href="#a-whole-block-with-shapes">A whole block, with shapes</a><a href="#the-operator-swap">The operator swap</a><a href="#why-it-is-free">Why it is free</a></div>
 <h3 id="what-tp-leaves-replicated">What TP leaves replicated</h3>
 <p>From chapter 07: between the attention block and the MLP block, tensor parallelism ends each region with <code>g</code> (an <code>all_reduce</code>), which leaves the activation <strong>replicated</strong> on every TP rank. LayerNorm and dropout then run on that full tensor, on every rank, redundantly.</p>
 <div class="ascii-card"><pre>   vanilla TP, per rank, per layer
@@ -389,6 +389,76 @@ td code{font-size:.85em}
                         ^
               at long s this replicated term dominates activation memory
 </pre></div>
+<h3 id="a-whole-block-with-shapes">A whole block, with shapes attached</h3>
+<p>The fastest way to see what is happening is to walk one transformer block and write the per-rank shape next to every line. Take <code>s = 4096</code>, <code>h = 8192</code>, <code>N = 4</code> ranks, bf16, batch 1 &mdash; so one full activation is <code>4096 &times; 8192 &times; 2 B = 67 MB</code>.</p>
+<div class="ascii-card"><pre>  VANILLA TP                                      per-rank shape
+  ----------------------------------------------------------------------
+  X                                               [4096, 8192]  REPLICATED
+  LayerNorm                                       [4096, 8192]  REPLICATED  &lt;- 67 MB x4
+      |  f = identity  (X is already replicated)
+  QKV proj      column-parallel                   [4096, 6144]  sharded 3h/N
+  attention     local heads                       [4096, 2048]  sharded  h/N
+  out proj      row-parallel -&gt; PARTIAL SUMS      [4096, 8192]  partial
+      |  g = all_reduce                     &lt;-- the one collective
+  residual + dropout                              [4096, 8192]  REPLICATED  &lt;- 67 MB x4
+  LayerNorm                                       [4096, 8192]  REPLICATED  &lt;- 67 MB x4
+      |  f = identity
+  MLP up        column-parallel                   [4096, 8192]  sharded 4h/N
+  GeLU                                            [4096, 8192]  sharded
+  MLP down      row-parallel -&gt; PARTIAL SUMS      [4096, 8192]  partial
+      |  g = all_reduce
+  residual + dropout                              [4096, 8192]  REPLICATED  &lt;- 67 MB x4
+</pre></div>
+<p>Notice the rhythm. <em>Inside</em> attention and the MLP the tensors are sharded along <strong>hidden</strong> &mdash; that is tensor parallelism doing its job. But every time control lands back on a LayerNorm or a dropout, the tensor is full size on all four ranks: four bit-identical 67 MB copies, four times per layer, every one of which must be stashed for the backward pass.</p>
+<p>Now switch sequence parallelism on. Only the marked lines change:</p>
+<div class="ascii-card"><pre>  TP + SP                                         per-rank shape
+  ----------------------------------------------------------------------
+  X                                               [1024, 8192]  seq-sharded s/N
+  LayerNorm                                       [1024, 8192]  seq-sharded  &lt;- 17 MB
+      |  f = ALL_GATHER along seq           &lt;-- rebuild the full sequence
+  QKV proj      column-parallel                   [4096, 6144]  sharded
+  attention                                       [4096, 2048]  sharded
+  out proj      row-parallel -&gt; PARTIAL SUMS      [4096, 8192]  partial
+      |  g = REDUCE_SCATTER along seq       &lt;-- sum AND split, one op
+  residual + dropout                              [1024, 8192]  seq-sharded  &lt;- 17 MB
+  LayerNorm                                       [1024, 8192]  seq-sharded  &lt;- 17 MB
+      |  f = ALL_GATHER along seq
+  MLP up / GeLU / MLP down                        [4096,  ... ]  sharded
+      |  g = REDUCE_SCATTER along seq
+  residual + dropout                              [1024, 8192]  seq-sharded  &lt;- 17 MB
+</pre></div>
+<p>The <code>all_reduce</code> did not disappear. It was <strong>split in half and pushed apart</strong>, with the LayerNorm dropped into the gap:</p>
+<div class="ascii-card"><pre>   TP alone:  out_proj --[ all_reduce ]-- LayerNorm -- MLP
+                              ^
+                    one fused op; LN sees the full tensor
+
+   TP + SP:   out_proj --[ reduce_scatter ]-- LayerNorm --[ all_gather ]-- MLP
+                          \--------------- same all_reduce -------------/
+                                              ^
+                                 LN sees a tensor 1/N the size
+</pre></div>
+<div class="warn"><span class="tag">&#9888;&#65039; The two collectives are not interchangeable, and neither is what the naive reading suggests</span>
+<p>Column-parallel and row-parallel layers produce different <em>kinds</em> of output, which is why they need different collectives:</p>
+<div class="ascii-card"><pre>   COLUMN parallel   rank i has  X @ W_i  -&gt; [b,s,h/N]  a SLICE
+                     reassemble by CONCATENATING        -&gt; all_gather
+
+   ROW parallel      rank i has  X_i @ W_i -&gt; [b,s,h]   a PARTIAL SUM
+                     reassemble by ADDING               -&gt; all_reduce
+</pre></div>
+<p>So the output projection ends in an <code>all_reduce</code>, not an <code>all_gather</code>. And <code>reduce_scatter</code> is not a partial operation: rank 0&#8217;s slice of the result is <em>fully summed</em>, it simply does not hold the other ranks&#8217; slices.</p>
+</div>
+<div class="note"><span class="tag">&#128221; Note &mdash; so which dimension is split?</span>
+<p><strong>Both. They alternate, and the collectives are the switch between them.</strong></p>
+<div class="ascii-card"><pre>   region                sharded along        set by
+   ---------------------------------------------------------------
+   attention / MLP       HIDDEN    (h/N)      TP: split the weights
+   LayerNorm / dropout   SEQUENCE  (s/N)      SP: split the tokens
+
+   all_gather      : sequence-sharded  --&gt;  hidden-sharded
+   reduce_scatter  : hidden-sharded    --&gt;  sequence-sharded
+</pre></div>
+<p><strong>Why the sequence is the only axis that works for those regions.</strong> LayerNorm normalizes <em>across hidden</em>: computing one token&#8217;s mean and variance requires all <code>h</code> of that token&#8217;s features. Shard along hidden and every rank holds partial features for every token, so each LayerNorm needs its own collective &mdash; self-defeating. Shard along the sequence and every rank owns <strong>complete tokens</strong>: the full <code>h</code>, just <code>s/N</code> of them. Each is normalized locally with <em>zero</em> communication. Dropout and the residual add are pointwise, so they come along free.</p>
+</div>
 <h3 id="the-operator-swap">The operator swap</h3>
 <p>Sequence parallelism shards those replicated regions along the sequence. The change is entirely in the <code>f</code>/<code>g</code> pair:</p>
 <div class="tablewrap"><table>

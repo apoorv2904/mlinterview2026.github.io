@@ -1425,12 +1425,54 @@ with loss_parallel():
    [ LN sharded by seq ]──all_gather──▶[ attn/MLP ]──reduce_scatter──▶[ LN sharded ]
      b×(s/n)×h per rank                  sharded                       b×(s/n)×h
      ▲ nothing is ever fully replicated</pre></div>
-<div class="note"><span class="tag">Note — why this is close to free, and it comes straight from chapter 03</span>
-<p>The identity <code>all_reduce = reduce_scatter + all_gather</code> means the one all-reduce that TP already performed can be <em>split into its two halves and moved outward</em> — an all-gather on the way in, a reduce-scatter on the way out.</p>
-<div class="ascii-card"><pre>   TP alone:   ... all_reduce ...                  volume = 2D
-   TP + SP:    all_gather ... reduce_scatter       volume = D + D = 2D</pre></div>
+<div class="warn"><span class="tag">&#9888;&#65039; First, a correction that makes the rest make sense: the output projection needs <code>all_reduce</code>, not <code>all_gather</code></span>
+<p>This is not a nitpick &mdash; it is the reason sequence parallelism has anything to split. The two halves of a tensor-parallel block produce fundamentally different kinds of output:</p>
+<div class="ascii-card"><pre>   COLUMN parallel            W split by columns
+   rank i computes  X @ W_i   ->  [b, s, h/N]   a SLICE of the answer
+   to reassemble: CONCATENATE                   ->  all_gather
+
+   ROW parallel               W split by rows
+   rank i computes  X_i @ W_i ->  [b, s, h]     a PARTIAL SUM, full size
+   to reassemble: ADD                           ->  all_reduce
+</pre></div>
+<p>Megatron pairs them deliberately: column-parallel QKV feeds row-parallel output projection, so the slice the first produces <em>is</em> the sharded input the second wants &mdash; no collective in between. You pay exactly <strong>one <code>all_reduce</code></strong>, at the end of the block. That single all-reduce is what sequence parallelism pries apart.</p>
+</div>
+<div class="note"><span class="tag">&#128221; Note &mdash; why this is close to free, and it comes straight from chapter 03</span>
+<p>The identity <code>all_reduce = reduce_scatter + all_gather</code> means the one all-reduce that TP already performed can be <em>split into its two halves and pushed apart</em>, with the LayerNorm dropped into the gap between them:</p>
+<div class="ascii-card"><pre>   TP alone
+   out_proj ──[ all_reduce ]── LayerNorm ── MLP
+                    ▲
+              one fused op; LN then runs on the FULL b x s x h,
+              identically on every rank
+
+   TP + SP
+   out_proj ──[ reduce_scatter ]── LayerNorm ──[ all_gather ]── MLP
+               ╰──────────── the same all_reduce, split ─────────╯
+                                     ▲
+                       LN runs while the tensor is 1/N the size
+</pre></div>
+<p><code>reduce_scatter</code> does the same summing the <code>all_reduce</code> was doing &mdash; it just hands each rank one <code>1/N</code> slice of the finished result instead of the whole thing. <code>all_gather</code> puts it back together for the next matmul. An all-reduce was <em>always</em> these two phases internally; splitting it adds no work, it merely declines to hide the seam.</p>
+<div class="ascii-card"><pre>   ring all_reduce        2(N-1)/N x D  ~  2D   per rank
+   reduce_scatter           (N-1)/N x D  ~   D
+   all_gather               (N-1)/N x D  ~   D
+                                            ---
+   reduce_scatter + all_gather           =  2D    <- identical
+</pre></div>
 <p><strong>Identical communication volume. Strictly less memory.</strong> That's why it's essentially always on in modern Megatron configurations (<code>--sequence-parallel</code>), and why any tensor-parallel setup without it leaves real memory on the table.</p>
 <p>The memory saved is roughly the LayerNorm/dropout activations divided by the TP degree, which for long sequences is substantial. Combined with selective activation recomputation (recompute only attention, keep the cheap parts), it's the standard recipe for making long-context training fit.</p>
+<div class="note"><span class="tag">&#128221; Note &mdash; so which dimension is actually split?</span>
+<p><strong>Both &mdash; they alternate, and the two collectives are the switch between them.</strong></p>
+<div class="ascii-card"><pre>   region                sharded along        why
+   ---------------------------------------------------------------
+   attention / MLP       HIDDEN    (h/N)      TP: split the weights
+   LayerNorm / dropout   SEQUENCE  (s/N)      SP: split the tokens
+
+   all_gather      : sequence-sharded  --&gt;  hidden-sharded
+   reduce_scatter  : hidden-sharded    --&gt;  sequence-sharded
+</pre></div>
+<p><strong>Why the sequence is the only axis that works there.</strong> LayerNorm normalizes <em>across hidden</em>: to compute one token&#8217;s mean and variance it needs all <code>h</code> of that token&#8217;s features. Shard along hidden and every rank holds partial features for every token, so each LayerNorm would need its own collective &mdash; useless. Shard along the sequence and each rank owns <em>complete tokens</em>: the full <code>h</code>, just fewer of them. Every one can be normalized with <strong>zero communication</strong>. Dropout and the residual add are pointwise, so they ride along free.</p>
+<p>Chapter 11 &sect;3 walks a whole block with the per-rank shapes attached, which is the fastest way to see this.</p>
+</div>
 <p>Note the naming overlap: this "sequence parallelism" is a companion to TP within a node. <strong>Context parallelism</strong> (Ring Attention, Ulysses) is a different, larger axis that shards the sequence for the attention computation itself. Chapter 10 touches on it.</p>
 </div></div></section><section class="panel" id="pan-6-the-cost-model-and-where-tp-may-live" role="tabpanel" aria-labelledby="t-6-the-cost-model-and-where-tp-may-live" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 8</p><h2 id="6-the-cost-model-and-where-tp-may-live">6. The cost model and where TP may live</h2></div><div class="body"><div class="note"><span class="tag">Note — count the collectives, because the count is what constrains placement</span>
 <p>Per transformer layer, per training step:</p>
