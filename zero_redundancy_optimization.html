@@ -637,7 +637,41 @@ def step(self, closure=None):
   FP8-LM style                                        ~6   <- practical floor
 </pre></div>
 <p>Note what does <em>not</em> appear: fp8 and fp4 GEMMs. Low-precision compute buys throughput and activation memory; the pieces that resist quantization — master weights and the Adam second moment — are exactly the pieces that dominate this census. The second moment is the hard one: non-negative, heavy-tailed, and in a denominator.</p>
-<p>Two consequences for the rest of the chapter. The stage formulas (4Ψ + 12Ψ/N and friends) assume the 4/12 split of the textbook recipe, so re-derive them if your optimizer state is 8-bit or your optimizer is Muon — under Muon the shardable part is 4Ψ + 4Ψ, not 4Ψ + 12Ψ. And because these recipes cut the same 12Ψ that ZeRO-1 shards, they <em>compose weakly</em> with stage 1 and strongly with nothing else: sharding divides every row by N, which is a bigger lever than any of them. That is the argument for §3 in one line.</p>
+<p><strong>Consequence 1 &mdash; the 12 in <code>4Ψ + 12Ψ/N</code> is not a constant.</strong> The stage formulas split the 16 bytes into a term every rank keeps and a term ZeRO divides:</p>
+<div class="ascii-card"><pre>    4Psi   bf16 weights (2) + bf16 gradients (2)   <- ZeRO-1 does NOT touch
+   12Psi   fp32 master (4) + m (4) + v (4)         <- ZeRO-1 shards this
+   -----
+   16Psi   total                     ->   4Psi + 12Psi/N
+</pre></div>
+<p>Only the second term depends on your optimizer recipe, so a different recipe changes the <em>12</em> and nothing else:</p>
+<div class="ascii-card"><pre>   AdamW textbook   master 4 + m 4 + v 4  =  12Psi   ->   4Psi + 12Psi/N
+   Muon, fp32       master 4 + momentum 4 =   8Psi   ->   4Psi +  8Psi/N
+   8-bit AdamW      master 4 + m 1 + v 1  =   6Psi   ->   4Psi +  6Psi/N
+</pre></div>
+<p><strong>Consequence 2 &mdash; low-precision optimizer state and ZeRO-1 attack the <em>same</em> term, so do not count both.</strong> They do not conflict; their benefits simply overlap, and the overlap gets worse as you add ranks. A 7B model under ZeRO-1:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr><th>Recipe</th><th>N = 8</th><th>N = 64</th></tr>
+</thead>
+<tbody>
+<tr><td>textbook (12Ψ)</td><td>4Ψ + 12Ψ/8 = <strong>38.5 GB</strong></td><td>4Ψ + 12Ψ/64 = <strong>29.3 GB</strong></td></tr>
+<tr><td>8-bit AdamW (6Ψ)</td><td>4Ψ + 6Ψ/8 = <strong>33.2 GB</strong></td><td>4Ψ + 6Ψ/64 = <strong>28.7 GB</strong></td></tr>
+<tr><td>saving from going 8-bit</td><td>5.2 GB (14%)</td><td>0.7 GB (2%)</td></tr>
+</tbody>
+</table></div>
+<div class="ascii-card"><pre>   why the saving evaporates:
+
+     N =  8    12Psi/N = 1.50Psi     <- still large, worth halving
+     N = 64    12Psi/N = 0.19Psi     <- nearly gone, halving it is noise
+</pre></div>
+<p><strong>And this is the argument for &sect;3.</strong> Watch what ZeRO-1 converges to as you add ranks:</p>
+<div class="ascii-card"><pre>   4Psi + 12Psi/N   ------&gt;   4Psi   =  28 GB for a 7B model
+                    N -&gt; inf
+
+   a hard floor. More GPUs never get below it, and no optimizer-precision
+   trick touches it -- it is weights and gradients, not optimizer state.
+</pre></div>
+<p>Breaking that floor means sharding the other two terms, which is exactly what the later stages do: <strong>ZeRO-2</strong> shards the gradients (2Ψ), <strong>ZeRO-3</strong> shards the weights (2Ψ), giving <code>16Ψ/N</code> with no floor at all. Low-precision optimizer state is a bounded trick against one term; sharding is an unbounded lever against all three.</p>
 </div>
 <p>Additionally, <strong>data tensors</strong> and <strong>activation tensors</strong> are allocated in memory. Data tensors mean the token-state tensors before they enter the model, and activation tensors mean the hidden states and other tensors computed during forward and backward. On top of that, when you do distributed processing you also need <strong>bucket space to hold tensors during communication.</strong> We already covered buckets as gradient bucketing in the Data Parallelism session. So we need to manage not only the model and the data but also these <strong>optimizer states (variance, momentum) and data &amp; activation memory.</strong></p>
 <p>Zero Redundancy Optimization (ZeRO) is <strong>a collection of memory-optimization techniques</strong> that helps manage these parts very efficiently. There are broadly two families of solutions: <strong>ZeRO-DP</strong> (ZeRO Data Parallelism) and <strong>ZeRO-R</strong> (ZeRO Residual States). Let's work through them step by step.</p>
