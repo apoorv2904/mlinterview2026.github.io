@@ -637,16 +637,18 @@ def step(self, closure=None):
   FP8-LM style                                        ~6   <- practical floor
 </pre></div>
 <p>Note what does <em>not</em> appear: fp8 and fp4 GEMMs. Low-precision compute buys throughput and activation memory; the pieces that resist quantization — master weights and the Adam second moment — are exactly the pieces that dominate this census. The second moment is the hard one: non-negative, heavy-tailed, and in a denominator.</p>
-<p><strong>Consequence 1 &mdash; the 12 in <code>4Ψ + 12Ψ/N</code> is not a constant.</strong> The stage formulas split the 16 bytes into a term every rank keeps and a term ZeRO divides:</p>
-<div class="ascii-card"><pre>    4Psi   bf16 weights (2) + bf16 gradients (2)   <- ZeRO-1 does NOT touch
-   12Psi   fp32 master (4) + m (4) + v (4)         <- ZeRO-1 shards this
-   -----
-   16Psi   total                     ->   4Psi + 12Psi/N
+<p><strong>First, what <code>4Ψ + 12Ψ/N</code> even means.</strong> <code>Ψ</code> is the parameter count. The 16 bytes fall into two groups that ZeRO treats completely differently:</p>
+<div class="ascii-card"><pre>    4Ψ   bf16 weights (2) + bf16 gradients (2)   ← ZeRO-1 does NOT touch these
+   12Ψ   fp32 master (4) + m (4) + v (4)         ← ZeRO-1 shards these
+   ────
+   16Ψ   total                                   →  4Ψ + 12Ψ/N
+                                                      ↑        ↑
+                                          every rank keeps    divided N ways
 </pre></div>
-<p>Only the second term depends on your optimizer recipe, so a different recipe changes the <em>12</em> and nothing else:</p>
-<div class="ascii-card"><pre>   AdamW textbook   master 4 + m 4 + v 4  =  12Psi   ->   4Psi + 12Psi/N
-   Muon, fp32       master 4 + momentum 4 =   8Psi   ->   4Psi +  8Psi/N
-   8-bit AdamW      master 4 + m 1 + v 1  =   6Psi   ->   4Psi +  6Psi/N
+<p><strong>Consequence 1 &mdash; the 12 is not a constant.</strong> Only the shardable term depends on your optimizer recipe, so a different recipe changes the <em>12</em> and nothing else:</p>
+<div class="ascii-card"><pre>   AdamW textbook   master 4 + m 4 + v 4  =  12Ψ   →   4Ψ + 12Ψ/N
+   Muon, fp32       master 4 + momentum 4 =   8Ψ   →   4Ψ +  8Ψ/N
+   8-bit AdamW      master 4 + m 1 + v 1  =   6Ψ   →   4Ψ +  6Ψ/N
 </pre></div>
 <p><strong>Consequence 2 &mdash; low-precision optimizer state and ZeRO-1 attack the <em>same</em> term, so do not count both.</strong> They do not conflict; their benefits simply overlap, and the overlap gets worse as you add ranks. A 7B model under ZeRO-1:</p>
 <div class="tablewrap"><table>
@@ -661,15 +663,15 @@ def step(self, closure=None):
 </table></div>
 <div class="ascii-card"><pre>   why the saving evaporates:
 
-     N =  8    12Psi/N = 1.50Psi     <- still large, worth halving
-     N = 64    12Psi/N = 0.19Psi     <- nearly gone, halving it is noise
+     N =  8    12Ψ/N = 1.50Ψ     ← still large, worth halving
+     N = 64    12Ψ/N = 0.19Ψ     ← nearly gone, halving it is noise
 </pre></div>
 <p><strong>And this is the argument for &sect;3.</strong> Watch what ZeRO-1 converges to as you add ranks:</p>
-<div class="ascii-card"><pre>   4Psi + 12Psi/N   ------&gt;   4Psi   =  28 GB for a 7B model
-                    N -&gt; inf
+<div class="ascii-card"><pre>   4Ψ + 12Ψ/N   ──────▶   4Ψ   =  28 GB for a 7B model
+                  N → ∞
 
    a hard floor. More GPUs never get below it, and no optimizer-precision
-   trick touches it -- it is weights and gradients, not optimizer state.
+   trick touches it — it is weights and gradients, not optimizer state.
 </pre></div>
 <p>Breaking that floor means sharding the other two terms, which is exactly what the later stages do: <strong>ZeRO-2</strong> shards the gradients (2Ψ), <strong>ZeRO-3</strong> shards the weights (2Ψ), giving <code>16Ψ/N</code> with no floor at all. Low-precision optimizer state is a bounded trick against one term; sharding is an unbounded lever against all three.</p>
 </div>
