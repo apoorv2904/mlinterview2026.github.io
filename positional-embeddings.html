@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Positional embeddings &mdash; revision notes</title>
+<meta name="description" content="Sinusoidal, learned, T5 bias, ALiBi and RoPE from first principles, plus PI / NTK / YaRN context extension and the 2024-25 successors.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F2;
+  --card:#F8FAFB;
+  --ink:#111820;
+  --ink-2:#56626E;
+  --ink-3:#7C8894;
+  --rule:#CDD5DB;
+  --rule-2:#DFE5E9;
+  --cool:#0B6E7F;
+  --cool-bg:#E2EFF1;
+  --warm:#A4235A;
+  --warm-bg:#F7E6ED;
+  --display:"Archivo","Helvetica Neue",sans-serif;
+  --body:"Source Serif 4",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.62;
+}
+.shell{
+  display:grid;grid-template-columns:212px minmax(0,1fr);
+  gap:56px;max-width:1240px;margin:0 auto;padding:0 40px 120px;
+}
+
+/* ---------- masthead ---------- */
+.masthead{grid-column:1/-1;padding:64px 0 40px;border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--warm);margin:0 0 18px;
+}
+.masthead h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(38px,6vw,62px);
+  line-height:.98;letter-spacing:-.028em;margin:0 0 18px;max-width:16ch;
+}
+.standfirst{font-size:19px;color:var(--ink-2);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:28px;margin-top:32px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-3);
+}
+.meta b{color:var(--ink);font-weight:500}
+
+/* ---------- table of contents ---------- */
+.toc{position:sticky;top:0;align-self:start;padding-top:44px;max-height:100vh;overflow-y:auto}
+.toc h2{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 14px;font-weight:500;
+}
+.toc ol{list-style:none;margin:0;padding:0;counter-reset:toc -1}
+.toc li{counter-increment:toc;margin-bottom:2px}
+.toc a{
+  display:flex;gap:10px;text-decoration:none;color:var(--ink-2);
+  font-family:var(--display);font-size:13.5px;line-height:1.35;
+  padding:6px 8px 6px 0;border-left:2px solid transparent;padding-left:10px;
+}
+.toc a::before{content:counter(toc);font-family:var(--mono);font-size:11px;color:var(--ink-3);flex:none;padding-top:1px}
+.toc a:hover{color:var(--ink)}
+.toc a.on{color:var(--cool);border-left-color:var(--cool);font-weight:600}
+.toc a.on::before{color:var(--cool)}
+
+/* ---------- main column + margin rail ---------- */
+main{max-width:920px;padding-right:214px;padding-top:44px}
+section{padding-top:26px;margin-bottom:56px;scroll-margin-top:20px}
+section+section{border-top:1px solid var(--rule);padding-top:44px}
+h2.sec{
+  font-family:var(--display);font-weight:700;font-size:31px;letter-spacing:-.02em;
+  line-height:1.12;margin:0 0 6px;
+}
+h2.sec .num{font-family:var(--mono);font-size:14px;color:var(--warm);font-weight:500;display:block;margin-bottom:9px;letter-spacing:.08em}
+.dek{color:var(--ink-2);font-size:16px;margin:0 0 26px;max-width:62ch;font-style:italic}
+h3{
+  font-family:var(--display);font-weight:600;font-size:18px;letter-spacing:-.008em;
+  margin:34px 0 12px;
+}
+p{margin:0 0 16px;max-width:68ch}
+main a{color:var(--cool)}
+
+/* margin quantities — the spine of the document */
+.mq{
+  float:right;clear:right;width:186px;margin:6px -214px 20px 0;
+  font-family:var(--mono);border-left:2px solid var(--cool);
+  padding:2px 0 2px 12px;
+}
+.mq.cost{border-left-color:var(--warm)}
+.mq .v{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;color:var(--cool);line-height:1.25}
+.mq.cost .v{color:var(--warm)}
+.mq .k{display:block;font-size:11px;line-height:1.45;color:var(--ink-2);margin-top:5px;letter-spacing:.01em}
+
+code{font-family:var(--mono);font-size:.88em;background:#E3E8EB;padding:1px 4px;border-radius:3px}
+pre{
+  font-family:var(--mono);font-size:13.5px;line-height:1.72;background:var(--card);
+  border:1px solid var(--rule-2);border-left:2px solid var(--cool);
+  padding:16px 18px;overflow-x:auto;margin:0 0 20px;border-radius:0 4px 4px 0;
+}
+pre code{background:none;padding:0;font-size:inherit}
+pre.result{border-left-color:var(--warm)}
+strong{font-weight:600}
+
+table{border-collapse:collapse;width:100%;margin:0 0 22px;font-size:14.5px}
+th,td{text-align:left;padding:9px 14px 9px 0;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);
+}
+td:first-child{font-family:var(--mono);font-size:13px}
+table.prose td:first-child{font-family:var(--body);font-size:14.5px}
+td.hi{color:var(--warm);font-weight:600}
+
+.callout{
+  background:var(--card);border:1px solid var(--rule-2);border-top:2px solid var(--warm);
+  padding:18px 20px;margin:0 0 22px;
+}
+.callout .lbl{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--warm);display:block;margin-bottom:8px;
+}
+.callout p:last-child{margin-bottom:0}
+.callout.cool{border-top-color:var(--cool)}
+.callout.cool .lbl{color:var(--cool)}
+
+ul{margin:0 0 18px;padding-left:0;list-style:none;max-width:68ch}
+ul li{position:relative;padding-left:20px;margin-bottom:9px}
+ul li::before{content:"";position:absolute;left:2px;top:.62em;width:6px;height:1px;background:var(--warm)}
+ol.steps{margin:0 0 18px;padding-left:20px;max-width:68ch}
+ol.steps li{margin-bottom:10px}
+
+/* intensity bars */
+.bars{margin:0 0 24px;font-family:var(--mono);font-size:12px}
+.bar-row{display:grid;grid-template-columns:180px 1fr 62px;align-items:center;gap:12px;margin-bottom:9px}
+.bar-track{height:15px;background:#E3E8EB;position:relative}
+.bar-fill{height:100%;background:var(--cool)}
+.bar-fill.warn{background:var(--warm)}
+.bar-val{text-align:right;color:var(--ink-2)}
+.bar-lbl{color:var(--ink-2)}
+.bar-note{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;margin-top:2px}
+
+/* crossover calculator */
+.calc{background:var(--card);border:1px solid var(--rule-2);padding:22px 24px;margin:0 0 22px}
+.calc-top{display:flex;justify-content:space-between;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:16px}
+.calc-out{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--cool)}
+.calc-out.bad{color:var(--warm)}
+.calc-cap{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase}
+.calc input[type=range]{width:100%;accent-color:var(--cool);margin:0}
+.calc-scale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
+.calc-verdict{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-top:14px;line-height:1.6}
+.calc-split{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-top:10px;letter-spacing:.02em}
+
+/* self-test */
+details{border-bottom:1px solid var(--rule-2);padding:14px 0}
+details summary{
+  cursor:pointer;font-family:var(--body);font-size:16.5px;list-style:none;
+  display:flex;gap:12px;align-items:baseline;
+}
+details summary::-webkit-details-marker{display:none}
+details summary::before{
+  content:"+";font-family:var(--mono);font-size:14px;color:var(--warm);flex:none;
+}
+details[open] summary::before{content:"\2212"}
+details .ans{margin-top:12px;padding-left:24px;color:var(--ink-2);font-size:15.5px}
+details .ans p:last-child{margin-bottom:0}
+.level-note{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  margin:-4px 0 22px;letter-spacing:.02em;
+}
+
+footer{
+  grid-column:1/-1;border-top:2px solid var(--ink);margin-top:24px;padding-top:20px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+}
+
+@media (max-width:1120px){
+  main{padding-right:0}
+  .mq{
+    float:none;width:auto;max-width:68ch;margin:0 0 20px;
+    background:var(--card);padding:12px 16px;border-left-width:3px;
+  }
+  .mq .v{display:inline;font-size:15px}
+  .mq .k{display:inline;margin-left:10px;font-size:12px}
+}
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr;gap:0;padding:0 22px 80px}
+  .toc{display:none}
+  body{font-size:16px}
+  .masthead{padding-top:40px}
+  .bar-row{grid-template-columns:120px 1fr 52px;gap:8px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .toc a{transition:color .15s,border-color .15s}
+}
+@media print{
+  body{background:#fff;font-size:11pt}
+  .shell{display:block;padding:0;max-width:none}
+  .toc,.calc input,footer{display:none}
+  main{padding-right:170px;max-width:none}
+  .mq{width:150px;margin-right:-170px}
+  section{page-break-inside:auto}
+  h2.sec,h3{page-break-after:avoid}
+  pre,table,.callout{page-break-inside:avoid}
+  details{page-break-inside:avoid}
+  details[open] .ans,details .ans{display:block}
+}
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--ink-3);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--cool);border-bottom-color:var(--cool)}
+.crumbs a:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a></nav>
+  <p class="eyebrow">Revision notes &middot; attention internals</p>
+  <h1>Positional embeddings from the bytes up</h1>
+  <p class="standfirst">Attention is a set operation. Everything in this note is a different answer to one question: where do you inject order, and what does that choice cost you when the test sequence is longer than the training one.</p>
+  <div class="meta">
+    <span><b>Scope</b> sinusoidal &rarr; RoPE &rarr; context extension &rarr; 2024&ndash;25 work</span>
+    <span><b>Read</b> ~25 min</span>
+    <span><b>Revise</b> ~7 min via the margin rail</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s0">Why any of this exists</a></li>
+    <li><a href="#s1">The three-axis taxonomy</a></li>
+    <li><a href="#s2">Sinusoidal</a></li>
+    <li><a href="#s3">Learned absolute</a></li>
+    <li><a href="#s4">Additive relative: T5, ALiBi</a></li>
+    <li><a href="#s5">RoPE, derived</a></li>
+    <li><a href="#s6">RoPE in a real stack</a></li>
+    <li><a href="#s7">Context extension: PI, NTK, YaRN</a></li>
+    <li><a href="#s8">Extension calculator</a></li>
+    <li><a href="#s9">Beyond 1D: M-RoPE</a></li>
+    <li><a href="#s10">Recent directions</a></li>
+    <li><a href="#s11">Numbers to memorise</a></li>
+    <li><a href="#s12">Cold self-test</a></li>
+    <li><a href="#s13">Traps</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 0 -->
+<section id="s0">
+  <h2 class="sec"><span class="num">00</span>Why any of this exists</h2>
+  <p class="dek">One line of algebra motivates the entire literature. Learn to write it, because every interview on this topic opens here.</p>
+
+  <p>Self-attention computes <code>softmax(QK&#8868;/&radic;d)V</code>. Permute the input rows by any permutation matrix <code>P</code> and every term permutes with it:</p>
+
+  <pre><code>Attn(PX) = P &middot; Attn(X)</code></pre>
+
+  <p>Attention is <strong>permutation-equivariant</strong>, and the FFN and LayerNorm are applied per token, so a transformer block is too. <em>&ldquo;dog bites man&rdquo;</em> and <em>&ldquo;man bites dog&rdquo;</em> produce the same multiset of output vectors. Order has to be injected from outside.</p>
+
+  <div class="callout">
+    <span class="lbl">The decoder-only caveat that catches people out</span>
+    <p>The statement above is exact for a <strong>bidirectional</strong> model. A causal mask is <em>not</em> permutation-invariant &mdash; token <code>i</code> sees exactly <code>i+1</code> tokens, so the count of visible tokens is already a position signal a model can read off. This is why <strong>NoPE</strong> (section 10) trains at all rather than collapsing, and why the honest version of the claim is &ldquo;a causal decoder can infer position, but not cheaply or precisely.&rdquo;</p>
+  </div>
+
+  <div class="mq"><span class="v">&asymp;0.1%</span><span class="k">of decode FLOPs spent on RoPE &mdash; this whole topic is free at runtime and expensive at training time</span></div>
+  <p><strong>Frame the cost correctly.</strong> No positional scheme in production use is a throughput problem: RoPE is an elementwise multiply over <code>Q</code> and <code>K</code> only. What these schemes cost is <em>generalisation</em> &mdash; the whole design space is a trade between resolution at short range and behaviour at lengths never seen in training.</p>
+</section>
+
+<!-- 1 -->
+<section id="s1">
+  <h2 class="sec"><span class="num">01</span>The three-axis taxonomy</h2>
+  <p class="dek">Every scheme is a point in a small grid. Place a new paper in the grid before reading it and most of its claims become predictable.</p>
+
+  <ul>
+    <li><strong>What is encoded:</strong> absolute position <code>m</code>, or relative offset <code>m&minus;n</code>.</li>
+    <li><strong>How it enters:</strong> <em>added to the token vector</em> (before <code>W<sub>Q</sub></code>, <code>W<sub>K</sub></code>), <em>added to the logit</em> (a bias on the score matrix), or <em>applied multiplicatively to Q and K</em> (a rotation).</li>
+    <li><strong>Where it enters:</strong> once at the embedding layer, or in every attention layer.</li>
+  </ul>
+
+  <table class="prose">
+    <thead><tr><th>Scheme</th><th>Encodes</th><th>Injection</th><th>Where</th><th>Extrapolates</th></tr></thead>
+    <tbody>
+      <tr><td>Sinusoidal</td><td>absolute</td><td>added to <code>x</code></td><td>input only</td><td>defined, but poorly</td></tr>
+      <tr><td>Learned absolute</td><td>absolute</td><td>added to <code>x</code></td><td>input only</td><td>not at all &mdash; hard cap</td></tr>
+      <tr><td>T5 bias</td><td>relative</td><td>logit bias</td><td>every layer</td><td>saturates past the last bucket</td></tr>
+      <tr><td>ALiBi</td><td>relative</td><td>logit bias</td><td>every layer</td><td>yes, by becoming local</td></tr>
+      <tr><td class="hi"><strong>RoPE</strong></td><td class="hi">relative, via absolute</td><td class="hi">rotation of <code>q</code>, <code>k</code></td><td class="hi">every layer</td><td class="hi">not without rescaling</td></tr>
+      <tr><td>NoPE</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>surprisingly well, small scale</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout cool">
+    <span class="lbl">The one-sentence history</span>
+    <p>The field moved <strong>absolute &rarr; relative</strong> (position that survives a shifted window), <strong>input-only &rarr; every-layer</strong> (position that survives depth), and <strong>additive &rarr; multiplicative</strong> (position that survives a fused attention kernel). RoPE is the point that satisfies all three at once, which is the entire reason it won &mdash; not a quality argument.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2 class="sec"><span class="num">02</span>Sinusoidal &mdash; Vaswani et al., 2017</h2>
+  <p class="dek">A fixed, parameter-free vector per position, added once to the token embedding. Worth knowing properly because RoPE reuses its frequency ladder verbatim.</p>
+
+  <pre><code>PE[m, 2i]   = sin( m / base^(2i/d) )
+PE[m, 2i+1] = cos( m / base^(2i/d) )      base = 10000, i = 0 &hellip; d/2&minus;1</code></pre>
+
+  <pre><code>def sinusoidal(L, d, base=10000.0):
+    pos = torch.arange(L).float().unsqueeze(1)        # (L, 1)
+    i   = torch.arange(0, d, 2).float()               # (d/2,)   0,2,4,&hellip;
+    ang = pos * base ** (-i / d)                      # (L, d/2)
+    pe  = torch.zeros(L, d)
+    pe[:, 0::2] = ang.sin()
+    pe[:, 1::2] = ang.cos()
+    return pe                                          # x = tok_emb + pe[:L]</code></pre>
+
+  <div class="mq"><span class="v">6.3 &rarr; 63k</span><span class="k">wavelength range in tokens, geometric across d/2 pairs &mdash; a positional binary clock</span></div>
+  <p><strong>Read it as a clock.</strong> Dimension pair <code>i</code> has wavelength <code>2&pi;&middot;base^(2i/d)</code>, running geometrically from <code>2&pi; &asymp; 6.3</code> tokens up to <code>2&pi;&middot;10000 &asymp; 62,832</code> tokens. Fast dims resolve neighbours; slow dims separate distant regions and are nearly constant locally. That multi-scale ladder is the actual idea, and it survives into every scheme that follows.</p>
+
+  <h3>The property the paper was after</h3>
+  <p>Because each pair is a point on a circle, shifting by <code>k</code> is a <strong>fixed linear map independent of <code>m</code></strong>:</p>
+  <pre><code>[PE[m+k, 2i]  ]   [ cos&theta;k  &minus;sin&theta;k ] [PE[m, 2i]  ]
+[PE[m+k, 2i+1]] = [ sin&theta;k   cos&theta;k ] [PE[m, 2i+1]]</code></pre>
+  <p>So a linear attention head <em>could in principle</em> learn to attend by relative offset. Also note <code>PE[m]&middot;PE[n] = &Sigma;<sub>i</sub> cos(&theta;<sub>i</sub>(m&minus;n))</code> &mdash; depends only on the offset, which looks like relative encoding for free.</p>
+
+  <div class="callout">
+    <span class="lbl">Why that argument is weaker than it sounds</span>
+    <p>Three holes, and being able to name them is the whole point of studying sinusoidal in 2026. <strong>One:</strong> the real logit is <code>(x<sub>m</sub>+p<sub>m</sub>)&#8868;W<sub>Q</sub>&#8868;W<sub>K</sub>(x<sub>n</sub>+p<sub>n</sub>)</code>, and the surviving <code>p<sub>m</sub>&#8868;W p<sub>n</sub></code> term is <em>not</em> a function of <code>m&minus;n</code> once <code>W</code> is arbitrary &mdash; translation invariance is available, never enforced. <strong>Two:</strong> <code>&Sigma;cos(&theta;<sub>i</sub>&Delta;)</code> is even in <code>&Delta;</code>, so the position term alone cannot tell before from after; direction has to come from the content cross-terms or the causal mask. <strong>Three:</strong> it is added once at the input and must survive 80 residual blocks to still mean something at the top.</p>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2 class="sec"><span class="num">03</span>Learned absolute &mdash; BERT, GPT-2, ViT</h2>
+  <p class="dek">Two lines of code, one hard wall. Included because the failure mode is the cleanest in the whole topic.</p>
+
+  <pre><code>self.wpe = nn.Embedding(max_len, d)                    # d &middot; max_len params
+x = self.wte(tokens) + self.wpe(torch.arange(L))       # L &le; max_len, or crash</code></pre>
+
+  <p>Fully expressive, needs no theory, and empirically ties sinusoidal in-distribution. The cost is <strong>zero extrapolation</strong>: position <code>max_len+1</code> has no row, and even interpolating rows fails because nothing forced neighbouring rows to be similar. GPT-2's 1024 is a hard architectural limit, not a tuning choice.</p>
+  <p>ViTs still use this (position is a fixed 14&times;14 grid, so a hard cap is free), and they interpolate the grid bilinearly when changing image resolution &mdash; the same move as position interpolation in section 07, invented independently.</p>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2 class="sec"><span class="num">04</span>Additive relative bias: T5 and ALiBi</h2>
+  <p class="dek">Stop touching the token vectors; edit the score matrix instead. One learned, one fixed, both entering at every layer.</p>
+
+  <h3>T5 relative bias</h3>
+  <pre><code>logits[h,i,j] = q_i&middot;k_j / &radic;d_h  +  B[h, bucket(i&minus;j)]</code></pre>
+  <p>A <strong>learned scalar per head per bucket</strong>, where <code>bucket()</code> is exact for small offsets and logarithmic beyond, typically 32 buckets with everything past 128 tokens collapsed into the last one. T5 shares <code>B</code> across all layers. Cheap and effective in-distribution; past the last bucket all distances look identical, so it plateaus rather than extrapolates.</p>
+
+  <h3>ALiBi &mdash; Press et al., 2021</h3>
+  <div class="mq cost"><span class="v">2<sup>&minus;8i/H</sup></span><span class="k">ALiBi head slopes &mdash; for H=8, exactly 1/2, 1/4 &hellip; 1/256</span></div>
+  <p>Delete the buckets and the parameters; use a fixed linear penalty with a per-head slope:</p>
+  <pre><code>slopes = 2 ** (-8 * torch.arange(1, H+1) / H)        # geometric, H a power of 2
+dist   = torch.arange(L)[None, :] - torch.arange(L)[:, None]   # j &minus; i, &le; 0 causally
+bias   = slopes[:, None, None] * dist                 # (H, L, L), negative into the past
+logits = q @ k.transpose(-1, -2) / d_h**0.5 + bias</code></pre>
+  <p>No parameters, no embedding, applied every layer. Each head gets a different decay rate, so the model gets a bank of effective window sizes from ~2 tokens to ~256.</p>
+
+  <div class="callout">
+    <span class="lbl">What ALiBi's extrapolation actually is</span>
+    <p>It trains at 1k and evaluates at 8k without a perplexity blow-up &mdash; but because the penalty grows without bound, tokens beyond a few thousand are simply crushed to zero weight. It generalises by becoming a <strong>soft sliding window</strong>, not by understanding long range. On long-context retrieval (needle-in-a-haystack) that is exactly the wrong inductive bias, which is why the frontier went to RoPE-plus-rescaling instead. Also note that as a logit bias it needs explicit support inside a fused kernel &mdash; FlashAttention has to be told about it, whereas RoPE happens before the kernel is ever called.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2 class="sec"><span class="num">05</span>RoPE, derived &mdash; Su et al., 2021</h2>
+  <p class="dek">The one to be able to write from memory, including the two incompatible layouts that will bite you when porting weights.</p>
+
+  <p><strong>The design goal, stated as an equation.</strong> Find a function <code>f</code> such that the logit depends on content and <em>relative</em> position only:</p>
+  <pre><code>&lang; f(q, m), f(k, n) &rang; = g(q, k, m &minus; n)</code></pre>
+  <p>In 2D the answer is forced: make <code>f</code> a rotation by an angle proportional to absolute position. Rotations compose by adding angles and the inner product is rotation-invariant, so <code>R<sub>m</sub>q &middot; R<sub>n</sub>k = q&#8868;R<sub>n&minus;m</sub>k</code> &mdash; the absolute angles cancel and only the difference survives. For <code>d<sub>h</sub></code> dimensions, stack <code>d<sub>h</sub>/2</code> independent 2D rotations with the sinusoidal frequency ladder <code>&theta;<sub>i</sub> = base<sup>&minus;2i/d<sub>h</sub></sup></code>.</p>
+
+  <div class="mq"><span class="v">Q, K only</span><span class="k">V is never rotated &mdash; position belongs to the matching, not to the payload</span></div>
+  <p><strong>Absolute in, relative out.</strong> This is the sentence to say out loud: each token is rotated by its own absolute index, and relativity is an emergent property of the dot product. That is what makes RoPE cacheable &mdash; you can rotate a key once, at write time, and never revisit it.</p>
+
+  <h3>Implementation, half-split layout (HF / Llama)</h3>
+  <pre><code>def rope_tables(d_h, L, base=10000.0):
+    inv = 1.0 / (base ** (torch.arange(0, d_h, 2).float() / d_h))   # (d_h/2,)
+    ang = torch.outer(torch.arange(L).float(), inv)                 # (L, d_h/2)
+    return ang.cos(), ang.sin()
+
+def rotate_half(x):
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rope(x, cos, sin):                 # x: (B, H, L, d_h)
+    cos = torch.cat([cos, cos], -1)[None, None]   # (1,1,L,d_h)
+    sin = torch.cat([sin, sin], -1)[None, None]
+    return x * cos + rotate_half(x) * sin
+
+q = apply_rope(q, cos, sin)
+k = apply_rope(k, cos, sin)                  # v untouched</code></pre>
+
+  <h3>Implementation, interleaved layout (paper, GPT-NeoX, GPT-J)</h3>
+  <pre><code>x1, x2 = x[..., 0::2], x[..., 1::2]          # pairs (0,1), (2,3), &hellip;
+out = torch.stack([x1*cos - x2*sin,
+                   x1*sin + x2*cos], dim=-1).flatten(-2)</code></pre>
+
+  <div class="callout">
+    <span class="lbl">The layout trap</span>
+    <p>Half-split pairs dim <code>i</code> with <code>i + d<sub>h</sub>/2</code>; interleaved pairs <code>2i</code> with <code>2i+1</code>. They are <strong>mathematically equivalent up to a fixed permutation of the head dimension</strong>, so either trains fine &mdash; but a checkpoint converted between the two without permuting <code>W<sub>Q</sub></code> and <code>W<sub>K</sub></code> rows produces a model that is subtly, quietly wrong. This is the single most common RoPE bug in conversion scripts. <code>d<sub>h</sub></code> must also be even.</p>
+  </div>
+</section>
+<!-- 6 -->
+<section id="s6">
+  <h2 class="sec"><span class="num">06</span>RoPE in a real stack</h2>
+  <p class="dek">Five consequences of &ldquo;rotate before the kernel, every layer&rdquo; that only show up in deployment.</p>
+
+  <h3>The cache stores rotated keys</h3>
+  <div class="mq cost"><span class="v">write-time</span><span class="k">K is rotated once and cached rotated &mdash; changing &theta; invalidates every cached key</span></div>
+  <p>Standard implementations apply RoPE to <code>k</code> before the append to the KV cache, so the cache holds <code>R<sub>n</sub>k<sub>n</sub></code>. Consequences: <strong>(a)</strong> switching the base or the scaling factor mid-generation means re-rotating the whole cache, not a config change; <strong>(b)</strong> a cached prefix is only reusable across requests if it starts at the same absolute offset &mdash; prefix sharing works for a common <em>prefix</em> and not for a common <em>middle</em>; <strong>(c)</strong> methods that remap position indices at inference (section 07) must be applied at cache-write time or not at all.</p>
+
+  <h3>It is free, and it is kernel-friendly</h3>
+  <p>Cost is <code>O(B&middot;H&middot;L&middot;d<sub>h</sub>)</code> elementwise on <code>Q</code> and <code>K</code> &mdash; against the <code>O(B&middot;H&middot;L&middot;d<sub>h</sub>&middot;d)</code> projections that produced them it rounds to nothing. More importantly it happens <em>before</em> the attention call, so FlashAttention needs no knowledge of it. An additive bias like ALiBi or T5 has to be plumbed into the fused kernel; that asymmetry is a large part of why RoPE dominates.</p>
+
+  <h3>The long-term decay claim is soft</h3>
+  <p>The paper argues that <code>&Sigma;<sub>i</sub>cos(&theta;<sub>i</sub>&Delta;)</code> decays with <code>&Delta;</code>. It does on average, but it is a sum of cosines and is <strong>oscillatory</strong>, not monotone &mdash; attention as a function of distance has ripples, and specific distances get anomalously boosted. Most of the 2024&ndash;25 papers in section 10 are attacks on this envelope. Do not present RoPE decay as a clean exponential.</p>
+
+  <h3>Partial and decoupled RoPE</h3>
+  <ul>
+    <li><strong>Partial rotation</strong> (GPT-J, GPT-NeoX <code>rotary_pct</code>, Phi): rotate only the first 25&ndash;50% of head dims, leave the rest position-agnostic. Keeps some channels free to carry pure content, and drops the slowest frequencies that were nearly constant anyway.</li>
+    <li><strong>Decoupled RoPE</strong> (DeepSeek MLA): MLA's speedup comes from folding <code>W<sub>Q</sub>&#8868;W<sub>K</sub></code> into one matrix at inference, but <code>R<sub>m&minus;n</sub></code> sits between them and depends on the token pair, so it <em>cannot</em> be absorbed. The fix is structural: carry extra small head dims (64 in V2/V3) that hold RoPE, while the main compressed dims stay unrotated. When someone asks &ldquo;does MLA compose with RoPE&rdquo;, this is the answer &mdash; only by paying for separate dimensions.</li>
+  </ul>
+
+  <h3>Just raising the base</h3>
+  <p>The cheapest long-context lever in existence: train with a larger <code>base</code>, lengthening every wavelength. Code Llama used <code>10<sup>6</sup></code>, Llama 3 uses <code>5&times;10<sup>5</sup></code>. There is a <em>critical base</em> below which the slowest dimension does not complete even one rotation over the target context, and positions past that point become genuinely ambiguous &mdash; which is the honest statement of why 10,000 stops working at long context.</p>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2 class="sec"><span class="num">07</span>Context extension: PI, NTK, YaRN</h2>
+  <p class="dek">The most-asked applied question in this area. All four methods are the same two-line intervention with different per-dimension weights.</p>
+
+  <p><strong>The failure being fixed.</strong> A model trained to <code>L</code> has never seen rotation angles beyond <code>&theta;<sub>i</sub>L</code>. Feed it position <code>4L</code> and the fast dimensions land at angles that are out-of-distribution garbage; perplexity explodes within a few hundred tokens past the boundary. Every fix below keeps angles inside the trained range, and every one of them trades <strong>local resolution</strong> for <strong>reach</strong>. Write <code>s = L<sub>new</sub>/L<sub>train</sub></code>.</p>
+
+  <table class="prose">
+    <thead><tr><th>Method</th><th>Intervention</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td>Position Interpolation<br><span style="color:var(--ink-3)">Chen et al. 2023</span></td><td><code>m &rarr; m/s</code>, all dims equally</td><td>uniformly blurs adjacent tokens by <code>s&times;</code>; needs ~1k fine-tune steps</td></tr>
+      <tr><td>NTK-aware<br><span style="color:var(--ink-3)">bloc97, 2023</span></td><td><code>base &rarr; base &middot; s<sup>d/(d&minus;2)</sup></code></td><td>near-training-free; fast dims barely move, slow dims interpolate</td></tr>
+      <tr><td>Dynamic NTK</td><td>recompute <code>s = max(1, L<sub>cur</sub>/L<sub>train</sub>)</code> per step</td><td>short prompts unaffected; but <code>s</code> changing invalidates the cache</td></tr>
+      <tr><td class="hi">YaRN<br><span style="color:var(--ink-3)">Peng et al. 2023</span></td><td class="hi">per-dim ramp + logit temperature</td><td class="hi">best quality per token of fine-tuning</td></tr>
+      <tr><td>LongRoPE<br><span style="color:var(--ink-3)">Ding et al. 2024</span></td><td>evolutionary search over per-dim factors</td><td>no closed form; two profiles, short and long</td></tr>
+      <tr><td>SelfExtend / ReRoPE</td><td>clamp or floor-divide indices at inference</td><td>training-free, but distorts the local metric</td></tr>
+    </tbody>
+  </table>
+
+  <div class="mq"><span class="v">&alpha;=1, &beta;=32</span><span class="k">YaRN's boundary in rotations-per-training-window &mdash; below 1 interpolate, above 32 leave alone</span></div>
+  <h3>YaRN, the one worth knowing in detail</h3>
+  <p>The insight: dimensions are not alike. Measure each one by <strong>how many full rotations it completes over the training window</strong>, <code>r<sub>i</sub> = L<sub>train</sub>/&lambda;<sub>i</sub></code>.</p>
+  <ul>
+    <li><code>r<sub>i</sub> &gt; 32</code> &mdash; fast dims, the model has seen every phase many times. <strong>Extrapolate</strong>: leave untouched, and preserve local resolution.</li>
+    <li><code>r<sub>i</sub> &lt; 1</code> &mdash; slow dims that never completed a rotation. Angles past <code>L</code> are unseen. <strong>Interpolate</strong>: divide by <code>s</code>.</li>
+    <li>In between &mdash; linear ramp.</li>
+  </ul>
+
+  <pre><code>def yarn_inv_freq(d_h, base, L_train, s, alpha=1, beta=32):
+    inv     = 1.0 / (base ** (torch.arange(0, d_h, 2).float() / d_h))
+    wavelen = 2 * math.pi / inv
+    r       = L_train / wavelen                          # rotations per window
+    ramp    = ((r - alpha) / (beta - alpha)).clamp(0, 1) # 1 = keep, 0 = interpolate
+    return inv * ramp + (inv / s) * (1 - ramp)</code></pre>
+
+  <p>Second ingredient: with more tokens in the window, attention entropy drifts. YaRN corrects it by scaling the logits, implemented for free by scaling the cos/sin tables by <code>0.1&middot;ln(s) + 1</code>. Result is roughly an order of magnitude less fine-tuning data than PI for the same context.</p>
+
+  <div class="callout cool">
+    <span class="lbl">The through-line</span>
+    <p>PI applies one factor to all dims. NTK applies a smooth power law. YaRN applies a thresholded ramp. LongRoPE searches the factors directly. <strong>It is one axis &mdash; how much per-dimension freedom you allow &mdash; and the methods are ordered along it.</strong> Llama 3.1's shipped &ldquo;rope_scaling&rdquo; config is a piecewise version of the same by-parts idea with a factor of 8 over an 8k original window.</p>
+  </div>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+  <h2 class="sec"><span class="num">08</span>Extension calculator</h2>
+  <p class="dek">Drag the target context. <code>d<sub>h</sub> = 128</code> (64 frequency pairs), <code>base = 10000</code>, trained at 8k.</p>
+
+  <div class="calc">
+    <div class="calc-top">
+      <span class="calc-cap">Target context</span>
+      <span class="calc-out" id="co">8k</span>
+    </div>
+    <input type="range" id="cs" min="0" max="90" value="0" step="1" aria-label="Target context length">
+    <div class="calc-scale"><span>8k</span><span>64k</span><span>512k</span><span>4M</span></div>
+    <div class="calc-verdict" id="cv"></div>
+    <div class="calc-split" id="cx"></div>
+  </div>
+
+  <p>Watch the third line. Under PI every one of the 64 pairs is compressed by <code>s</code>, including the ones that resolve adjacent tokens. Under YaRN the fast pairs stay untouched no matter how far you push, and only the pairs that never completed a rotation get squeezed &mdash; which is precisely the difference in downstream retrieval quality.</p>
+</section>
+<!-- 9 -->
+<section id="s9">
+  <h2 class="sec"><span class="num">09</span>Beyond 1D: M-RoPE and friends</h2>
+  <p class="dek">Once the input is an image or a video, &ldquo;position&rdquo; is a tuple. The generalisation is mechanical, and the interesting part is the bookkeeping.</p>
+
+  <p><strong>Axial 2D RoPE.</strong> Split the head dims into two halves, rotate one half by the row index and the other by the column index. Attention then sees relative offsets in both axes. This is the standard vision-transformer form.</p>
+
+  <p><strong>M-RoPE</strong> (Qwen2-VL) takes it to three: head dims are partitioned into <em>temporal</em>, <em>height</em> and <em>width</em> groups, each rotated by its own index. A text token sets all three indices equal, at which point M-RoPE degenerates exactly to 1D RoPE &mdash; which is what lets a pretrained LLM be adapted without discarding its positional behaviour.</p>
+
+  <div class="callout">
+    <span class="lbl">Where multimodal position IDs go wrong</span>
+    <p>The hard problem is not the rotation, it is <strong>assigning indices across modalities</strong>. If a high-resolution image's spatial indices run into the range later assigned to generated text, the model cannot tell an image patch from a caption token, and the observed failure is repetition loops. Video work (VideoRoPE and the vision-language HoPE, both 2025) mostly argues about which frequency band should carry the time axis &mdash; the consensus is that <em>time gets the low frequencies</em>, since a video's temporal extent dwarfs its spatial one.</p>
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2 class="sec"><span class="num">10</span>Recent directions, 2024&ndash;2025</h2>
+  <p class="dek">Short entries. For each one, the useful thing to hold is which assumption of RoPE it rejects.</p>
+
+  <table class="prose">
+    <thead><tr><th>Work</th><th>Rejects</th><th>Idea</th></tr></thead>
+    <tbody>
+      <tr><td><strong>NoPE</strong><br><span style="color:var(--ink-3)">Kazemnejad et al. 2023</span></td><td>that position must be injected at all</td><td>In a causal decoder, remove positional encoding entirely; the mask leaks enough position. Beats RoPE and ALiBi on small-scale length generalisation.</td></tr>
+      <tr><td class="hi"><strong>NoPE/RoPE hybrids</strong><br><span style="color:var(--ink-3)">Llama 4 &ldquo;iRoPE&rdquo;, 2025</span></td><td class="hi">that one scheme should apply to every layer</td><td class="hi">Interleave: local windowed layers keep RoPE, global layers use no positional encoding, plus inference-time attention temperature scaling. The most consequential recent idea in production.</td></tr>
+      <tr><td><strong>CoPE</strong><br><span style="color:var(--ink-3)">Golovneva et al. 2024</span></td><td>that position is counted in tokens</td><td>Gate values computed from content are cumulatively summed, so &ldquo;two sentences back&rdquo; becomes expressible. Positions are fractional, so learned position vectors get interpolated. Expensive and not kernel-friendly &mdash; an idea, not a deployment.</td></tr>
+      <tr><td><strong>HoPE</strong><br><span style="color:var(--ink-3)">Chen et al., ACL 2025</span></td><td>long-term decay as a goal</td><td>Keep only the high-frequency rotary components; replace the low-frequency ones with position-independent signals. The argument is that decay was a language-modelling prior and modern models need retrieval from arbitrary positions.</td></tr>
+      <tr><td><strong>FoPE</strong><br><span style="color:var(--ink-3)">2025</span></td><td>one dimension = one clean frequency</td><td>Treat each dim as a Fourier series rather than a single sinusoid, and zero out under-trained low frequencies. Targets the same spectral defect as HoPE from the other side.</td></tr>
+      <tr><td><strong>FoX</strong><br><span style="color:var(--ink-3)">Forgetting Transformer, ICLR 2025</span></td><td>that the distance penalty is fixed</td><td>ALiBi with a learned, data-dependent forget gate on the logits. Recovers recency bias without hard-coding a slope.</td></tr>
+      <tr><td><strong>FIRE</strong>, LaMPE, CARoPE<br><span style="color:var(--ink-3)">2023&ndash;25</span></td><td>closed-form position maps</td><td>Learn a function of <em>normalised</em> distance, or make the phase length- or context-aware. Family answer to &ldquo;any monotone map of distance is legal.&rdquo;</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout cool">
+    <span class="lbl">Name collision worth pre-empting</span>
+    <p>Three unrelated 2025 papers are called <strong>HoPE</strong>: high-frequency rotary (the ACL one above), <em>hyperbolic</em> rotary using Lorentz boosts for monotone decay, and a <em>hybrid</em> position embedding for vision-language length generalisation. Ask which one is meant before answering.</p>
+  </div>
+
+  <p><strong>The direction of travel.</strong> Every entry above is an attack on the same two RoPE properties: the <em>oscillatory, non-monotone</em> distance envelope, and the <em>under-trained low-frequency dimensions</em> that never complete a rotation during training. If a new paper's abstract does not touch one of those, it is probably a variant of a variant.</p>
+</section>
+
+<!-- 11 -->
+<section id="s11">
+  <h2 class="sec"><span class="num">11</span>Numbers to memorise</h2>
+  <p class="dek">Nine numbers. If these are cold, the derivations do not help under time pressure.</p>
+
+  <table class="prose">
+    <thead><tr><th>Quantity</th><th>Value</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Default RoPE base</td><td><code>10,000</code></td><td>inherited unchanged from sinusoidal</td></tr>
+      <tr><td>Wavelength range at that base</td><td>6.3 &rarr; 62,832 tokens</td><td><code>2&pi;</code> to <code>2&pi;&middot;base</code></td></tr>
+      <tr><td>Frequency pairs</td><td><code>d<sub>h</sub>/2</code> = 64 at <code>d<sub>h</sub></code>=128</td><td><code>d<sub>h</sub></code> must be even</td></tr>
+      <tr><td>Llama 3 base</td><td><code>500,000</code></td><td>the cheap long-context lever</td></tr>
+      <tr><td>Code Llama base</td><td><code>1,000,000</code></td><td>16k trained context</td></tr>
+      <tr><td>YaRN band edges</td><td><code>&alpha;=1</code>, <code>&beta;=32</code> rotations</td><td>interpolate below, extrapolate above</td></tr>
+      <tr><td class="hi">YaRN split at 8k / base 1e4</td><td class="hi">26 keep &middot; 24 ramp &middot; 14 interpolate</td><td class="hi">depends on the <em>training</em> window, not the target</td></tr>
+      <tr><td>YaRN logit scale</td><td><code>0.1&middot;ln(s) + 1</code></td><td>entropy correction, folded into cos/sin</td></tr>
+      <tr><td>ALiBi slopes</td><td><code>2<sup>&minus;8i/H</sup></code></td><td>1/2 &hellip; 1/256 for <code>H</code>=8</td></tr>
+      <tr><td>NTK base rescale</td><td><code>base &middot; s<sup>d/(d&minus;2)</sup></code></td><td>exponent is &asymp;1.016 at <code>d</code>=128</td></tr>
+      <tr><td>DeepSeek decoupled RoPE dims</td><td>64 per head</td><td>the price of RoPE inside MLA</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 12 -->
+<section id="s12">
+  <h2 class="sec"><span class="num">12</span>Cold self-test</h2>
+  <p class="level-note">Answer out loud before opening. Anything that needs a second attempt goes back into the deck.</p>
+
+  <details>
+    <summary>Why does attention need positional information at all, stated precisely?</summary>
+    <div class="ans"><p><code>Attn(PX) = P&middot;Attn(X)</code> for any permutation <code>P</code> &mdash; the block is permutation-equivariant, and the per-token FFN and norm do not break it. Caveat: with a causal mask this is no longer exact, because the number of visible tokens is itself a position signal.</p></div>
+  </details>
+
+  <details>
+    <summary>Write the RoPE design equation and say why a rotation is the answer.</summary>
+    <div class="ans"><p><code>&lang;f(q,m), f(k,n)&rang; = g(q,k,m&minus;n)</code>. Rotations compose additively in angle and preserve inner products, so rotating <code>q</code> by <code>m&theta;</code> and <code>k</code> by <code>n&theta;</code> leaves a dot product depending on <code>(m&minus;n)&theta;</code> alone. Absolute in, relative out.</p></div>
+  </details>
+
+  <details>
+    <summary>Is <code>V</code> rotated? Is RoPE applied once or per layer?</summary>
+    <div class="ans"><p><code>V</code> is never rotated &mdash; position governs which token you match, not what you copy from it. RoPE is applied in every attention layer, unlike sinusoidal or learned absolute which enter once at the embedding.</p></div>
+  </details>
+
+  <details>
+    <summary>Two implementations of RoPE disagree. What is the most likely cause?</summary>
+    <div class="ans"><p>Pairing layout. Half-split pairs <code>i</code> with <code>i+d<sub>h</sub>/2</code>; interleaved pairs <code>2i</code> with <code>2i+1</code>. Equivalent up to a permutation of head dims, so a converted checkpoint silently degrades unless <code>W<sub>Q</sub></code> and <code>W<sub>K</sub></code> rows are permuted to match.</p></div>
+  </details>
+
+  <details>
+    <summary>Why does ALiBi extrapolate, and why did the field still leave it?</summary>
+    <div class="ans"><p>An unbounded linear penalty means distant tokens receive vanishing weight, so a longer sequence looks like the same soft local window &mdash; stable perplexity by <em>refusing</em> long range. That is the wrong bias for retrieval over long context. It also has to be plumbed into the fused attention kernel, whereas RoPE runs before the kernel is called.</p></div>
+  </details>
+
+  <details>
+    <summary>PI against NTK against YaRN, in one sentence each.</summary>
+    <div class="ans"><p>PI divides every position by <code>s</code>, uniformly sacrificing local resolution. NTK raises the base by <code>s<sup>d/(d&minus;2)</sup></code>, so fast dims barely change while slow dims interpolate. YaRN partitions dims by rotations-per-training-window and applies a ramp between <code>&alpha;=1</code> and <code>&beta;=32</code>, plus a logit temperature. One axis: how much per-dimension freedom you allow.</p></div>
+  </details>
+
+  <details>
+    <summary>Which dimensions actually need interpolation, and why?</summary>
+    <div class="ans"><p>The slow ones. A dimension that completed dozens of rotations during training has seen every phase, so unseen positions land on familiar angles &mdash; it can extrapolate. A dimension whose wavelength exceeds the training window never completed a rotation, so any longer position is a genuinely unseen angle. Note the partition is set by the <em>training</em> window and base, not by the target length.</p></div>
+  </details>
+
+  <details>
+    <summary>Why can't MLA absorb RoPE, and what is the fix?</summary>
+    <div class="ans"><p>MLA's inference speedup folds <code>W<sub>Q</sub>&#8868;W<sub>K</sub></code> into a single matrix, but <code>R<sub>m&minus;n</sub></code> sits between them and varies per token pair, so the product cannot be precomputed. DeepSeek's fix is decoupled RoPE: extra dedicated head dimensions (64) that carry the rotation while the compressed latent dims stay unrotated.</p></div>
+  </details>
+
+  <details>
+    <summary>You switch RoPE scaling mid-generation. What breaks?</summary>
+    <div class="ans"><p>The KV cache. Keys are stored already rotated, so every cached key is at the old angles. Any change to base, scale, or position mapping requires re-rotating the entire cache &mdash; a real cost that makes dynamic-NTK-style per-step rescaling awkward in a serving system.</p></div>
+  </details>
+
+  <details>
+    <summary>What is the shared target of HoPE, FoPE and most 2025 RoPE papers?</summary>
+    <div class="ans"><p>Two defects: the distance envelope <code>&Sigma;cos(&theta;<sub>i</sub>&Delta;)</code> is oscillatory rather than monotone, and the low-frequency dimensions are under-trained because they never complete a rotation. HoPE drops the low frequencies; FoPE reshapes each dimension into a Fourier series. Same defect, opposite fixes.</p></div>
+  </details>
+
+  <p style="margin-top:22px">If the design equation, the <code>r<sub>i</sub> = L<sub>train</sub>/&lambda;<sub>i</sub></code> partition, and the cache consequence all come out without reaching back to this page, the material is yours.</p>
+</section>
+
+<!-- 13 -->
+<section id="s13">
+  <h2 class="sec"><span class="num">13</span>Traps</h2>
+  <p class="dek">Errors that survive a confident explanation, which makes them the dangerous ones.</p>
+
+  <ul>
+    <li><strong>Saying &ldquo;RoPE is a relative encoding&rdquo; and stopping.</strong> It applies an <em>absolute</em> rotation per token; relativity emerges in the dot product. The distinction is the entire reason keys can be cached rotated, and interviewers probe exactly there.</li>
+    <li><strong>Rotating <code>V</code>.</strong> Only <code>Q</code> and <code>K</code>. If you rotate <code>V</code> the output picks up a position-dependent spin that nothing removes.</li>
+    <li><strong>Claiming sinusoidal gives relative attention for free.</strong> The <code>p<sub>m</sub>&#8868;W<sub>Q</sub>&#8868;W<sub>K</sub>p<sub>n</sub></code> term is only translation-invariant for special <code>W</code>. It is available to be learned, not enforced &mdash; that gap is why RoPE exists.</li>
+    <li><strong>Treating RoPE decay as monotone.</strong> It is a sum of cosines with ripples. Half the 2025 literature is about that envelope.</li>
+    <li><strong>Confusing the two RoPE layouts.</strong> Half-split and interleaved differ by a permutation of head dims. Converting a checkpoint without permuting <code>W<sub>Q</sub></code>/<code>W<sub>K</sub></code> gives a model that loads, runs, and is quietly worse.</li>
+    <li><strong>Interpolating every dimension.</strong> That is PI, and it costs local resolution proportional to <code>s</code>. The fast dims never needed it &mdash; they had already seen every phase.</li>
+    <li><strong>Assuming the YaRN split moves with the target length.</strong> It is fixed by <code>L<sub>train</sub></code> and the base. Only the scale applied to the interpolated band depends on <code>s</code>.</li>
+    <li><strong>Forgetting the cache is rotated.</strong> Every inference-time position remap has to happen at cache-write time, and re-scaling mid-stream is not a config toggle.</li>
+    <li><strong>Quoting ALiBi's extrapolation as long-range ability.</strong> It extrapolates by becoming local. Say &ldquo;stable perplexity, not preserved retrieval.&rdquo;</li>
+    <li><strong>Assuming a bias-based scheme is kernel-free.</strong> Additive biases must be supported inside the fused attention kernel; RoPE runs before it. That engineering asymmetry decided the winner more than quality did.</li>
+    <li><strong>Bumping the base without fine-tuning and expecting the old short-context behaviour.</strong> Every wavelength moves, including the ones doing local work.</li>
+    <li><strong>Saying NoPE proves position encoding is unnecessary.</strong> It holds for causal decoders, largely at small scale, and production use is hybrid &mdash; NoPE on global layers with RoPE kept on local ones.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <span>Positional embeddings revision notes</span>
+  <span>d<sub>h</sub> = 128 &middot; base 10,000 unless stated</span>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var s=document.getElementById('cs'),o=document.getElementById('co'),
+      v=document.getElementById('cv'),x=document.getElementById('cx');
+  var D=128, BASE=1e4, LT=8192, ALPHA=1, BETA=32;
+
+  function fmtTok(n){
+    if(n>=1e6) return (n/1e6).toFixed(n>=1e7?0:2)+'M';
+    return Math.round(n/1e3)+'k';
+  }
+  function bands(){
+    var keep=0,ramp=0,interp=0;
+    for(var i=0;i<D/2;i++){
+      var wl=2*Math.PI*Math.pow(BASE,2*i/D), r=LT/wl;
+      if(r>BETA) keep++; else if(r<ALPHA) interp++; else ramp++;
+    }
+    return [keep,ramp,interp];
+  }
+  var B=bands();
+
+  function upd(){
+    var sc=Math.pow(2,s.value/10), L=LT*sc;
+    o.textContent=fmtTok(L);
+    o.classList.toggle('bad',sc>=64);
+
+    var ntk=BASE*Math.pow(sc,D/(D-2));
+    var slowRot=(LT/(2*Math.PI*Math.pow(BASE,(D-2)/D)))*sc;
+
+    x.textContent='s = '+sc.toFixed(sc<10?2:0)+'\u00d7  \u00b7  NTK base '+ntk.toExponential(2)
+      +'  \u00b7  YaRN: '+B[0]+' pairs untouched, '+B[1]+' ramped, '+B[2]+' interpolated'
+      +'  \u00b7  slowest pair now spans '+slowRot.toFixed(2)+' rotations (trained on 0.15)';
+
+    v.textContent = sc<1.01
+      ? 'At the training length. Nothing to fix \u2014 every dimension is inside the angles it was trained on.'
+      : sc<=4 ? 'PI territory. Uniform interpolation costs '+sc.toFixed(0)+'\u00d7 local resolution and about a thousand fine-tuning steps; NTK gets most of it training-free.'
+      : sc<=16 ? 'Where YaRN pulls ahead. PI would blur adjacent tokens '+sc.toFixed(0)+'\u00d7; YaRN leaves the '+B[0]+' fastest pairs alone and spends the compression on the '+B[2]+' that never completed a rotation.'
+      : sc<=64 ? 'Beyond the analytic rules. LongRoPE-style searched per-dimension factors, and a separate short-context profile, start to be worth their cost.'
+      : 'Frontier regime. Expect a searched schedule, staged fine-tuning at increasing lengths, and a base already raised at pretraining time \u2014 not a post-hoc rescale.';
+  }
+  s.addEventListener('input',upd); upd();
+
+  var secs=[].slice.call(document.querySelectorAll('main section')),
+      links=[].slice.call(document.querySelectorAll('.toc a'));
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if(!e.isIntersecting) return;
+        var i=secs.indexOf(e.target);
+        links.forEach(function(l,j){l.classList.toggle('on',j===i);});
+      });
+    },{rootMargin:'-10% 0px -70% 0px'});
+    secs.forEach(function(y){io.observe(y);});
+  }
+})();
+</script>
+</body>
+</html>
