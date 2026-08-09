@@ -126,8 +126,8 @@ footer a{color:var(--ink-2)}
   <h1>Interview notes</h1>
   <p class="standfirst">Notes on ML systems and research topics, written for recall under time pressure rather than for completeness. Every claim that can be a number is a number.</p>
   <div class="meta">
-    <span><b>5</b> published</span>
-    <span><b>2</b> planned</span>
+    <span><b>6</b> published</span>
+    <span><b>1</b> planned</span>
     <span>Updated <b>August 2026</b></span>
   </div>
 </header>
@@ -216,18 +216,25 @@ footer a{color:var(--ink-2)}
   <span class="arrow" aria-hidden="true">&rarr;</span>
 </a>
 
-<div class="entry planned">
+<p class="group-label">Inference and serving</p>
+
+<a class="entry" href="llm_inference.html">
   <span class="idx">05</span>
   <div>
-    <h2>Paged attention and the KV cache</h2>
-    <p class="dek">Why inference memory is a fragmentation problem rather than a bandwidth one, and what vLLM's block table actually buys.</p>
+    <span class="kind">Nine sections</span>
+    <h2>Making decode fast</h2>
+    <p class="dek">A whole serving stack in build order: sampling, KV cache, paged attention, static then continuous batching, scheduling and preemption, streaming API, benchmarking, and speculative decoding. Each section maps to the deep-ml inference-server steps and to what vLLM V1 actually does.</p>
     <div class="tags">
-      <span class="tag">inference</span>
-      <span class="tag">serving</span>
+      <span class="tag key">KV cache</span>
+      <span class="tag">paged attention</span>
+      <span class="tag">continuous batching</span>
+      <span class="tag">speculative</span>
+      <span class="tag">vLLM V1</span>
+      <span class="tag">~60 min</span>
     </div>
   </div>
-  <span class="arrow">Planned</span>
-</div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+</a>
 
 <p class="group-label">Optimization</p>
 
