@@ -245,8 +245,8 @@ footer{
     <li><a href="#s1">One integer, three names</a></li>
     <li><a href="#s2">Weight bytes W(G)</a></li>
     <li><a href="#s3">KV bytes k(G)</a></li>
-    <li><a href="#s4">The crossover</a></li>
-    <li><a href="#s5">Prefill vs decode intensity</a></li>
+    <li><a href="#s4">Prefill vs decode intensity</a></li>
+    <li><a href="#s5">The crossover</a></li>
     <li><a href="#s6">Fixed batch: latency saturates</a></li>
     <li><a href="#s7">At capacity: throughput is linear</a></li>
     <li><a href="#stp">Tensor parallelism erodes it</a></li>
@@ -412,14 +412,92 @@ W = b&middot;P = 2 n_l d&sup2; (10 + 2/G)</code></pre>
 
   <div class="callout">
     <span class="lbl">Scope discipline</span>
-    <p><code>k</code> as written includes <code>n<sub>l</sub></code>: it is <strong>whole-model</strong> bytes per token. When analysing a single attention op (section 05) drop <code>n<sub>l</sub></code>. Mixing the two scopes mid-derivation gives an answer off by 32&times; and it will look plausible.</p>
+    <p><code>k</code> as written includes <code>n<sub>l</sub></code>: it is <strong>whole-model</strong> bytes per token. When analysing a single attention op (section 04) drop <code>n<sub>l</sub></code>. Mixing the two scopes mid-derivation gives an answer off by 32&times; and it will look plausible.</p>
   </div>
 </section>
 
 <!-- 4 -->
 <section id="s4">
-  <h2 class="sec"><span class="num">04</span>The crossover</h2>
-  <p class="dek">One number decides whether GQA is worth anything for a given workload. It is a property of the <em>workload</em>, not the architecture.</p>
+  <h2 class="sec"><span class="num">04</span>Prefill vs decode intensity</h2>
+  <p class="dek">The asymmetry that makes this whole subject exist. Prefill saturates at model width; decode's intensity carries only <code>B</code> and <code>G</code>.</p>
+
+  <div class="callout cool">
+    <span class="lbl">Read <code>I</code> before you compute one</span>
+    <p><code>I</code> and <code>T<sub>step</sub></code> answer different questions, and only one of them is a time. <code>I = FLOPs/bytes</code> says <strong>which side of the ~300 ridge you are on</strong>. <code>T<sub>step</sub> = bytes/BW</code> says <strong>how long it takes</strong> &mdash; and is only licensed once <code>I</code> has certified you memory-bound. Compute <code>I</code> to earn the right to count bytes, then stop using it.</p>
+    <p><strong>The harmonic rule has a precondition.</strong> <code>1/I = 1/I&#8321; + 1/I&#8322;</code> holds only when two byte streams serve <em>the same</em> FLOPs &mdash; one GEMM reading weights and activations. Weight GEMMs and attention are different ops with different FLOPs, so traffic adds <em>and so do FLOPs</em>:</p>
+    <pre><code>I   = (F_W + F_A) / (b_W + b_A)        always
+1/I = sum_i w_i/I_i,  w_i = op i's FLOP share</code></pre>
+    <p>Harmonic is the special case <code>w_i = 1</code> everywhere. Used here it gives <code>BG/(B+G)</code>, which at <code>B = G = 4</code> says 2 when the answer is exactly 4.</p>
+  </div>
+
+
+  <h3>The two buckets</h3>
+  <p>Split by <em>what gets read</em>, because that is what the crossover turns on. <strong>GEMMs</strong> read weights and stream activations; <strong>attention</strong> reads the cache and holds no weights. Seven matrices per layer &mdash; <code>q, k, v, o</code> and SwiGLU&#39;s <code>gate, up, down</code>. Count every read and write, unfused:</p>
+  <pre><code>q      d &rarr; d       read Td, write Td
+k, v   d &rarr; d/G     read Td, write Td/G     each
+o      d &rarr; d       read Td, write Td
+                                    a_qkvo = 6d + 2d/G
+
+gate, up   d &rarr; d_ff    read Td, write Td_ff   each
+SiLU &odot;      elementwise   read 2Td_ff, write Td_ff
+down       d_ff &rarr; d    read Td_ff, write Td
+                                    a_FFN = 3d + 6d_ff</code></pre>
+  <p>Unfused on purpose: the pessimistic count, so the verdict survives real kernels. (GQA does not block fusing <code>qkv</code> &mdash; one weight of width <code>d + 2d/G</code>, slice the output.) With <code>P</code> the group&#39;s parameters and <code>T = B&middot;L</code>:</p>
+  <pre><code>FLOPs = 2PT   bytes = b(P + aT)   I = P&middot;T / (P + a&middot;T)</code></pre>
+  <pre class="result"><code>T &rarr; 0   I &rarr; T      weights dominate &mdash; decode, below
+T &gg; d    I &rarr; P/a    activations dominate &mdash; prefill</code></pre>
+
+  <h3>Prefill &mdash; T &gg; d, so only the ceiling matters</h3>
+  <p>The <code>P</code> term drops out and <code>I</code> pins to <code>P/a</code>, params per activation element &mdash; a constant set by <em>model width</em>, not by <code>L</code>:</p>
+  <pre class="result"><code>qkvo   d(G+1)/(3G+1)      = 1,575   0.38d   (d/2 at MHA &rarr; d/3 as G&rarr;&infin;)
+FFN    3d&middot;d_ff/(3d + 6d_ff) = 1,727   0.42d
+all    &mdash;                     = 1,688   0.41d</code></pre>
+  <p><strong>Prefill intensity does not grow with <code>L</code>.</strong> Writing <code>I = L</code> quotes the <code>T&rarr;0</code> slope as the value &mdash; 3&ndash;10&times; too high. Fusion roughly doubles these ceilings; nothing below needs it.</p>
+
+  <p><strong>Attention</strong>, per layer, flash-style so the score matrix never reaches HBM, causal masking halving the work:</p>
+  <pre><code>FLOPs = 2L&sup2;d (QK&#7488;) + 2L&sup2;d (AV) = 4L&sup2;d  &rarr; causal: 2L&sup2;d
+bytes = b(Ld [Q] + 2Ld/G [K,V] + Ld [O]) &le; 8Ld
+I_A   = 2L&sup2;d / 8Ld = L/4</code></pre>
+  <p>At <code>L = 4096</code>: GEMMs 1,196 (still climbing to 1,688), attention 1,024. Both far above the 300 ridge &mdash; <strong>prefill is compute-bound</strong>, and it stays so at every larger <code>L</code> because both terms are bounded below by <code>O(d)</code>, not by <code>L</code>.</p>
+
+  <h3>Decode &mdash; B sequences, 1 new token each</h3>
+  <p><strong>GEMMs.</strong> Same six, same formula &mdash; now at <code>T = B</code>, the other limit:</p>
+  <pre><code>I_W = PB / (P + aB) &asymp; B          error = B&middot;a/P = B/1688</code></pre>
+  <p>Activations are droppable here and only here: 0.9% of GEMM traffic at <code>B=15</code>, 3.8% at <code>B=64</code>. The threshold is <code>T</code> vs <code>P/a &asymp; 0.4d</code> &mdash; decode clears it by three orders, prefill fails it outright. Same comparison as the crossover in &sect;05: tokens on the GPU versus model width.</p>
+
+  <p><strong>Attention</strong>, per layer per sequence: one query row against <code>L</code> cached keys.</p>
+  <pre><code>FLOPs = 2Ld (QK&#7488;) + 2Ld (AV) = 4Ld    &rarr; total 4Ld&middot;n_l&middot;B
+bytes = B L k = B L &middot; 4n_l d / G
+I_A   = 4Ld n_l B / (4 B L n_l d / G) = G</code></pre>
+
+  <div class="mq cost"><span class="v">I<sub>A</sub> = G</span><span class="k">decode attention intensity &mdash; independent of both B and L</span></div>
+  <p><strong>Everything cancels but <code>G</code>.</strong> Not <code>B</code>, not <code>L</code>. The reason is structural: every sequence owns a private KV cache, so batching buys <em>no reuse whatsoever</em> in attention. You read <code>B</code> separate caches to do <code>B</code> separate GEMVs. Decode attention is permanently batch-1-shaped, and <code>G</code> is the only lever on it.</p>
+
+  <h3>Aggregate</h3>
+  <p>With <code>x = BLk</code>, and using <code>2PB = B&middot;W</code> and <code>4Ldn_lB = G&middot;x</code>:</p>
+  <pre class="result"><code>I = (B&middot;W + G&middot;x) / (W + x)</code></pre>
+  <p>A byte-weighted average of <code>B</code> and <code>G</code>, which reads off directly: <strong>raising <code>L</code> drags <code>I</code> toward <code>G</code></strong> (long context makes you <em>more</em> memory-bound), <strong>raising <code>B</code> pulls it toward <code>B</code></strong> but simultaneously inflates <code>x</code>, which fights back.</p>
+
+  <div class="bars" role="img" aria-label="Prefill intensity is far above the H100 ridge of 300; decode intensity is far below it.">
+    <div class="bar-row"><span class="bar-lbl">prefill, GEMMs (L=4096)</span><span class="bar-track"><span class="bar-fill" style="width:100%"></span></span><span class="bar-val">1196</span></div>
+    <div class="bar-row"><span class="bar-lbl">prefill, attention</span><span class="bar-track"><span class="bar-fill" style="width:83.4%"></span></span><span class="bar-val">1024</span></div>
+    <div class="bar-row"><span class="bar-lbl">H100 ridge</span><span class="bar-track"><span class="bar-fill" style="width:68.6%"></span></span><span class="bar-val">300</span></div>
+    <div class="bar-row"><span class="bar-lbl">decode, B=15 G=4</span><span class="bar-track"><span class="bar-fill warn" style="width:25.8%"></span></span><span class="bar-val">8.5</span></div>
+    <div class="bar-row"><span class="bar-lbl">decode attention alone</span><span class="bar-track"><span class="bar-fill warn" style="width:16.7%"></span></span><span class="bar-val">4</span></div>
+    <p class="bar-note">log scale</p>
+  </div>
+
+  <div class="callout cool">
+    <span class="lbl">The consequence worth stating</span>
+    <p>Even MQA reaches only <code>I<sub>A</sub> = 32</code> against a ridge of 300. <strong>GQA never makes decode compute-bound</strong> &mdash; it makes it less memory-bound. Anywhere GQA matters you are memory-bound by construction, because the thing that makes it matter (KV dominating traffic) is the same thing that pins <code>I</code> near <code>G</code>.</p>
+    <p>Compute only binds at large <code>B</code> <em>and</em> small <code>L</code> together: B=512, L=128 gives <code>I &asymp; 310</code>. Short prompts at huge batch &mdash; reranking, classification, embedding &mdash; which is exactly the regime where GQA is worth ~1.1&times;. The regimes are complementary.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2 class="sec"><span class="num">05</span>The crossover</h2>
+  <p class="dek">Decode is memory-bound (&sect;04), so time <em>is</em> byte count &mdash; now ask <em>which</em> bytes. One number decides whether GQA is worth anything for a given workload, and it is a property of the <em>workload</em>, not the architecture.</p>
 
   <p>Per decode step the GPU reads weights <strong>once</strong> (shared across the batch) and each sequence's KV cache <strong>separately</strong>:</p>
   <pre><code>bytes/step = W + B&middot;L&middot;k</code></pre>
@@ -462,54 +540,11 @@ B L &middot; 4n_l d/G  =  2 n_l d&sup2; (10 + 2/G)      &divide; 4n_l d
   </div>
 
   <p><strong>Plainly.</strong> Below ~25k cached tokens you are weight-bound and GQA is a rounding error &mdash; batch-1 short-context on-device inference, where you paid quality for nothing. Above ~100k, KV is 80&ndash;95% of all traffic and you collect nearly the full <code>G&times;</code>. Same model, same kernel; the workload decides.</p>
-</section>
 
-<!-- 5 -->
-<section id="s5">
-  <h2 class="sec"><span class="num">05</span>Prefill vs decode intensity</h2>
-  <p class="dek">The asymmetry that makes this whole subject exist. Prefill's intensity carries <code>L</code>; decode's carries only <code>B</code> and <code>G</code>.</p>
-
-  <h3>Prefill &mdash; one sequence, L tokens at once</h3>
-  <p><strong>Weight GEMMs.</strong> Each of <code>P</code> weights does one multiply-accumulate (2 FLOPs) per token, for <code>L</code> tokens. The weights are read once:</p>
-  <pre><code>I_W = 2PL / bP = 2PL / 2P = L</code></pre>
-
-  <p><strong>Attention</strong>, per layer, flash-style so the score matrix never reaches HBM, causal masking halving the work:</p>
-  <pre><code>FLOPs = 2L&sup2;d (QK&#7488;) + 2L&sup2;d (AV) = 4L&sup2;d  &rarr; causal: 2L&sup2;d
-bytes = b(Ld [Q] + 2Ld/G [K,V] + Ld [O]) &le; 8Ld
-I_A   = 2L&sup2;d / 8Ld = L/4</code></pre>
-  <p>At <code>L = 4096</code>: <code>I_W = 4096</code>, <code>I_A = 1024</code>. Both an order of magnitude above the 300 ridge &mdash; <strong>prefill is compute-bound</strong>, and the reuse of each weight across <code>L</code> tokens is literally the intensity.</p>
-
-  <h3>Decode &mdash; B sequences, 1 new token each</h3>
-  <p><strong>Weight GEMMs.</strong> Same weights, but now only <code>B</code> tokens amortise the read:</p>
-  <pre><code>I_W = 2PB / bP = B</code></pre>
-
-  <p><strong>Attention</strong>, per layer per sequence: one query row against <code>L</code> cached keys.</p>
-  <pre><code>FLOPs = 2Ld (QK&#7488;) + 2Ld (AV) = 4Ld    &rarr; total 4Ld&middot;n_l&middot;B
-bytes = B L k = B L &middot; 4n_l d / G
-I_A   = 4Ld n_l B / (4 B L n_l d / G) = G</code></pre>
-
-  <div class="mq cost"><span class="v">I<sub>A</sub> = G</span><span class="k">decode attention intensity &mdash; independent of both B and L</span></div>
-  <p><strong>Everything cancels but <code>G</code>.</strong> Not <code>B</code>, not <code>L</code>. The reason is structural: every sequence owns a private KV cache, so batching buys <em>no reuse whatsoever</em> in attention. You read <code>B</code> separate caches to do <code>B</code> separate GEMVs. Decode attention is permanently batch-1-shaped, and <code>G</code> is the only lever on it.</p>
-
-  <h3>Aggregate</h3>
-  <p>With <code>x = BLk</code>, and using <code>2PB = B&middot;W</code> and <code>4Ldn_lB = G&middot;x</code>:</p>
-  <pre class="result"><code>I = (B&middot;W + G&middot;x) / (W + x)</code></pre>
-  <p>A byte-weighted average of <code>B</code> and <code>G</code>, which reads off directly: <strong>raising <code>L</code> drags <code>I</code> toward <code>G</code></strong> (long context makes you <em>more</em> memory-bound), <strong>raising <code>B</code> pulls it toward <code>B</code></strong> but simultaneously inflates <code>x</code>, which fights back.</p>
-
-  <div class="bars" role="img" aria-label="Prefill intensity is far above the H100 ridge of 300; decode intensity is far below it.">
-    <div class="bar-row"><span class="bar-lbl">prefill, weights (L=4096)</span><span class="bar-track"><span class="bar-fill" style="width:100%"></span></span><span class="bar-val">4096</span></div>
-    <div class="bar-row"><span class="bar-lbl">prefill, attention</span><span class="bar-track"><span class="bar-fill" style="width:83.4%"></span></span><span class="bar-val">1024</span></div>
-    <div class="bar-row"><span class="bar-lbl">H100 ridge</span><span class="bar-track"><span class="bar-fill" style="width:68.6%"></span></span><span class="bar-val">300</span></div>
-    <div class="bar-row"><span class="bar-lbl">decode, B=15 G=4</span><span class="bar-track"><span class="bar-fill warn" style="width:25.8%"></span></span><span class="bar-val">8.5</span></div>
-    <div class="bar-row"><span class="bar-lbl">decode attention alone</span><span class="bar-track"><span class="bar-fill warn" style="width:16.7%"></span></span><span class="bar-val">4</span></div>
-    <p class="bar-note">log scale</p>
-  </div>
-
-  <div class="callout cool">
-    <span class="lbl">The consequence worth stating</span>
-    <p>Even MQA reaches only <code>I<sub>A</sub> = 32</code> against a ridge of 300. <strong>GQA never makes decode compute-bound</strong> &mdash; it makes it less memory-bound. Anywhere GQA matters you are memory-bound by construction, because the thing that makes it matter (KV dominating traffic) is the same thing that pins <code>I</code> near <code>G</code>.</p>
-    <p>Compute only binds at large <code>B</code> <em>and</em> small <code>L</code> together: B=512, L=128 gives <code>I &asymp; 310</code>. Short prompts at huge batch &mdash; reranking, classification, embedding &mdash; which is exactly the regime where GQA is worth ~1.1&times;. The regimes are complementary.</p>
-  </div>
+  <p><strong>The compression.</strong> Three quantities, three jobs &mdash; the trap is expecting the first to do the third&#39;s work.</p>
+  <pre class="result"><code>I       &rarr; whether to count bytes
+bytes   &rarr; how long it takes
+shares  &rarr; what a byte saving is worth</code></pre>
 </section>
 
 <!-- 6 -->
@@ -695,7 +730,7 @@ I_A = 4sLD n_l B / (BLk) = s&middot;G</code></pre>
 
   <h3>Where it stops paying</h3>
   <ul>
-    <li><strong>Weights dominate</strong> &mdash; small <code>B&middot;L</code>, below crossover (section 04)</li>
+    <li><strong>Weights dominate</strong> &mdash; small <code>B&middot;L</code>, below crossover (section 05)</li>
     <li><strong><code>n<sub>kv</sub></code> hits the TP degree</strong> &mdash; below that you replicate rather than shard</li>
     <li><strong><code>n<sub>kv</sub> = 1</code></strong> &mdash; the axis is exhausted; switch to a different row of the table in section 01</li>
     <li><strong>Compute-bound regimes</strong> &mdash; prefill, and very high batch at short context</li>
@@ -824,7 +859,7 @@ I_A = 4sLD n_l B / (BLk) = s&middot;G</code></pre>
 
   <details>
     <summary>Does GQA improve time-to-first-token? Justify from the intensity numbers.</summary>
-    <div class="ans"><p>No. TTFT is prefill, which has <code>I_W = L</code> and <code>I_A = L/4</code> &mdash; both far above the 300 ridge, so it is compute-bound and there is no cache to read yet. GQA improves TPOT, the inter-token latency. Saying &ldquo;decode is memory-bound so TTFT drops&rdquo; attaches the right mechanism to the wrong stage.</p></div>
+    <div class="ans"><p>No. TTFT is prefill: GEMMs saturate at <code>P/a &asymp; 0.4d</code> and attention runs at <code>I_A = L/4</code> &mdash; both far above the 300 ridge, so it is compute-bound and there is no cache to read yet. GQA improves TPOT, the inter-token latency. Saying &ldquo;decode is memory-bound so TTFT drops&rdquo; attaches the right mechanism to the wrong stage.</p></div>
   </details>
 
   <details>
@@ -887,6 +922,7 @@ I_A = 4sLD n_l B / (BLk) = s&middot;G</code></pre>
 
   <ul>
     <li><strong>Notation collision.</strong> Using one symbol for both group size and KV-head count, then dividing by the wrong one. Fix <code>G</code> and <code>n<sub>kv</sub></code> explicitly at the top of the page and never write &ldquo;groups&rdquo; unqualified.</li>
+    <li><strong>Harmonic-summing unrelated intensities.</strong> Combining <code>I<sub>W</sub> = B</code> and <code>I<sub>A</sub> = G</code> as <code>BG/(B+G)</code>. That rule needs both byte streams to serve the <em>same</em> FLOPs; different ops must be weighted by FLOP share. At <code>B = G</code> the answer is <code>G</code>, not <code>G/2</code>.</li>
     <li><strong>Elements vs bytes, inverted.</strong> Counting traffic in elements, then <em>multiplying</em> intensity by 2 to &ldquo;convert&rdquo;. Bytes are in the denominator &mdash; converting elements to bytes <em>divides</em> intensity. Convert once, at the end, deliberately.</li>
     <li><strong>Stopping at the shape.</strong> Answering &ldquo;GQA stops helping when the FFN dominates&rdquo; instead of setting <code>W = BLk</code> and solving. The condition was right but attached to architecture, when the swing factor is the workload <code>B&middot;L</code> &mdash; the same model varies from 1.06&times; to 4&times;. <strong>When you can name the two competing terms, you are two lines from the crossover. Go and get it.</strong></li>
     <li><strong>TTFT vs TPOT.</strong> Correctly saying prefill is compute-bound, then claiming GQA improves time-to-first-token. Right mechanism, wrong stage. Name the stage before naming the effect.</li>
