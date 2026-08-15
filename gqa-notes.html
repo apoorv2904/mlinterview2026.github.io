@@ -369,7 +369,12 @@ footer{
   <pre class="result"><code>P = n_l &middot; d&sup2; &middot; (10 + 2/G)
 W = b&middot;P = 2 n_l d&sup2; (10 + 2/G)</code></pre>
 
-  <p><strong>Sanity check at G = 1:</strong> <code>d&sup2;(10+2) = 12d&sup2;</code> per layer. <code>12 &times; 4096&sup2; &times; 32 = 6.44B</code> params &mdash; correct for a 7B-class model once embeddings are added back.</p>
+  <p><strong>Run it forward, from <code>12d&sup2;</code>.</strong> A 7B-class layer is <code>4d&sup2;</code> attention + <code>8d&sup2;</code> FFN. Everything else is the multiplier moving, because GQA rescales only the <code>2d&sup2;</code> of K and V:</p>
+  <pre><code>P = 12 n_l d&sup2; = 12 &times; 32 &times; 4096&sup2; = 6.44B    W = 2P = 12.9 GB
+
+G      1     4      32
+mult   12    10.5   10.06     &rarr;  12.9, 11.3, 10.8 GB</code></pre>
+  <p>Within 0.6% of exact &mdash; the gap is only <code>d<sub>ff</sub> = 11008</code> vs <code>8d/3 = 10922</code>. And the floor is just the fraction that never moves: <code>10/12 = 5/6</code>, so <code>W</code> can never fall below 83% of MHA however hard you cut <code>n<sub>kv</sub></code>.</p>
 
   <table>
     <thead><tr><th>G</th><th>n<sub>kv</sub></th><th>P</th><th>W</th></tr></thead>
@@ -591,13 +596,23 @@ shares  &rarr; what a byte saving is worth</code></pre>
     <tbody>
       <tr><td>1 (MHA)</td><td>15</td><td>23.9 ms</td><td>628 tok/s</td><td>&mdash;</td></tr>
       <tr><td>4 (GQA-8)</td><td>64</td><td>23.9 ms</td><td>2,680 tok/s</td><td class="hi">4.27&times;</td></tr>
-      <tr><td>32 (MQA)</td><td>515</td><td>23.9 ms</td><td>21,550 tok/s</td><td class="hi">34.3&times;</td></tr>
+      <tr><td>32 (MQA)</td><td>515</td><td>23.9 ms*</td><td>21,550 tok/s</td><td class="hi">34.3&times;</td></tr>
     </tbody>
   </table>
 
+  <p class="bar-note">* GEMMs go compute-bound at this batch &mdash; true step time ~26.3 ms. See the roofline check below.</p>
+
   <p>Since <code>k &prop; 1/G</code> and <code>W</code> is nearly constant, <code>&Theta; &prop; G</code> exactly &mdash; in fact slightly super-linear (34.3&times; at 32&times;) because <code>W</code> shrinks a little too, freeing extra room for cache.</p>
 
-  <p><strong>Roofline check.</strong> At <code>G=32, B=515</code>: <code>I = (515&times;10.8 + 32&times;69.1)/79.9 &asymp; 97</code>. Under 300, so the bytes-over-bandwidth model still holds. It stops holding near <code>B &asymp; 300</code> at short context, where the FFN GEMMs go compute-bound and none of this arithmetic applies.</p>
+  <p><strong>Roofline check &mdash; per component, not on the aggregate.</strong> <code>I</code> is a byte-weighted average, so a compute-bound kernel can hide inside a memory-bound mean. At <code>G=32, B=515</code>:</p>
+  <pre><code>aggregate  (515&times;10.87 + 32&times;69.1)/79.9 = 98    memory-bound
+GEMMs      PB/(P + aB) = 392                     COMPUTE-BOUND
+attention  G = 32                                memory-bound</code></pre>
+  <p>86% of that average is the <code>G=32</code> term dragging it down. The GEMM half is genuinely over the ridge, and <code>1/BW</code> understates it:</p>
+  <pre><code>GEMMs  bytes 10.87/3.35 = 3.25 ms  vs  FLOPs 2PB/990T = 5.66 ms  &rarr; 5.66
+attn   bytes 69.1/3.35  = 20.63 ms                              &rarr; 20.63
+                                                          total   26.3 ms   (+10%)</code></pre>
+  <p>Decode GEMMs cross the ridge at <code>B* = 300/(1 &minus; 300a/P) &asymp; 365</code>, <strong>independent of <code>L</code></strong> &mdash; <code>I<sub>GEMM</sub></code> has no <code>L</code> in it (&sect;04). Only MQA&#39;s <code>B_max = 515</code> exceeds it; MHA at 15 and GQA-8 at 64 are nowhere near. So the 23.9 ms is exact for the first two rows and ~10% optimistic for MQA &mdash; which trims the 34.3&times; a little, not the shape of the result.</p>
 
   <div class="callout">
     <span class="lbl">The contrast to have ready</span>
