@@ -293,16 +293,26 @@ td code{font-size:.85em}
 <div class="subnav"><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
 
 <h3 id="b-words">The four words</h3>
+<p>Dictionary level first. A <strong>scalar field</strong> assigns one plain number to every point in space &mdash; temperature on a weather map. A <strong>vector field</strong> assigns a <em>vector</em> &mdash; an arrow &mdash; to every point, and an arrow carries two pieces of information: a <strong>direction</strong> (which way) and a <strong>magnitude</strong> (how strongly). Wind on a weather map is the canonical picture. Here the arrow is a <em>velocity</em>: direction = where a particle sitting at x should head, magnitude = how fast. So yes, vector fields have directions &mdash; that is precisely what distinguishes them from scalar fields.</p>
+<div class="ascii-card"><pre>   u_t(x) = −x drawn on the 1-D line — every point gets an arrow toward 0:
+
+   x:     −3      −2      −1       0       +1      +2      +3
+   u:    ───▶    ──▶     ─▶       ·       ◀─      ◀──     ◀───
+   direction: toward the origin         magnitude: |x| — stronger far away</pre></div>
+<p>And a <strong>flow</strong>, in everyday terms, is what a fluid does: drop a leaf anywhere on a river and the water’s velocity field carries it downstream. The flow &psi;_t is that idea made precise &mdash; the map <em>"starting point &#8614; position after time t"</em>, defined for every possible starting point at once. Now the four words, with types and the running example:</p>
 <div class="tablewrap"><table>
-<thead><tr><th>Word</th><th>What it is</th><th>Type</th><th>Running example: <code>u(x) = &minus;x</code></th></tr></thead>
+<thead><tr><th>Word</th><th>What it is</th><th>Type</th><th>Running example: <code>u_t(x) = &minus;x</code> (same at every t)</th></tr></thead>
 <tbody>
-<tr><td><strong>Vector field</strong> <code>u_t(x)</code></td><td>a velocity assigned to every point in space at every time: "if you are at x at time t, move this way"</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td><code>u(x) = &minus;x</code> &mdash; at x = 2 the arrow says "toward 0 at speed 2"</td></tr>
+<tr><td><strong>Vector field</strong> <code>u_t(x)</code></td><td>a velocity assigned to every point in space at every time: "if you are at x at time t, move this way"</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td><code>u_t(x) = &minus;x</code> for all t &mdash; at x = 2 the arrow says "toward 0 at speed 2"</td></tr>
 <tr><td><strong>ODE</strong></td><td>the rule "follow the arrows": <code>dX_t/dt = u_t(X_t)</code>, starting at <code>X_0 = x_0</code></td><td>a condition on a trajectory</td><td><code>dX_t/dt = &minus;X_t</code>, &nbsp;<code>X_0 = 2</code></td></tr>
 <tr><td><strong>Trajectory</strong> <code>X_t</code></td><td>one particle's path through space obeying the ODE</td><td><code>[0,1] &rarr; &#8477;^d</code></td><td><code>X_t = 2e^{&minus;t}</code> &mdash; the one curve through x_0 = 2</td></tr>
 <tr><td><strong>Flow</strong> <code>&psi;_t(x_0)</code></td><td>the solution map: where does a particle starting at x_0 sit at time t? All trajectories at once.</td><td><code>&psi;_t(x_0) = e^{&minus;t} x_0</code> &mdash; one formula, every start at once</td></tr>
 </tbody>
 </table></div>
-<p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another. Run the example along the row: pick x_0 = 2, the flow hands you the trajectory <code>2e^{&minus;t}</code>, and differentiating it returns the field: <code>d/dt (2e^{&minus;t}) = &minus;2e^{&minus;t} = u(X_t)</code>. If you can reproduce that chain, you own all four words.</p>
+<p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another. Run the example along the row: pick x_0 = 2, the flow hands you the trajectory <code>2e^{&minus;t}</code>, and differentiating it returns the field: <code>d/dt (2e^{&minus;t}) = &minus;2e^{&minus;t} = u(X_t)</code>. If you can reproduce that chain, you own all four words. One notational point worth pre-empting: this example is <strong>time-independent</strong> (autonomous) &mdash; <code>u_t(x) = &minus;x</code> ignores its t subscript, so the arrows never change and only the particles move. That is the special case. Fields in this document are time-dependent in general, and the one that matters, CondOT’s <code>u_t(x|z) = (z&minus;x)/(1&minus;t)</code>, genuinely needs its subscript: the same point x gets a faster arrow as the deadline t = 1 approaches.</p>
+<div class="note"><span class="tag">Note &mdash; how do you draw a field that depends on t?</span>
+<p>A single arrow plot freezes one instant, so a genuinely time-dependent field needs one of three devices. <strong>(1) Filmstrip:</strong> side-by-side snapshots of the arrows at t = 0, 0.5, 1. <strong>(2) Animation:</strong> redraw the arrows every frame as t advances &mdash; the demo below now has a <em>deadline</em> field <code>u_t(x) = (z*&minus;x)/(1&minus;t)</code> that does exactly this: the arrow grid itself changes, growing as t &rarr; 1, then the run resets. <strong>(3) Space&ndash;time plot</strong> (for 1-D state, and the most useful picture in this document): put t on the horizontal axis and x on the vertical. Then u_t(x) is a <em>slope</em> attached to every point (t, x) of the plane, and trajectories are curves that follow the slopes. Tab 3’s interactive is precisely this picture &mdash; its straight lines and magenta curves are trajectories drawn in space&ndash;time, and dragging the t slider sweeps a vertical "now" line across it. When you see that plot, you are looking at a time-dependent vector field.</p>
+</div>
 
 <div class="ascii-card"><pre>   t = 0                        t = 0.5                       t = 1
    p_init = N(0, I)   ──────▶   half-transported    ──────▶   p_data
@@ -342,15 +352,15 @@ td code{font-size:.85em}
 
 <h3 id="b-demo">Interactive &mdash; follow the arrows</h3>
 <div class="demo">
-<div class="demo-bar"><span>dX/dt = u(X) &middot; Euler steps &middot; trails = trajectories</span><span class="demo-ctl"><select id="fieldSel" aria-label="vector field"><option value="contract">contraction u = &minus;x</option><option value="spiral">spiral u = (&minus;.4x&minus;1.1y, 1.1x&minus;.4y)</option><option value="attract">two attractors u = z*&minus;x</option></select><button id="playA" type="button">play</button><button id="resetA" type="button">reset</button></span></div>
+<div class="demo-bar"><span>dX/dt = u_t(X) &middot; Euler &middot; trails = trajectories</span><span class="demo-ctl"><select id="fieldSel" aria-label="vector field"><option value="contract">contraction u = &minus;x</option><option value="spiral">spiral u = (&minus;.4x&minus;1.1y, 1.1x&minus;.4y)</option><option value="attract">two attractors u = z*&minus;x</option><option value="deadline">deadline u_t = (z*&minus;x)/(1&minus;t) &mdash; time-dependent</option></select><button id="playA" type="button">play</button><button id="resetA" type="button">reset</button></span></div>
 <canvas id="cvA" width="920" height="320" role="img" aria-label="particles flowing along a 2-D vector field"></canvas>
-<p class="demo-cap">Grey arrows: the vector field u (a velocity at every point). Dots: particles obeying the ODE via Euler steps; their fading trails are trajectories; the motion of all dots at once is the flow &psi;_t. Switch to <strong>two attractors</strong> for a preview of generation: one field splits a single Gaussian cloud onto two "data" points &mdash; which point a particle reaches is decided entirely by where it started, exactly like a flow model's X_0.</p>
+<p class="demo-cap">Grey arrows: the vector field u (a velocity at every point). Dots: particles obeying the ODE via Euler steps; their fading trails are trajectories; the motion of all dots at once is the flow &psi;_t. Switch to <strong>two attractors</strong> for a preview of generation: one field splits a single Gaussian cloud onto two "data" points &mdash; which point a particle reaches is decided entirely by where it started, exactly like a flow model's X_0. The <strong>deadline</strong> field is the time-dependent one: same two attractors, but now u_t carries a 1/(1−t) factor — watch the arrow grid itself grow as the clock (top right) runs to t = 1, then the run resets. That field is CondOT's, aimed at two z's.</p>
 </div>
 
 
 <h3 id="b-euler">Simulating: Euler is enough to say</h3>
 <div class="ascii-card"><pre>   X_{t+h} = X_t + h · u_t(X_t)          h = 1/n,   t = 0, h, 2h, …, 1−h</pre></div>
-<div class="ascii-card"><pre>   with numbers — u(x) = −x,  X₀ = 2,  h = 0.5:
+<div class="ascii-card"><pre>   with numbers — u_t(x) = −x (time-independent),  X₀ = 2,  h = 0.5:
    X₀.₅ = 2   + 0.5·(−2)   = 1
    X₁   = 1   + 0.5·(−1)   = 0.5
    X₁.₅ = 0.5 + 0.5·(−0.5) = 0.25        exact: 2e^{−1.5} = 0.446
@@ -391,7 +401,7 @@ td code{font-size:.85em}
    the full flow = composition of 1/h such steps; log-dets ADD:
    log|det J_ψ|  =  Σ h·tr(∂u/∂x)  ──h→0──▶  ∫₀¹ tr(∂u/∂x) dt</pre></div>
 <p>So the determinant of a product of nearly-identity Jacobians melts into an <em>integral of traces</em>. And <code>tr(&part;u/&part;x) = div(u)</code> is the field's local volume-growth rate (tab 1's continuity equation, evaluated along a trajectory): positive divergence spreads nearby particles apart, volume grows, density drops &mdash; that's the minus sign in the formula above.</p>
-<div class="ascii-card"><pre>   sanity-check on the running example u(x) = −x  (1-D, so tr = the derivative):
+<div class="ascii-card"><pre>   sanity-check on the running example u_t(x) = −x  (1-D, so tr = the derivative):
    tr(∂u/∂x) = −1     ⇒  formula says: log-density along a trajectory GROWS at rate 1
    directly:  p_t = N(0, e^{−2t})   ⇒   p_t(0) = e^{t}/√(2π)   ⇒   d/dt log p_t(0) = 1  ✓
    (the field compresses everything toward 0, so density there rises — signs agree)</pre></div>
@@ -479,7 +489,7 @@ td code{font-size:.85em}
 <div class="demo-bar"><span>x_t = t&middot;z + (1&minus;t)&middot;&epsilon; &mdash; drag t</span><span class="demo-ctl"><button id="mCond" type="button" class="on">conditional lines</button><button id="mMarg" type="button">marginal field</button><button id="mBoth" type="button">both</button><label>t <input type="range" id="tSlider" min="0" max="0.99" step="0.005" value="0.35" aria-label="time t"></label><button id="resampleB" type="button">resample &epsilon;</button></span></div>
 <canvas id="cvB" width="920" height="360" role="img" aria-label="conditional straight paths versus marginal field trajectories from noise to data"></canvas>
 <div class="demo-eq" id="eqB" aria-live="polite"></div>
-<p class="demo-cap">Left edge: noise samples &epsilon; ~ N(0,1) at t=0. Right edge: data points z (two clusters) at t=1. <strong>Ultramarine straight lines</strong> = conditional paths, one per (&epsilon;, z) pair, moving with constant velocity z&minus;&epsilon; &mdash; they cross freely. <strong>Magenta curves</strong> = trajectories of the exact marginal field <code>u_t(x) = &Sigma;_i w_i(x,t)&middot;(z_i&minus;x)/(1&minus;t)</code> with posterior weights <code>w_i &prop; N(x; t&middot;z_i, (1&minus;t)&sup2;)</code> &mdash; the average that MSE training converges to. An ODE's trajectories can never cross (uniqueness of solutions), so where conditional lines intersect, the marginal field <em>bends</em> instead: straight conditional paths, curved marginal ones. The bold pair drives the equation readout; the readout's last line evaluates the marginal field at that dot.</p>
+<p class="demo-cap">Left edge: noise samples &epsilon; ~ N(0,1) at t=0. Right edge: data points z (two clusters) at t=1. <strong>Ultramarine straight lines</strong> = conditional paths, one per (&epsilon;, z) pair, moving with constant velocity z&minus;&epsilon; &mdash; they cross freely. <strong>Magenta curves</strong> = trajectories of the exact marginal field <code>u_t(x) = &Sigma;_i w_i(x,t)&middot;(z_i&minus;x)/(1&minus;t)</code> with posterior weights <code>w_i &prop; N(x; t&middot;z_i, (1&minus;t)&sup2;)</code> &mdash; the average that MSE training converges to. An ODE's trajectories can never cross (uniqueness of solutions), so where conditional lines intersect, the marginal field <em>bends</em> instead: straight conditional paths, curved marginal ones. The bold pair drives the equation readout; the readout's last line evaluates the marginal field at that dot. Reading tip: this whole plot IS the time-dependent field u_t(x), drawn as space–time — t horizontal, x vertical, velocity = slope — per tab 1's note on drawing t-dependent fields.</p>
 </div>
 
 
@@ -867,15 +877,17 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
   (function(){
     var cv=document.getElementById('cvA'); if(!cv) return;
     var ctx=cv.getContext('2d'), W=cv.width, H=cv.height, U=H/2.4;
-    var FIELDS={
-      contract:function(p){ return [-p[0],-p[1]]; },
-      spiral:  function(p){ return [-0.4*p[0]-1.1*p[1], 1.1*p[0]-0.4*p[1]]; },
-      attract: function(p){
-        var A=[-1.6,0], B=[1.6,0];
-        var da=(p[0]-A[0])*(p[0]-A[0])+p[1]*p[1], db=(p[0]-B[0])*(p[0]-B[0])+p[1]*p[1];
-        var z=da<db?A:B; return [z[0]-p[0], z[1]-p[1]]; }
+    function nearestZ(p){ var A=[-1.6,0], B=[1.6,0];
+      var da=(p[0]-A[0])*(p[0]-A[0])+p[1]*p[1], db=(p[0]-B[0])*(p[0]-B[0])+p[1]*p[1];
+      return da<db?A:B; }
+    var FIELDS={                                   // all take (p, t); most ignore t
+      contract:function(p,t){ return [-p[0],-p[1]]; },
+      spiral:  function(p,t){ return [-0.4*p[0]-1.1*p[1], 1.1*p[0]-0.4*p[1]]; },
+      attract: function(p,t){ var z=nearestZ(p); return [z[0]-p[0], z[1]-p[1]]; },
+      deadline:function(p,t){ var z=nearestZ(p), r=1/(1-Math.min(t,0.94));
+        return [(z[0]-p[0])*r, (z[1]-p[1])*r]; }   // CondOT-style: same arrows, scaled up as t->1
     };
-    var cur='contract', parts=[], playing=false, raf=null;
+    var cur='contract', parts=[], playing=false, raf=null, T=0;
     function px(p){ return [W/2+p[0]*U, H/2-p[1]*U]; }
     function spawn(){ return {p:[gauss()*0.9, gauss()*0.7], age:0}; }
     function seed(){ parts=[]; for(var i=0;i<130;i++) parts.push(spawn()); }
@@ -883,8 +895,9 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
     function arrows(){
       var f=FIELDS[cur]; ctx.strokeStyle=COL.rule; ctx.fillStyle=COL.rule; ctx.lineWidth=1;
       for(var gx=30; gx<W; gx+=46) for(var gy=26; gy<H; gy+=46){
-        var p=[(gx-W/2)/U,(H/2-gy)/U], u=f(p), n=Math.hypot(u[0],u[1])||1;
-        var s=13, dx=u[0]/n*s, dy=-u[1]/n*s;
+        var p=[(gx-W/2)/U,(H/2-gy)/U], u=f(p,T), n=Math.hypot(u[0],u[1])||1;
+        var mag=Math.min(1, 0.35+0.16*n);
+        var s=13*(cur==='deadline'?mag:1), dx=u[0]/n*s, dy=-u[1]/n*s;
         ctx.beginPath(); ctx.moveTo(gx-dx*0.5,gy-dy*0.5); ctx.lineTo(gx+dx*0.5,gy+dy*0.5); ctx.stroke();
         var a=Math.atan2(dy,dx);
         ctx.beginPath(); ctx.moveTo(gx+dx*0.5,gy+dy*0.5);
@@ -892,7 +905,7 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
         ctx.lineTo(gx+dx*0.5-4.5*Math.cos(a+0.45), gy+dy*0.5-4.5*Math.sin(a+0.45));
         ctx.closePath(); ctx.fill();
       }
-      if(cur==='attract'){ ctx.fillStyle=COL.ink;
+      if(cur==='attract'||cur==='deadline'){ ctx.fillStyle=COL.ink;
         [[-1.6,0],[1.6,0]].forEach(function(z){ var q=px(z);
           ctx.beginPath(); ctx.arc(q[0],q[1],4.5,0,7); ctx.fill(); }); }
     }
@@ -900,12 +913,15 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
       ctx.fillStyle='rgba(251,252,253,0.16)'; ctx.fillRect(0,0,W,H); // fading trails
       arrows();
       var f=FIELDS[cur], dt=0.02;
+      if(cur==='deadline'){ T+=0.004; if(T>=0.96){ T=0; seed(); }
+        ctx.fillStyle=COL.muted; ctx.font='12px IBM Plex Mono, monospace';
+        ctx.fillText('t = '+T.toFixed(2), W-84, 20); dt=0.004; }
       ctx.fillStyle=COL.out;
       for(var i=0;i<parts.length;i++){
-        var pt=parts[i], u=f(pt.p);
+        var pt=parts[i], u=f(pt.p,T);
         pt.p[0]+=dt*u[0]; pt.p[1]+=dt*u[1]; pt.age++;
         var sp=Math.hypot(u[0],u[1]);
-        if(pt.age>420 || sp<0.02 || Math.abs(pt.p[0])>3.6 || Math.abs(pt.p[1])>2.4) parts[i]=spawn();
+        if((cur!=='deadline' && (pt.age>420 || sp<0.02)) || Math.abs(pt.p[0])>3.6 || Math.abs(pt.p[1])>2.4) parts[i]=spawn();
         var q=px(pt.p);
         ctx.beginPath(); ctx.arc(q[0],q[1],2.3,0,7); ctx.fill();
       }
@@ -920,8 +936,8 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
       playing=!playing; play.textContent=playing?'pause':'play';
       if(playing) raf=requestAnimationFrame(frame); else cancelAnimationFrame(raf);
     });
-    reset.addEventListener('click', function(){ seed(); still(); });
-    sel.addEventListener('change', function(){ cur=sel.value; seed(); still(); });
+    reset.addEventListener('click', function(){ T=0; seed(); still(); });
+    sel.addEventListener('change', function(){ cur=sel.value; T=0; seed(); still(); });
     seed(); still();
   })();
 
