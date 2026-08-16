@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow Matching: from CNFs to Voicebox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>/* FABRIC — a datasheet for large-scale training
+   ultramarine = added explanation · magenta = correction */
+
+:root{
+  --paper:#E7EAEE; --paper-2:#DCE1E7; --panel:#FBFCFD;
+  --ink:#141A21; --ink-2:#39454F; --muted:#67737F;
+  --rule:#C9D0D7; --rule-soft:#DFE4E9;
+  --out:#1743C3; --in:#A8106C; --teal:#0E7C6B;
+  --code-bg:#12191F; --code-fg:#DAE3EB; --code-dim:#7C8B99;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16.5px;line-height:1.66}
+::selection{background:var(--out);color:#fff}
+a{color:var(--out);text-underline-offset:.18em;text-decoration-thickness:.06em}
+a:hover{color:var(--in)}
+:focus-visible{outline:2.5px solid var(--in);outline-offset:3px;border-radius:2px}
+
+/* masthead */
+.masthead{max-width:var(--maxw);margin:0 auto;padding:52px 28px 0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 20px}
+.masthead h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6.2vw,66px);
+  line-height:.98;letter-spacing:-.032em;margin:0 0 30px;max-width:20ch}
+.ring-wrap{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:24px 0 20px}
+.ring-cap{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:13px 0 0;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+.ring{display:flex;gap:6px}
+.ring-cell{flex:1;min-width:0;height:50px;border:1px solid var(--rule);border-radius:5px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow:hidden}
+.ring-cell::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;animation:ringpass 4.4s linear infinite}
+.ring-cell span{position:relative;z-index:2}
+.ring-cell:nth-child(1)::after{animation-delay:0s}
+.ring-cell:nth-child(2)::after{animation-delay:.55s}
+.ring-cell:nth-child(3)::after{animation-delay:1.1s}
+.ring-cell:nth-child(4)::after{animation-delay:1.65s}
+.ring-cell:nth-child(5)::after{animation-delay:2.2s}
+.ring-cell:nth-child(6)::after{animation-delay:2.75s}
+.ring-cell:nth-child(7)::after{animation-delay:3.3s}
+.ring-cell:nth-child(8)::after{animation-delay:3.85s}
+@keyframes ringpass{0%,88%{opacity:0}4%{opacity:1}16%{opacity:.85}30%{opacity:0}}
+
+/* hero: pipeline schedule */
+.pipe{display:flex;flex-direction:column;gap:5px}
+.pipe-row{display:flex;align-items:center;gap:10px}
+.pipe-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);width:52px;flex:none}
+.pipe-cells{display:flex;gap:5px;flex:1;min-width:0}
+.pc{flex:1;min-width:0;height:30px;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);position:relative;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;color:var(--rule);overflow:hidden}
+.pc.on{color:var(--muted);border-color:var(--rule)}
+.pc:not(.on){background:repeating-linear-gradient(135deg,transparent,transparent 4px,
+  var(--paper-2) 4px,var(--paper-2) 5px);border-style:dashed}
+.pc span{position:relative;z-index:2}
+.pc.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,var(--out),#3C68E8);opacity:0;
+  animation:pass 4.4s linear infinite;animation-delay:var(--d)}
+@keyframes pass{0%,84%{opacity:0}3%{opacity:1}13%{opacity:.85}26%{opacity:0}}
+.intro{padding:34px 0 6px;max-width:80ch}
+
+/* tabs */
+.tabbar-outer{position:sticky;top:0;z-index:40;background:rgba(231,234,238,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.tabbar{max-width:var(--maxw);margin:0 auto;padding:4px 28px 0;display:flex;
+  flex-wrap:wrap;column-gap:1px;row-gap:0}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;cursor:pointer;font-family:var(--body);
+  font-size:12.8px;font-weight:500;color:var(--muted);padding:10px 10px 8px;white-space:nowrap;
+  border-bottom:2.5px solid transparent;transition:color .18s,border-color .18s;
+  display:flex;align-items:baseline;gap:6px}
+.tab .num{font-family:var(--mono);font-size:10px;color:var(--rule);transition:color .18s}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--in);font-weight:600}
+.tab[aria-selected="true"] .num{color:var(--in)}
+
+main{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+.panel{display:none}
+.panel.is-active{display:block;animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.panel-head{padding:46px 0 26px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--in);margin:0 0 12px}
+.panel-head h2{font-family:var(--display);font-weight:700;font-size:clamp(27px,4.2vw,44px);
+  line-height:1.04;letter-spacing:-.026em;margin:0;max-width:22ch;scroll-margin-top:80px}
+
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 34px}
+.subnav a{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--panel);border-radius:20px;padding:5px 12px;
+  transition:all .16s}
+.subnav a:hover{border-color:var(--in);color:var(--in);background:#fff}
+
+/* prose */
+.body{max-width:78ch}
+.body > .tablewrap,.body > .code,.body > .ascii-card{max-width:100%}
+h3{font-family:var(--display);font-weight:700;font-size:25px;letter-spacing:-.018em;
+  line-height:1.16;margin:52px 0 16px;scroll-margin-top:80px}
+h4{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.012em;
+  margin:36px 0 12px;scroll-margin-top:80px}
+h5,h6{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:28px 0 10px;scroll-margin-top:80px}
+p{margin:0 0 17px}
+strong{font-weight:600}
+em{font-style:italic}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin-bottom:8px}
+li::marker{color:var(--out)}
+li > ul,li > ol{margin-top:8px}
+hr{border:0;border-top:1px solid var(--rule);margin:44px 0}
+code{font-family:var(--mono);font-size:.875em;background:var(--paper-2);padding:.13em .36em;
+  border-radius:3px;word-break:break-word}
+h2 code,h3 code,h4 code{font-size:.84em;background:none;padding:0}
+
+/* formula card */
+.formula{font-family:var(--mono);font-size:14.5px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--rule);border-radius:8px;padding:18px 22px;margin:0 0 22px;
+  text-align:center;overflow-x:auto;white-space:nowrap}
+
+/* code cards */
+.code{position:relative;margin:0 0 20px;border-radius:8px;overflow:hidden;background:var(--code-bg);
+  box-shadow:0 1px 2px rgba(20,26,33,.14),0 8px 22px -14px rgba(20,26,33,.5)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 12px 8px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--code-dim)}
+.code pre{margin:0;padding:15px 16px 17px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.2px;line-height:1.62;color:var(--code-fg);tab-size:4;white-space:pre}
+.code.shell .p{color:var(--in);font-weight:600}
+.copy{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;
+  color:var(--code-dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;padding:3px 9px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s,background .16s}
+.copy:hover{color:#fff;border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
+.copy.done{color:#7FE3B0;border-color:rgba(127,227,176,.45)}
+
+/* ascii diagrams */
+.ascii-card{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px}
+.ascii-card pre{margin:0;padding:20px 22px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.4px;line-height:1.5;color:var(--ink-2);white-space:pre}
+
+/* callouts */
+.note,.warn,.rulebox{position:relative;margin:0 0 22px;padding:20px 22px 4px 24px;
+  background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--out);
+  border-radius:0 8px 8px 0}
+.warn{border-left-color:var(--in)}
+.rulebox{border-left-color:var(--ink);background:var(--ink);color:#E4E9EE;border-color:var(--ink)}
+.rulebox strong{color:#fff}
+.rulebox code{background:rgba(255,255,255,.12);color:#F0F4F8}
+.rulebox a{color:#8FB0FF}
+.rulebox li::marker{color:#8FB0FF}
+.rulebox .tablewrap{background:transparent;border-color:rgba(255,255,255,.2)}
+.rulebox th{background:transparent;color:#8FB0FF;border-color:rgba(255,255,255,.2)}
+.rulebox td{color:#E4E9EE;border-color:rgba(255,255,255,.1)}
+.tag{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;font-weight:600;color:var(--out);margin-bottom:10px}
+.warn .tag{color:var(--in)}
+.rulebox .tag{color:#8FB0FF}
+.note > :last-child,.warn > :last-child,.rulebox > :last-child{margin-bottom:16px}
+.note .code,.warn .code,.rulebox .code{margin-top:16px}
+.note .ascii-card,.warn .ascii-card{margin-top:16px}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 24px;border:1px solid var(--rule);border-radius:8px;
+  background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:600;color:var(--muted);padding:12px 15px;
+  border-bottom:1px solid var(--rule);background:var(--paper);vertical-align:bottom}
+td{padding:12px 15px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td strong{color:var(--ink)}
+td code{font-size:.85em}
+
+@media (max-width:820px){
+  .masthead{padding:36px 20px 0}
+  .tabbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;padding:0 16px}
+  .tabbar::-webkit-scrollbar{display:block;height:3px}
+  .tabbar::-webkit-scrollbar-thumb{background:var(--rule);border-radius:2px}
+  .tabbar-outer{position:sticky;overflow:hidden}
+  .tabbar-outer::after{content:"";position:absolute;right:0;top:0;bottom:0;width:26px;
+    pointer-events:none;background:linear-gradient(to left,rgba(231,234,238,.94),rgba(231,234,238,0))}
+  main{padding:0 20px 90px}
+  .ring-cell{height:40px;font-size:9.5px}
+  .pc{height:26px;font-size:9.5px}
+  .pipe-lbl{width:40px;font-size:9.5px}
+  .note,.warn,.rulebox{padding:18px 16px 2px 18px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .ring{gap:3px}
+  .ring-cell{height:34px}
+  .pipe-cells{gap:3px}
+  .pc{height:22px}
+  .code pre{font-size:12.3px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important}
+  .pc.on::after{opacity:.16}
+  .ring-cell::after{opacity:.16}
+}
+@media print{
+  .tabbar-outer,.copy,.ring-wrap,.subnav{display:none}
+  .panel{display:block !important}
+}
+
+
+/* interactive demos */
+.demo{margin:0 0 22px;background:var(--panel);border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.body > .demo{max-width:100%}
+.demo-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  padding:9px 14px;border-bottom:1px solid var(--rule-soft);font-family:var(--mono);
+  font-size:11px;letter-spacing:.06em;color:var(--muted)}
+.demo-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.demo-ctl button,.demo-ctl select{appearance:none;border:1px solid var(--rule);background:#fff;
+  color:var(--ink-2);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;padding:4px 10px;border-radius:4px;cursor:pointer;
+  transition:color .16s,border-color .16s}
+.demo-ctl button:hover,.demo-ctl select:hover{border-color:var(--out);color:var(--out)}
+.demo-ctl button.on{border-color:var(--in);color:var(--in);font-weight:600}
+.demo-ctl label{display:flex;align-items:center;gap:6px}
+.demo-ctl input[type=range]{width:170px;accent-color:var(--out)}
+.demo canvas{display:block;width:100%;height:auto;background:var(--panel)}
+.demo-eq{font-family:var(--mono);font-size:12.3px;color:var(--ink);padding:9px 14px;
+  border-top:1px solid var(--rule-soft);background:var(--paper-2);white-space:pre-wrap}
+.demo-cap{font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--muted);
+  margin:0;padding:9px 14px;border-top:1px solid var(--rule-soft)}
+
+.crumbs{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;margin:0 0 14px;
+  display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.crumbs a{color:var(--muted);text-decoration:none;border-bottom:1px solid transparent}
+.crumbs a:hover{color:var(--in);border-bottom-color:var(--in)}
+.crumbs a:focus-visible{outline:2px solid var(--in);outline-offset:2px}
+.crumbs .sep{color:var(--rule)}
+@media print{.crumbs{display:none}}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">&larr; Interview notes</a></nav>
+  <p class="eyebrow"><span>Interview notes</span><span>generative models &middot; flow matching</span></p>
+  <h1>Flow Matching, from CNFs to Voicebox</h1>
+  <div class="ring-wrap">
+    <div class="ring" aria-hidden="true"><div class="ring-cell"><span>vector field u</span></div><div class="ring-cell"><span>ODE &#7819; = u</span></div><div class="ring-cell"><span>CNF &middot; simulate</span></div><div class="ring-cell"><span>FM &middot; regress</span></div><div class="ring-cell"><span>x_t = tz+(1&minus;t)&epsilon;</span></div><div class="ring-cell"><span>target z&minus;&epsilon;</span></div><div class="ring-cell"><span>diffusion &middot; +score</span></div><div class="ring-cell"><span>Voicebox</span></div></div>
+    <p class="ring-cap"><span>Same model at inference &mdash; the whole story is how you <em>train</em> the vector field</span><span>training = 1 network eval, no ODE solve</span></p>
+  </div>
+  <div class="intro"><div class="warn"><p><strong>How to read this document</strong></p>
+<ul>
+<li>The storyline: a <strong>CNF</strong> is the right model (an ODE that carries noise to data) trained the wrong way (simulate the ODE inside the training loop). <strong>Flow matching</strong> keeps the model and replaces the training with a one-line regression.</li>
+<li>Tabs 1&ndash;3 are the concepts, tab 4 is the code you'd write on a whiteboard, tab 5 connects to diffusion, tab 6 is Voicebox (our paper).</li>
+<li>Tabs 1 and 3 contain small <strong>interactive demos</strong> (pure in-page JS, nothing to install): an ODE playground, and the CondOT path with a draggable t &mdash; the marginal-field curves it draws are the exact closed-form field, not an illustration.</li>
+<li>If you are short on time: read <strong>3 &middot; Flow matching</strong> and <strong>7 &middot; Remember</strong>, and be able to write tab 4's <code>fm_loss</code> from memory.</li>
+</ul></div></div>
+</header>
+
+<div class="tabbar-outer">
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-contents" aria-controls="pan-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-basics" aria-controls="pan-basics" aria-selected="false" tabindex="-1"><span class="num">02</span>1 &middot; Flows &amp; ODEs</button><button class="tab" role="tab" id="t-cnf" aria-controls="pan-cnf" aria-selected="false" tabindex="-1"><span class="num">03</span>2 &middot; CNFs: the problem</button><button class="tab" role="tab" id="t-fm" aria-controls="pan-fm" aria-selected="false" tabindex="-1"><span class="num">04</span>3 &middot; Flow matching</button><button class="tab" role="tab" id="t-code" aria-controls="pan-code" aria-selected="false" tabindex="-1"><span class="num">05</span>4 &middot; PyTorch</button><button class="tab" role="tab" id="t-diff" aria-controls="pan-diff" aria-selected="false" tabindex="-1"><span class="num">06</span>5 &middot; Diffusion &harr; FM</button><button class="tab" role="tab" id="t-vb" aria-controls="pan-vb" aria-selected="false" tabindex="-1"><span class="num">07</span>6 &middot; Voicebox</button><button class="tab" role="tab" id="t-remember" aria-controls="pan-remember" aria-selected="false" tabindex="-1"><span class="num">08</span>7 &middot; Remember</button></div>
+</div>
+
+<main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="contents">Table of contents</h2></div><div class="body">
+<ol>
+<li><a href="#basics">Flows &amp; ODEs &mdash; the four words you must own</a></li>
+<li><a href="#cnf">Continuous normalizing flows &mdash; the right model, trained the wrong way</a></li>
+<li><a href="#fm">Flow matching &mdash; delete the simulation</a></li>
+<li><a href="#code">PyTorch &mdash; forward pass, backward pass, sampler</a></li>
+<li><a href="#diff">Diffusion &harr; flow matching &mdash; one family, two parameterizations</a></li>
+<li><a href="#vb">Voicebox &mdash; flow matching for speech</a></li>
+<li><a href="#remember">Things to remember</a></li>
+</ol>
+<div class="note"><span class="tag">The whole document in four sentences</span>
+<p>A generative model can be an ODE: start at noise, integrate a learned velocity field, land on data. CNFs (2018) trained this by maximum likelihood, which forces you to <em>simulate the ODE and a Jacobian-trace integral inside every training step</em> &mdash; that is why they never scaled. Flow matching (2023) notices you can <strong>choose the path yourself</strong>: draw noise &epsilon; and data z, put the model on the straight line between them, and regress its output onto the line's known velocity <code>z &minus; &epsilon;</code>. Training becomes one network eval and an MSE &mdash; simulation-free &mdash; and simulation is only paid once, at sampling time.</p>
+</div>
+</div></section><section class="panel" id="pan-basics" role="tabpanel" aria-labelledby="t-basics" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 7</p><h2 id="basics">1. Flows &amp; ODEs &mdash; the four words you must own</h2></div><div class="body">
+<div class="subnav"><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
+
+<h3 id="b-words">The four words</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Word</th><th>What it is</th><th>Type</th></tr></thead>
+<tbody>
+<tr><td><strong>Vector field</strong> <code>u_t(x)</code></td><td>a velocity assigned to every point in space at every time: "if you are at x at time t, move this way"</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td></tr>
+<tr><td><strong>ODE</strong></td><td>the rule "follow the arrows": <code>dX_t/dt = u_t(X_t)</code>, starting at <code>X_0 = x_0</code></td><td>a condition on a trajectory</td></tr>
+<tr><td><strong>Trajectory</strong> <code>X_t</code></td><td>one particle's path through space obeying the ODE</td><td><code>[0,1] &rarr; &#8477;^d</code></td></tr>
+<tr><td><strong>Flow</strong> <code>&psi;_t(x_0)</code></td><td>the solution map: where does a particle starting at x_0 sit at time t? All trajectories at once.</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td></tr>
+</tbody>
+</table></div>
+<p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another.</p>
+
+<div class="ascii-card"><pre>   t = 0                        t = 0.5                       t = 1
+   p_init = N(0, I)   ──────▶   half-transported    ──────▶   p_data
+   (easy to sample)             cloud                         (what we want)
+
+   every particle x obeys   dX_t/dt = u_t(X_t)
+   push the WHOLE noise cloud through the field  ⇒  the cloud's density
+   morphs  p_0 → p_1.  Generation = ride the field from t=0 to t=1.</pre></div>
+
+<h3 id="b-example">A worked example you can differentiate live</h3>
+<p>Take the simplest interesting field: a <strong>linear contraction</strong>, <code>u_t(x) = &minus;&theta;x</code> ("velocity always points at the origin, proportional to distance"). Claim: the flow is exponential shrinkage, <code>&psi;_t(x_0) = e^{&minus;&theta;t} x_0</code>. Verify by plugging into the ODE &mdash; this is the check an interviewer can watch you do:</p>
+<div class="ascii-card"><pre>   claim:    ψ_t(x₀) = e^{−θt} · x₀
+   check 1:  ψ₀(x₀) = x₀                                   ✓ initial condition
+   check 2:  d/dt ψ_t(x₀) = −θ·e^{−θt}·x₀ = −θ·ψ_t(x₀)
+                          = u( ψ_t(x₀) )                    ✓ solves the ODE
+
+   read it:  every point slides toward 0, covering a fixed FRACTION of the
+   remaining distance per unit time — so a whole cloud of points shrinks
+   toward the origin without ever crossing itself.</pre></div>
+<p>Why this tiny example earns its place: <strong>flow matching's own conditional field is exactly this field</strong>, re-centred and re-clocked. The CondOT target can be rewritten as <code>u_t(x|z) = (z &minus; x)/(1&minus;t)</code> (derived in tab 3) &mdash; a contraction toward the data point z whose rate <code>1/(1&minus;t)</code> speeds up as time runs out. Linear-in-x velocity is also <em>why</em> everything in the Gaussian-path story stays closed-form: linear fields have linear flows, and linear maps of Gaussians are Gaussians.</p>
+
+<h3 id="b-push">Flows move points &mdash; therefore they move distributions</h3>
+<p>Feed the ODE a <em>random</em> start <code>X_0 ~ p_0</code> and the output <code>X_t = &psi;_t(X_0)</code> is random too; its law is the <strong>pushforward</strong> <code>p_t = [&psi;_t]_&#9839; p_0</code>. Two equivalent camera angles, worth naming:</p>
+<ul>
+<li><strong>Lagrangian (ride a particle):</strong> follow one trajectory X_t. This is what the ODE and the sampler talk about.</li>
+<li><strong>Eulerian (stand at a point):</strong> watch the density value p_t(x) at a fixed x rise and fall as mass flows past. This is what "the model transports N(0,I) to p_data" talks about.</li>
+</ul>
+<p>The bookkeeping that ties the two views together is conservation of probability mass &mdash; none is created or destroyed, only carried by the field:</p>
+<div class="formula">&part;_t p_t(x) = &minus;div( p_t u_t )(x)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(continuity equation)</div>
+<p>Read it as a fluid statement: the density at x changes exactly by the net inflow of mass that the velocity field carries through x (<code>div</code> = net outflow rate, hence the minus sign). A field u <em>generates</em> a density path p_t if and only if the pair satisfies this PDE &mdash; it is the certificate we will cash in twice: tab 2's likelihood formula is it evaluated along a trajectory, and tab 3's marginalization trick is a three-line computation with it.</p>
+
+<h3 id="b-demo">Interactive &mdash; follow the arrows</h3>
+<div class="demo">
+<div class="demo-bar"><span>dX/dt = u(X) &middot; Euler steps &middot; trails = trajectories</span><span class="demo-ctl"><select id="fieldSel" aria-label="vector field"><option value="contract">contraction u = &minus;x</option><option value="spiral">spiral u = (&minus;.4x&minus;1.1y, 1.1x&minus;.4y)</option><option value="attract">two attractors u = z*&minus;x</option></select><button id="playA" type="button">play</button><button id="resetA" type="button">reset</button></span></div>
+<canvas id="cvA" width="920" height="320" role="img" aria-label="particles flowing along a 2-D vector field"></canvas>
+<p class="demo-cap">Grey arrows: the vector field u (a velocity at every point). Dots: particles obeying the ODE via Euler steps; their fading trails are trajectories; the motion of all dots at once is the flow &psi;_t. Switch to <strong>two attractors</strong> for a preview of generation: one field splits a single Gaussian cloud onto two "data" points &mdash; which point a particle reaches is decided entirely by where it started, exactly like a flow model's X_0.</p>
+</div>
+
+
+<h3 id="b-euler">Simulating: Euler is enough to say</h3>
+<div class="ascii-card"><pre>   X_{t+h} = X_t + h · u_t(X_t)          h = 1/n,   t = 0, h, 2h, …, 1−h</pre></div>
+<p>"Take a small step in the direction the field points, repeat n times." Fancier solvers (midpoint, Heun) evaluate <code>u</code> more than once per step to correct the direction &mdash; Voicebox uses midpoint. Each evaluation of <code>u</code> is a full network forward pass, so <strong>NFE (number of function evaluations) is the unit of sampling cost</strong>.</p>
+
+<h3 id="b-model">A flow model</h3>
+<p>Make the vector field a neural network <code>u_t^&theta;(x)</code> that takes <code>(x, t)</code> and returns a velocity. Then:</p>
+<div class="ascii-card"><pre>   sample   X_0 ~ N(0, I)                 ← the only randomness
+   simulate dX_t = u_t^θ(X_t) dt          ← deterministic given X_0
+   return   X_1                            want:  X_1 ~ p_data</pre></div>
+<div class="warn"><span class="tag">Trap &mdash; the network is the velocity, not the flow</span>
+<p>Despite the name "flow model", <code>u^&theta;</code> parameterizes the <em>vector field</em>. To get the flow (i.e. actual samples) you must integrate the ODE. Everything in this document is about the question: <strong>how do you train <code>u^&theta;</code> so that X_1 lands on the data distribution?</strong></p>
+</div>
+</div></section><section class="panel" id="pan-cnf" role="tabpanel" aria-labelledby="t-cnf" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 7</p><h2 id="cnf">2. Continuous normalizing flows &mdash; the right model, trained the wrong way</h2></div><div class="body">
+<div class="subnav"><a href="#c-nf">One paragraph of normalizing flows</a><a href="#c-icv">det &rarr; trace</a><a href="#c-loop">The CNF training loop</a><a href="#c-cost">The three costs</a></div>
+
+<h3 id="c-nf">One paragraph of (discrete) normalizing flows</h3>
+<p>A normalizing flow generates by pushing noise through an invertible map <code>f</code> and trains by maximum likelihood via the change-of-variables formula: <code>log p(x) = log p_0(f&#8315;&sup1;(x)) + log|det J_{f&#8315;&sup1;}(x)|</code>. The whole engineering game is designing layers whose inverse and Jacobian <em>determinant</em> are cheap (coupling layers etc.), which caps expressivity.</p>
+
+<h3 id="c-icv">The CNF idea (Neural ODE paper, Chen et al. 2018): det becomes trace</h3>
+<p>Replace the stack of discrete invertible layers with an ODE &mdash; a "continuous-depth" flow. The flow map <code>&psi;_t</code> is automatically invertible (run the ODE backwards). And the change-of-variables formula turns from a determinant into a <strong>trace</strong>:</p>
+<div class="formula">d/dt&nbsp; log p_t(X_t) &nbsp;=&nbsp; &minus;tr( &part;u_t/&part;x (X_t) )&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(instantaneous change of variables)</div>
+<div class="ascii-card"><pre>   log p_1(x_1)  =  log p_0(x_0)  −  ∫₀¹ tr( ∂u_t/∂x (X_t) ) dt
+
+   read it as:  final log-density
+              = easy Gaussian log-density at the trajectory's start
+              − how much the field expanded volume along the way
+   (divergence tr(∂u/∂x) > 0 = field spreads points out = density drops)</pre></div>
+<div class="note"><span class="tag">Note &mdash; where the trace comes from (30-second derivation)</span>
+<div class="ascii-card"><pre>   one Euler step of the flow:    x  ↦  x + h·u_t(x)
+   its Jacobian:                  J_step = I + h·(∂u/∂x)
+   det(I + h·A) = 1 + h·tr(A) + O(h²)     (off-diagonal products enter at h²)
+   ⇒  log|det J_step| = h·tr(∂u/∂x) + O(h²)
+
+   the full flow = composition of 1/h such steps; log-dets ADD:
+   log|det J_ψ|  =  Σ h·tr(∂u/∂x)  ──h→0──▶  ∫₀¹ tr(∂u/∂x) dt</pre></div>
+<p>So the determinant of a product of nearly-identity Jacobians melts into an <em>integral of traces</em>. And <code>tr(&part;u/&part;x) = div(u)</code> is the field's local volume-growth rate (tab 1's continuity equation, evaluated along a trajectory): positive divergence spreads nearby particles apart, volume grows, density drops &mdash; that's the minus sign in the formula above.</p>
+</div>
+
+<p>Interview line: <em>"in continuous time the log-det of a composition of infinitely many infinitesimal steps collapses to an integral of the trace &mdash; and a trace is much cheaper than a determinant, and puts no architectural constraint on <code>u</code>."</em> That was the promise: free-form architectures with exact likelihoods.</p>
+
+<h3 id="c-loop">The CNF training loop &mdash; where it goes wrong</h3>
+<p>Train by maximum likelihood: for <em>every training example, on every step</em> you must know where its trajectory came from and how much volume changed. That means solving the ODE inside the loss:</p>
+<div class="ascii-card"><pre>   CNF training step (2018)                FM training step (2023, tab 3)
+   ─────────────────────────────           ─────────────────────────────
+   x  = data point                         z = data,  ε ~ N(0,I),  t ~ U[0,1]
+   solve ODE x → x_0        (50–100        x_t    = t·z + (1−t)·ε     (1 line)
+     network evals, sequential)            target = z − ε             (1 line)
+   accumulate ∫ tr(∂u/∂x) dt along         loss = ‖u_θ(x_t, t) − target‖²
+     the way (trace per eval)                                     (1 eval)
+   loss = −log p₀(x₀) + ∫ tr(…) dt
+   backprop through the whole solve        backprop through 1 eval</pre></div>
+
+<h3 id="c-cost">The three costs (say all three)</h3>
+<ul>
+<li><strong>Simulation in the loop.</strong> Each training step is a full sequential ODE solve &mdash; 50&ndash;100+ network evals that cannot be parallelized over time. And as training progresses the learned field tends to get stiffer, so the adaptive solver takes <em>more</em> steps.</li>
+<li><strong>The trace.</strong> Exact <code>tr(&part;u/&part;x)</code> costs d backprops (one per dimension). FFJORD replaces it with Hutchinson's stochastic estimator <code>tr(A) = E[&epsilon;&#7511;A&epsilon;]</code> &mdash; one backprop, but now the likelihood itself is noisy.</li>
+<li><strong>Backprop through the solver.</strong> Either store every intermediate state (memory ~ NFE) or use the adjoint method (solve a second ODE backwards for gradients &mdash; constant memory, but yet more sequential solves and its own numerical error).</li>
+</ul>
+<div class="rulebox"><span class="tag">The verdict, one sentence</span>
+<p>CNFs picked the right <em>model</em> (a learned ODE from noise to data) and the wrong <em>training signal</em> (likelihood, which is only computable by simulating). Flow matching keeps the model and changes the signal to something available in closed form <strong>before</strong> any simulation happens.</p>
+</div>
+</div></section>
+<section class="panel" id="pan-fm" role="tabpanel" aria-labelledby="t-fm" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 7</p><h2 id="fm">3. Flow matching &mdash; delete the simulation</h2></div><div class="body">
+<div class="subnav"><a href="#f-flip">The flip</a><a href="#f-path">Step 1: pick a path</a><a href="#f-cvf">Step 2: its velocity, in closed form</a><a href="#f-marg">Step 3: marginalize</a><a href="#f-demo">Interactive demo</a><a href="#f-cfm">Step 4: the CFM theorem</a><a href="#f-algo">The algorithm</a><a href="#f-vbconv">Voicebox's convention</a></div>
+
+<h3 id="f-flip">The flip</h3>
+<p>The CNF asks: <em>given my current network, what path does each data point take, and how likely is it?</em> &mdash; answerable only by simulation. Flow matching flips it: <strong>I will decide the path myself, per data point, in advance.</strong> Then the velocity along that path is known in closed form, and training is supervised regression onto it. Four steps.</p>
+
+<h3 id="f-path">Step 1 &mdash; pick a conditional probability path</h3>
+<p>Condition on one data point z. Choose any interpolation <code>p_t(&middot;|z)</code> with <code>p_0(&middot;|z) = N(0,I)</code> and <code>p_1(&middot;|z) = &delta;_z</code> (all mass on z). The standard choice is the <strong>Gaussian path</strong>, and its simplest instance is <strong>CondOT</strong> &mdash; literally the straight line:</p>
+<div class="formula">p_t(x|z) = N(&alpha;_t z, &beta;_t&sup2; I)&nbsp;&nbsp;&nbsp;&nbsp;sample:&nbsp; x_t = &alpha;_t z + &beta;_t &epsilon;&nbsp;&nbsp;&nbsp;&nbsp;CondOT:&nbsp; &alpha;_t = t, &beta;_t = 1&minus;t&nbsp; &rArr;&nbsp; x_t = t&middot;z + (1&minus;t)&middot;&epsilon;</div>
+<p>Averaging over the dataset gives the <strong>marginal path</strong> <code>p_t(x) = &int; p_t(x|z) p_data(z) dz</code>, which interpolates the full distributions: <code>p_0 = N(0,I)</code>, <code>p_1 = p_data</code>. You can <em>sample</em> from it trivially (draw z, draw &epsilon;, interpolate); you can never evaluate its density &mdash; and you won't need to.</p>
+
+<h3 id="f-cvf">Step 2 &mdash; the conditional velocity is known in closed form</h3>
+<p>What velocity field carries a particle along that path toward z? For the Gaussian path (derivation in the note below &mdash; a classic whiteboard ask):</p>
+<div class="formula">u_t(x|z) = ( &alpha;&#775;_t &minus; (&beta;&#775;_t/&beta;_t)&alpha;_t ) z + (&beta;&#775;_t/&beta;_t) x&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CondOT:&nbsp;&nbsp;u_t(x_t|z) = z &minus; &epsilon;</div>
+<div class="note"><span class="tag">Note &mdash; the two-line derivation (whiteboard-ready)</span>
+<div class="ascii-card"><pre>   the path, written as a flow:   ψ_t(ε|z) = α_t·z + β_t·ε      (carries ε → z)
+   velocity = its time derivative:  ψ̇_t    = α̇_t·z + β̇_t·ε
+
+   express in terms of the CURRENT point x = ψ_t(ε|z), i.e. ε = (x − α_t z)/β_t :
+
+     u_t(x|z) = α̇_t·z + (β̇_t/β_t)·(x − α_t z)
+              = ( α̇_t − (β̇_t/β_t)·α_t )·z + (β̇_t/β_t)·x           ← general Gaussian path
+
+   CondOT (α=t, β=1−t, α̇=1, β̇=−1):
+     u_t(x|z) = (z − x)/(1 − t)      and on the path this equals   z − ε</pre></div>
+<p>Read the CondOT form: at time t you sit at x; the leftover distance is <code>z&minus;x</code> and the leftover time is <code>1&minus;t</code> &mdash; velocity is distance over time. It is tab 1's linear contraction aimed at z, accelerating as the deadline t=1 approaches. Both forms matter: <code>z&minus;&epsilon;</code> is what you type in the training loop (endpoints are in hand); <code>(z&minus;x)/(1&minus;t)</code> defines the field <em>everywhere</em>, which the demo below and the marginal-field formula need.</p>
+</div>
+
+<p>For CondOT the answer is the obvious one: a particle traversing a straight line from &epsilon; to z in unit time moves with constant velocity <strong>z &minus; &epsilon;</strong>. That is the regression target. Memorize the pair:</p>
+<div class="rulebox"><span class="tag">The two lines the whole method compresses to</span>
+<p><code>x_t = t&middot;z + (1&minus;t)&middot;&epsilon;</code> &nbsp;&nbsp;&nbsp;&nbsp; <code>target = z &minus; &epsilon;</code></p>
+</div>
+
+<h3 id="f-marg">Step 3 &mdash; marginalize: why regressing on per-point targets works at all</h3>
+<p>Different (z, &epsilon;) pairs put mass on the <em>same</em> point x_t with <em>different</em> targets. The network gets x_t and t only &mdash; it cannot know which z it came from. So what does MSE regression converge to? Its minimizer: the <strong>conditional expectation of the target given the input</strong>. That is exactly the marginal vector field:</p>
+<div class="formula">u_t(x) = E[ u_t(x_t|z) | x_t = x ] = &int; u_t(x|z) &middot; p_t(x|z)p_data(z)/p_t(x) dz</div>
+<div class="ascii-card"><pre>        ε₁ ●──────╲   target z₂−ε₁                two paths cross at x_t
+                   ╲ ╱                            with different targets;
+                    ✕  ← x_t : net sees only this  the net can't output both.
+                   ╱ ╲                            MSE optimum at x_t
+        ε₂ ●──────╱   target z₁−ε₂                = posterior-weighted AVERAGE
+       (z₁, z₂ on the other side)                 of the arrows = marginal u_t(x)</pre></div>
+<p>And the <strong>marginalization trick</strong> (proved via the continuity equation) says this averaged field is precisely the one whose ODE transports N(0,I) to p_data. Intuition: at x, average over "which z might I be flowing toward, given I'm at x now" &mdash; a posterior-weighted mean of arrows &mdash; and following that mean field moves the whole <em>density</em> correctly even though no individual particle targets a specific z anymore.</p>
+<div class="note"><span class="tag">Note &mdash; the continuity equation is the proof tool</span>
+<p>Tab 1's mass-conservation PDE, <code>&part;_t p_t = &minus;div(p_t u_t)</code>, is what makes the marginalization trick a <em>theorem</em> rather than a hope. The check is three lines: differentiate <code>p_t(x) = &int; p_t(x|z) p_data(z) dz</code> under the integral; each conditional pair (p_t(&middot;|z), u_t(&middot;|z)) satisfies continuity by construction, so substitute; pull the divergence out by linearity &mdash; and the posterior-averaged field pops out as the thing paired with the marginal density. Averaged field + marginal path satisfy continuity &rArr; the averaged field transports N(0,I) to p_data. No simulation appears anywhere in the argument, which is the entire point.</p>
+</div>
+
+<h3 id="f-demo">Interactive &mdash; the CondOT path, live</h3>
+<div class="demo">
+<div class="demo-bar"><span>x_t = t&middot;z + (1&minus;t)&middot;&epsilon; &mdash; drag t</span><span class="demo-ctl"><button id="mCond" type="button" class="on">conditional lines</button><button id="mMarg" type="button">marginal field</button><button id="mBoth" type="button">both</button><label>t <input type="range" id="tSlider" min="0" max="0.99" step="0.005" value="0.35" aria-label="time t"></label><button id="resampleB" type="button">resample &epsilon;</button></span></div>
+<canvas id="cvB" width="920" height="360" role="img" aria-label="conditional straight paths versus marginal field trajectories from noise to data"></canvas>
+<div class="demo-eq" id="eqB" aria-live="polite"></div>
+<p class="demo-cap">Left edge: noise samples &epsilon; ~ N(0,1) at t=0. Right edge: data points z (two clusters) at t=1. <strong>Ultramarine straight lines</strong> = conditional paths, one per (&epsilon;, z) pair, moving with constant velocity z&minus;&epsilon; &mdash; they cross freely. <strong>Magenta curves</strong> = trajectories of the exact marginal field <code>u_t(x) = &Sigma;_i w_i(x,t)&middot;(z_i&minus;x)/(1&minus;t)</code> with posterior weights <code>w_i &prop; N(x; t&middot;z_i, (1&minus;t)&sup2;)</code> &mdash; the average that MSE training converges to. An ODE's trajectories can never cross (uniqueness of solutions), so where conditional lines intersect, the marginal field <em>bends</em> instead: straight conditional paths, curved marginal ones. The bold pair drives the equation readout; the readout's last line evaluates the marginal field at that dot.</p>
+</div>
+
+
+<h3 id="f-cfm">Step 4 &mdash; the CFM theorem (the one theorem)</h3>
+<p>The loss you want (regress on the intractable marginal field) and the loss you can compute (regress on the closed-form conditional field) differ by a constant that doesn't depend on &theta;:</p>
+<div class="ascii-card"><pre>   L_FM(θ)  = E_{t, x~p_t}        ‖u_θ(x,t) − u_t(x)‖²        ← intractable target
+   L_CFM(θ) = E_{t, z, x~p_t(·|z)} ‖u_θ(x,t) − u_t(x|z)‖²      ← closed-form target
+
+   Theorem:   L_FM(θ) = L_CFM(θ) + C     ⇒     ∇_θ L_FM = ∇_θ L_CFM</pre></div>
+<p>Proof shape (enough for an interview): expand both squares; the <code>‖u_&theta;‖&sup2;</code> terms are identical; the cross terms <code>&lang;u_&theta;, u_t(x)&rang;</code> and <code>&lang;u_&theta;, u_t(x|z)&rang;</code> coincide after writing <code>u_t(x)</code> as its posterior average over z and swapping the order of integration; everything left over is &theta;-free. Same structure as the "denoising" trick in score matching.</p>
+
+<h3 id="f-algo">The algorithm (this is all of it)</h3>
+<div class="ascii-card"><pre>   train, per minibatch:                     sample, once trained:
+     z  ~ dataset                              x ~ N(0, I)
+     t  ~ Uniform[0,1]   (per example!)        for n Euler steps:
+     ε  ~ N(0, I)                                  x ← x + h · u_θ(x, t)
+     x_t = t·z + (1−t)·ε                       return x
+     loss = ‖u_θ(x_t, t) − (z − ε)‖²
+     backprop</pre></div>
+<p>Three properties to name: <strong>simulation-free</strong> (no ODE during training &mdash; the entire CNF pathology is gone), <strong>a plain regression</strong> (stable MSE, no adversarial game, no ELBO), and <strong>path-agnostic</strong> (swap &alpha;_t, &beta;_t and the same code trains any Gaussian path &mdash; including diffusion's, tab 5). This recipe trains Stable Diffusion 3, Movie Gen, and Voicebox.</p>
+
+<h3 id="f-vbconv">The convention Voicebox / Lipman et al. use</h3>
+<p>The original FM paper (and Voicebox's background section) writes the OT path with a floor <code>&sigma;_min</code> so the endpoint is a sharp Gaussian around z rather than exactly &delta;_z:</p>
+<div class="formula">x_t = (1 &minus; (1&minus;&sigma;_min)t)&middot;x_0 + t&middot;x_1&nbsp;&nbsp;&nbsp;&nbsp;u_t = x_1 &minus; (1&minus;&sigma;_min)&middot;x_0&nbsp;&nbsp;&nbsp;&nbsp;(x_0 = noise, x_1 = data, &sigma;_min &asymp; 10&#8315;&#8309;)</div>
+<p>Set &sigma;_min = 0 and you recover <code>x_t = t&middot;x_1 + (1&minus;t)&middot;x_0</code>, target <code>x_1 &minus; x_0</code>. Same method, cosmetic difference &mdash; but check which convention a paper uses before quoting its equations.</p>
+<div class="warn"><span class="tag">Trap &mdash; the loss does not go to zero</span>
+<p>At a crossing point x_t the best possible output is the <em>average</em> of several different targets, so residual variance stays in the loss forever. A flow-matching loss that plateaus well above zero is <strong>converged, not broken</strong>. (Corollary: the loss value is a poor model-quality metric; monitor samples.)</p>
+</div>
+</div></section><section class="panel" id="pan-code" role="tabpanel" aria-labelledby="t-code" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 7</p><h2 id="code">4. PyTorch &mdash; what you'd write in the interview</h2></div><div class="body">
+<div class="subnav"><a href="#p-model">Model</a><a href="#p-fwd">Forward + backward pass</a><a href="#p-sample">Sampler</a><a href="#p-full">Runnable toy</a><a href="#p-cond">Conditional + CFG</a><a href="#p-traps">Traps</a></div>
+
+<h3 id="p-model">The model: any net that maps (x, t) &rarr; velocity</h3>
+<div class="code"><div class="code-bar"><span>vector field &mdash; minimal MLP version</span><button class="copy" type="button">copy</button></div><pre>import torch
+import torch.nn as nn
+
+class VectorField(nn.Module):
+    """u_theta(x, t): R^d x [0,1] -> R^d. Output shape == input shape."""
+    def __init__(self, dim, hidden=512):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim + 1, hidden), nn.SiLU(),
+            nn.Linear(hidden, hidden),  nn.SiLU(),
+            nn.Linear(hidden, dim),
+        )
+
+    def forward(self, x, t):          # x: (B, d)   t: (B,)
+        return self.net(torch.cat([x, t[:, None]], dim=-1))</pre></div>
+<p>Concatenating raw t is fine on a whiteboard; say that real models use a sinusoidal/Fourier time embedding + a Transformer or U-Net, and that conditioning (text, audio context) enters as extra inputs. The only architectural contract: <strong>output has the same shape as x</strong>.</p>
+
+<h3 id="p-fwd">Training: the forward pass is 4 lines, the backward pass is autograd</h3>
+<div class="code"><div class="code-bar"><span>conditional flow matching loss + training step</span><button class="copy" type="button">copy</button></div><pre>def fm_loss(model, z):                       # z: (B, d) minibatch of data
+    B   = z.shape[0]
+    t   = torch.rand(B, device=z.device)     # (B,)  one t PER example
+    eps = torch.randn_like(z)                # noise endpoint
+    xt  = t[:, None] * z + (1 - t[:, None]) * eps   # point on the line
+    target = z - eps                         # constant velocity of that line
+    return ((model(xt, t) - target) ** 2).mean()
+
+model = VectorField(dim=2)
+opt   = torch.optim.AdamW(model.parameters(), lr=1e-4)
+
+for z in dataloader:                         # z: (B, d)
+    loss = fm_loss(model, z)                 # forward pass
+    opt.zero_grad()
+    loss.backward()                          # backward pass: through ONE
+    opt.step()                               # network eval, nothing else</pre></div>
+<p>The interview point about the backward pass: gradients flow through a <em>single</em> network evaluation. In the CNF this same <code>loss.backward()</code> had to differentiate through an entire ODE solve (or run the adjoint ODE). Deleting that is the whole contribution.</p>
+
+<h3 id="p-sample">Sampling: pay for simulation once, at inference</h3>
+<div class="code"><div class="code-bar"><span>Euler sampler (+ midpoint variant, which Voicebox uses)</span><button class="copy" type="button">copy</button></div><pre>@torch.no_grad()
+def sample(model, n, dim, steps=100, device="cpu"):
+    x = torch.randn(n, dim, device=device)           # X_0 ~ N(0, I)
+    h = 1.0 / steps
+    for i in range(steps):
+        t = torch.full((n,), i * h, device=device)
+        x = x + h * model(x, t)                      # Euler:    1 NFE/step
+        # midpoint instead:
+        # x = x + h * model(x + 0.5*h*model(x, t), t + 0.5*h)   # 2 NFE/step
+    return x                                          # ≈ samples from p_data</pre></div>
+
+<h3 id="p-full">The whole thing, runnable (toy 2-D dataset)</h3>
+<p>Paste-and-run version &mdash; CPU, under a minute. Reuses <code>VectorField</code>, <code>fm_loss</code>, <code>sample</code> from above:</p>
+<div class="code"><div class="code-bar"><span>end-to-end: 8 Gaussians on a ring</span><button class="copy" type="button">copy</button></div><pre>import math
+
+def sample_data(B):                       # p_data: 8 Gaussians on a ring
+    i   = torch.randint(0, 8, (B,))
+    ang = i.float() * (2 * math.pi / 8)
+    c   = torch.stack([ang.cos(), ang.sin()], -1) * 2.0
+    return c + 0.15 * torch.randn(B, 2)
+
+model = VectorField(dim=2)
+opt   = torch.optim.AdamW(model.parameters(), lr=2e-3)
+
+for step in range(4000):
+    loss = fm_loss(model, sample_data(512))
+    opt.zero_grad(); loss.backward(); opt.step()
+    if step % 500 == 0:
+        print(step, round(loss.item(), 3))   # plateaus well above 0 — correct!
+
+x = sample(model, n=2000, dim=2, steps=64)
+print(x.mean(0), x.std(0))    # ring: mean ≈ 0, per-coord std ≈ 1.4
+# import matplotlib.pyplot as plt; plt.scatter(*x.T, s=2); plt.show()</pre></div>
+
+<h3 id="p-cond">The delta to conditional + CFG (the Voicebox pattern, in 20 lines)</h3>
+<p>Conditioning is just extra network input; classifier-free guidance is a dropout on that input at train time and a two-eval blend at sampling time. This is the exact structural skeleton of Voicebox, with a class label standing in for (phonemes, masked audio context):</p>
+<div class="code"><div class="code-bar"><span>conditional FM + classifier-free guidance</span><button class="copy" type="button">copy</button></div><pre>NUM_CLASSES = 8
+NULL = NUM_CLASSES                        # reserve one extra id for the ∅ label
+
+class CondVF(nn.Module):
+    def __init__(self, dim, hidden=512):
+        super().__init__()
+        self.emb = nn.Embedding(NUM_CLASSES + 1, hidden)      # +1 for ∅
+        self.net = nn.Sequential(
+            nn.Linear(dim + 1 + hidden, hidden), nn.SiLU(),
+            nn.Linear(hidden, hidden),           nn.SiLU(),
+            nn.Linear(hidden, dim))
+    def forward(self, x, t, y):           # y: (B,) long
+        return self.net(torch.cat([x, t[:, None], self.emb(y)], -1))
+
+def cfm_loss(model, z, y, p_drop=0.1):
+    t   = torch.rand(len(z), device=z.device)
+    eps = torch.randn_like(z)
+    xt  = t[:, None] * z + (1 - t[:, None]) * eps
+    y   = torch.where(torch.rand_like(t) &lt; p_drop,             # CFG training:
+                      torch.full_like(y, NULL), y)             # drop the label
+    return ((model(xt, t, y) - (z - eps)) ** 2).mean()
+
+@torch.no_grad()
+def sample_guided(model, y, dim, w=2.0, steps=64):
+    x, h = torch.randn(len(y), dim, device=y.device), 1.0 / steps
+    null = torch.full_like(y, NULL)
+    for i in range(steps):
+        t = torch.full((len(y),), i * h, device=y.device)
+        v = model(x, t, null) + w * (model(x, t, y) - model(x, t, null))
+        x = x + h * v                     # note: 2 network evals per step
+    return x</pre></div>
+
+<h3 id="p-traps">Traps that show up in live coding</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>#</th><th>Trap</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>t</code> must be sampled <strong>per example</strong>, shape <code>(B,)</code> &mdash; a single scalar t per batch trains but converges much worse.</td></tr>
+<tr><td>2</td><td>Broadcasting: <code>t[:, None]</code> against <code>(B, d)</code>. For images, reshape to <code>(B, 1, 1, 1)</code>.</td></tr>
+<tr><td>3</td><td>The target is <code>z &minus; &epsilon;</code> &mdash; the two <em>endpoints</em> &mdash; not anything involving <code>x_t</code> or <code>t</code>. Constant along the whole line.</td></tr>
+<tr><td>4</td><td>Direction check: with <code>x_t = t&middot;z + (1&minus;t)&epsilon;</code>, t=0 is noise and t=1 is data, and you integrate 0 &rarr; 1. Flip everything consistently or not at all.</td></tr>
+<tr><td>5</td><td><code>@torch.no_grad()</code> on the sampler; the loop is sequential and autograd would store all steps.</td></tr>
+<tr><td>6</td><td>Don't report training loss as quality &mdash; it has an irreducible variance floor (tab 3 trap).</td></tr>
+</tbody>
+</table></div>
+</div></section>
+<section class="panel" id="pan-diff" role="tabpanel" aria-labelledby="t-diff" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 7</p><h2 id="diff">5. Diffusion &harr; flow matching &mdash; one family, two parameterizations</h2></div><div class="body">
+<div class="subnav"><a href="#d-score">The score</a><a href="#d-convert">The conversion formula</a><a href="#d-sde">Same marginals, ODE or SDE</a><a href="#d-cfg">CFG derivation</a><a href="#d-table">The differences that actually matter</a></div>
+
+<h3 id="d-score">The score function</h3>
+<p>Diffusion models organize everything around the <strong>score</strong> <code>&nabla;_x log p_t(x)</code> &mdash; the direction of steepest ascent in log-density ("which way is more probable"). For the Gaussian conditional path it is closed-form: <code>&nabla; log p_t(x|z) = &minus;(x &minus; &alpha;_t z)/&beta;_t&sup2;</code>, i.e. essentially "&minus;&epsilon;, rescaled" &mdash; which is why DDPM's noise-prediction loss <code>‖&epsilon;_&theta;(x_t) &minus; &epsilon;‖&sup2;</code> <em>is</em> denoising score matching with the constants dropped, via <code>&epsilon;_&theta; = &minus;&beta;_t s_&theta;</code>.</p>
+
+<h3 id="d-convert">The conversion formula &mdash; train one, get the other free</h3>
+<p>On a Gaussian path, velocity and score are both <em>linear</em> in (x, z), so each is an affine function of the other:</p>
+<div class="formula">u_t(x) = a_t &nabla;log p_t(x) + b_t x&nbsp;&nbsp;&nbsp;&nbsp;a_t = &beta;_t&sup2;(&alpha;&#775;_t/&alpha;_t) &minus; &beta;&#775;_t&beta;_t&nbsp;&nbsp;&nbsp;&nbsp;b_t = &alpha;&#775;_t/&alpha;_t</div>
+<p>Deeper way to say it: velocity, score, noise-prediction &epsilon;&#770;, and the denoiser <code>E[z|x_t]</code> are all linear reparameterizations of <strong>the same learned object &mdash; the posterior mean of clean data given the noisy point</strong>. "Flow matching model" vs "diffusion model" names the output head, not a different animal.</p>
+
+<h3 id="d-sde">Same marginals, deterministic or stochastic sampler</h3>
+<p>The trained ODE can be turned into an SDE with <em>identical marginals p_t</em> by adding Langevin churn built from the score (proved with the Fokker&ndash;Planck equation, which is the continuity equation plus a diffusion term):</p>
+<div class="formula">dX_t = [ u_t(X_t) + (&sigma;_t&sup2;/2) &nabla;log p_t(X_t) ] dt + &sigma;_t dW_t&nbsp;&nbsp;&nbsp;&nbsp;for ANY &sigma;_t &ge; 0</div>
+<div class="ascii-card"><pre>   σ_t = 0 :  flow / probability-flow ODE   smooth deterministic paths
+   σ_t > 0 :  diffusion-style sampling      zig-zag paths, same p_t at every t
+
+   one trained network  ⇒  a whole dial of samplers, chosen AFTER training
+   (in practice a mildly stochastic sampler can correct accumulated error)</pre></div>
+
+<h3 id="d-cfg">Classifier-free guidance &mdash; the 4-line derivation</h3>
+<p>Guidance is a score-space argument, which is why it lives in this tab. Samples don't adhere to the prompt y strongly enough &rarr; sharpen the part of the score that "listens" to y:</p>
+<div class="ascii-card"><pre>   Bayes on the score:  ∇log p_t(x|y) = ∇log p_t(x) + ∇log p_t(y|x)
+                                          ↑ unguided     ↑ "classifier" term
+
+   scale the classifier by w &gt; 1:   ∇log p_t(x) + w·∇log p_t(y|x)     (classifier guidance —
+                                                          needs a separate noisy classifier)
+   eliminate it by running Bayes backwards, ∇log p_t(y|x) = ∇log p_t(x|y) − ∇log p_t(x):
+
+        = ∇log p_t(x) + w·( ∇log p_t(x|y) − ∇log p_t(x) )
+        = (1−w)·∇log p_t(x)  +  w·∇log p_t(x|y)
+
+   score ↔ velocity is affine (formula above)  ⇒  identical combination for velocities:
+
+        ũ_t(x|y) = (1−w)·u_t(x|∅) + w·u_t(x|y)</pre></div>
+<p>Both fields come from <strong>one</strong> network trained with label dropout (tab 4's <code>p_drop</code>): the &empty; token plays &nabla;log p_t(x). Three things to say: w=1 is the honest conditional model; w&gt;1 no longer samples exactly p(x|y) &mdash; it's a heuristic that over-sharpens toward the prompt, kept because it works; and it costs <strong>two network evals per step</strong>.</p>
+<div class="note"><span class="tag">Note &mdash; tab 4's trainer becomes a diffusion-path trainer with a 3-line edit</span>
+<div class="code"><div class="code-bar"><span>swap the schedule inside fm_loss</span><button class="copy" type="button">copy</button></div><pre>a,  b  = torch.sin(0.5 * math.pi * t), torch.cos(0.5 * math.pi * t)  # VP cosine path
+da, db = 0.5 * math.pi * b,           -0.5 * math.pi * a             # their d/dt
+xt     = a[:, None] * z + b[:, None] * eps
+target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α̇z + β̇ε</pre></div>
+<p>Same trainer, same sampler, same network &mdash; you have merely chosen diffusion's curved variance-preserving path (&alpha;&sup2;+&beta;&sup2;=1) instead of the straight one. This is the concrete sense in which "FM vs diffusion" is a choice of <code>(&alpha;_t, &beta;_t)</code> and output head, not of algorithm.</p>
+</div>
+
+<h3 id="d-table">The differences that actually matter in practice</h3>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>Denoising diffusion (DDPM lineage)</th><th>Flow matching (CondOT)</th></tr></thead>
+<tbody>
+<tr><td>Trained object</td><td>score / noise &epsilon;&#770;</td><td>velocity u</td></tr>
+<tr><td>Path</td><td>variance-preserving: &alpha;_t, &beta;_t from an OU/cosine schedule; curved</td><td>&alpha;_t = t, &beta;_t = 1&minus;t; straight lines</td></tr>
+<tr><td>Time convention</td><td>usually t=0 data &rarr; t=T noise (forward = corrupt)</td><td>t=0 noise &rarr; t=1 data</td></tr>
+<tr><td>Sampler</td><td>SDE natively (ODE via probability flow)</td><td>ODE natively (SDE via score conversion)</td></tr>
+<tr><td>Why prefer it</td><td>mature guidance/inversion literature</td><td>straighter paths &rarr; fewer NFE at a given quality; one clean regression; free choice of p_init</td></tr>
+</tbody>
+</table></div>
+<div class="rulebox"><span class="tag">The one-sentence answer to "is flow matching just diffusion?"</span>
+<p><strong>Same family, different coordinates.</strong> Gaussian-path flow matching and diffusion are inter-convertible &mdash; velocity &harr; score by an affine formula, ODE &harr; SDE with identical marginals. What FM changes in practice is the default path (straight, so fewer sampling steps) and the training frame (velocity regression), which is why SD3, Movie Gen and Voicebox train with FM.</p>
+</div>
+</div></section><section class="panel" id="pan-vb" role="tabpanel" aria-labelledby="t-vb" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 7</p><h2 id="vb">6. Voicebox &mdash; flow matching for speech</h2></div><div class="body">
+<div class="subnav"><a href="#v-what">What it is</a><a href="#v-task">The training task</a><a href="#v-stack">The stack</a><a href="#v-cfg">CFG + inference</a><a href="#v-why">Why FM fits speech</a></div>
+
+<h3 id="v-what">What it is, in one line</h3>
+<p>A <strong>non-autoregressive speech generator trained with flow matching on text-guided speech infilling</strong>: given surrounding audio and a transcript, fill in the missing (masked) speech. Framed this way, one model does zero-shot TTS, style transfer, noise removal, and content editing &mdash; the same "train on masked infilling, prompt at inference" move that made GPT-style in-context learning work, ported to speech.</p>
+
+<h3 id="v-task">The training task</h3>
+<div class="ascii-card"><pre>   inputs :  y      phoneme sequence (frame-aligned transcript)
+             x_ctx  mel spectrogram with a random span MASKED
+             x_t    noisy mel  = (1−(1−σ_min)t)·x_0 + t·x_1,   x_0 ~ N(0,I)
+   model  :  Transformer  u_θ(x_t, x_ctx, y, t)  → velocity, mel-shaped
+   loss   :  ‖u_θ(...) − (x_1 − (1−σ_min)·x_0)‖²   only on MASKED frames
+
+   zero-shot TTS at inference = infilling with the 3-second enrollment
+   clip as unmasked context: the model continues in that voice.</pre></div>
+<p>Exactly tab 3's recipe &mdash; the OT path with &sigma;_min, conditioned on (x_ctx, y). Nothing about FM changes; conditioning is just extra network inputs.</p>
+
+<h3 id="v-stack">The stack (two FM/regression models + a vocoder)</h3>
+<ul>
+<li><strong>Audio model:</strong> Transformer over 80-dim log-mel frames; x_t, x_ctx are concatenated frame-wise, phoneme embeddings are added per frame. Trained with the CFM loss above on masked spans.</li>
+<li><strong>Duration model:</strong> same infilling idea on per-phoneme durations (predict masked durations from context durations + phonemes) &mdash; needed to stretch the transcript to frame alignment before the audio model runs. A simple regression version works about as well as the FM version.</li>
+<li><strong>Vocoder:</strong> HiFi-GAN turns generated mel back into a waveform.</li>
+<li><strong>Data:</strong> tens of thousands of hours of audiobook speech (&asymp;60K h English; &asymp;50K h across six languages for the multilingual model) &mdash; scale that in-the-loop-simulation training could not have touched.</li>
+</ul>
+
+<h3 id="v-cfg">Classifier-free guidance + inference</h3>
+<p>Drop the conditioning (x_ctx, y) with some probability during training; at inference push toward the conditional field:</p>
+<div class="formula">u&#771; = u_&theta;(x_t, t) + w &middot; ( u_&theta;(x_t, x_ctx, y, t) &minus; u_&theta;(x_t, t) )</div>
+<p>Sampling: draw mel-shaped Gaussian noise, solve the ODE (midpoint solver) to t=1, vocode. Two dials to quote: <strong>NFE trades quality against speed</strong> (usable speech at very low NFE, saturating by a few dozen), and <strong>CFG doubles the cost per step</strong> (two network evals). Because generation is one parallel ODE solve over all frames rather than a token-by-token loop, Voicebox beat the autoregressive VALL-E on intelligibility and similarity while being up to ~20&times; faster.</p>
+
+<h3 id="v-why">Why flow matching fits speech (the "why this design" question)</h3>
+<ul>
+<li><strong>Non-autoregressive:</strong> mel frames come out in parallel; latency scales with NFE, not utterance length &mdash; and infilling needs bidirectional context anyway, which AR models can't see.</li>
+<li><strong>Continuous data:</strong> spectrogram frames are naturally continuous vectors &mdash; the R^d setting FM is built for, no tokenizer/quantizer in the generator's way.</li>
+<li><strong>Stable, scalable training:</strong> one MSE, no adversarial game, no simulation &mdash; safe to scale to 60K hours.</li>
+<li><strong>Controllable inference:</strong> quality&harr;speed via NFE and adherence via CFG are post-training knobs, per tab 5.</li>
+</ul>
+</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 7</p><h2 id="remember">7. Things to remember</h2></div><div class="body">
+<div class="subnav"><a href="#r-formulas">Five formulas</a><a href="#r-traps">Traps</a><a href="#r-qa">Rapid-fire Q&amp;A</a><a href="#r-drill">The 60-second drill</a></div>
+
+<h3 id="r-formulas">The five formulas</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Name</th><th>Formula</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td>Flow model</td><td><code>X_0 ~ N(0,I), dX_t = u_&theta;(X_t,t)dt &rArr; X_1 ~ p_data</code></td><td>what we're building</td></tr>
+<tr><td>Instantaneous change of variables</td><td><code>d log p_t(X_t)/dt = &minus;tr(&part;u/&part;x)</code></td><td>CNF likelihood; why CNF training simulates</td></tr>
+<tr><td>CondOT path + target</td><td><code>x_t = tz + (1&minus;t)&epsilon;</code>, &nbsp;<code>target = z &minus; &epsilon;</code></td><td>the whole training signal</td></tr>
+<tr><td>CFM theorem</td><td><code>&nabla;_&theta; L_FM = &nabla;_&theta; L_CFM</code></td><td>why conditional targets suffice</td></tr>
+<tr><td>Score &harr; velocity (Gaussian path)</td><td><code>u = a_t&nabla;log p_t + b_t x</code>; SDE: <code>+(&sigma;&sup2;/2)&nabla;log p_t dt + &sigma;dW</code></td><td>diffusion equivalence; ODE&harr;SDE dial</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="r-traps">Traps</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>#</th><th>Trap</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><strong>Conventions differ per paper.</strong> FM/Voicebox: t=0 noise &rarr; t=1 data. DDPM: t=0 data &rarr; t=T noise. Check before quoting equations.</td></tr>
+<tr><td>2</td><td>The network outputs the <strong>velocity</strong>, not the sample and not the flow &mdash; sampling always still integrates an ODE.</td></tr>
+<tr><td>3</td><td>"Simulation-free" refers to <strong>training only</strong>; inference cost = NFE &times; network eval (&times;2 under CFG).</td></tr>
+<tr><td>4</td><td>FM training gives <strong>no likelihood</strong>. If asked for log p(x), you can still compute it post-hoc with the CNF trace integral &mdash; you pay simulation then.</td></tr>
+<tr><td>5</td><td>Per-example t; target is z&minus;&epsilon; (endpoints, not x_t); loss has a nonzero floor. (Tab 4's table for the rest.)</td></tr>
+<tr><td>6</td><td>"Straight conditional paths" &ne; straight <em>marginal</em> paths &mdash; the averaged field still curves, which is why you need more than 1 Euler step (and why rectified-flow / distillation work exists).</td></tr>
+<tr><td>7</td><td>Don't say "flow matching is a normalizing flow with discrete layers" &mdash; it's the <em>continuous</em> one; and don't say "FM &ne; diffusion" without the qualifier: same family on Gaussian paths, different parameterization + path + sampler.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="r-qa">Rapid-fire Q&amp;A</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Likely question</th><th>One-line answer</th></tr></thead>
+<tbody>
+<tr><td>Why doesn't the FM loss reach zero?</td><td>At a crossing point the targets from different (z,&epsilon;) pairs differ; MSE's optimum is their mean, leaving irreducible variance in the loss.</td></tr>
+<tr><td>Can an FM model give likelihoods?</td><td>Yes, post-hoc: integrate <code>&minus;tr(&part;u/&part;x)</code> along the sampling ODE (the CNF formula). You just never pay that cost during training.</td></tr>
+<tr><td>Why do straight conditional paths help?</td><td>They make the <em>marginal</em> field less curved, so coarse Euler/midpoint steps stay accurate &rarr; low NFE at a given quality.</td></tr>
+<tr><td>Is sampling deterministic?</td><td>Given X_0, yes &mdash; it's an ODE; all randomness lives in X_0. Want stochasticity? Add score-scaled Langevin noise: same marginals (tab 5).</td></tr>
+<tr><td>What does the net equal at convergence?</td><td><code>E[z &minus; &epsilon; | x_t, t]</code> &mdash; the posterior-mean velocity; equivalently an affine function of the denoiser E[z|x_t] and of the score.</td></tr>
+<tr><td>z&minus;&epsilon; vs (z&minus;x_t)/(1&minus;t)?</td><td>Identical on the path; the second form defines the field off-path and reveals it as a contraction toward z (remaining distance &divide; remaining time).</td></tr>
+<tr><td>Why Gaussian p_init?</td><td>Anything you can sample works &mdash; FM never needs p_init's density during training; Gaussian just keeps the path/score algebra closed-form.</td></tr>
+<tr><td>Single t per batch &mdash; what breaks?</td><td>Each gradient step sees one time slice: high inter-step variance, poor coverage of t, visibly worse convergence. Sample t per example.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="r-drill">The 60-second drill</h3>
+<div class="rulebox"><span class="tag">Say this out loud before the interview</span>
+<ol>
+<li>A flow model is an ODE: sample Gaussian noise, integrate a learned velocity field <code>u_&theta;(x,t)</code> from t=0 to 1, land on data. The network is the velocity; sampling is the integration.</li>
+<li>CNFs trained this by maximum likelihood via <code>d log p/dt = &minus;tr(&part;u/&part;x)</code> &mdash; which forces an ODE solve plus a trace integral inside every training step. Right model, unscalable training signal.</li>
+<li>Flow matching chooses the path per data point instead: <code>x_t = tz + (1&minus;t)&epsilon;</code>, whose velocity is the constant <code>z &minus; &epsilon;</code>. Train by MSE regression on it &mdash; one network eval, no simulation.</li>
+<li>Why it's the right target: MSE's minimizer is the conditional expectation, so the net learns the posterior-average velocity &mdash; exactly the marginal field that transports noise-density to data-density (CFM theorem: same gradients as the intractable loss).</li>
+<li>Diffusion is the same family in score coordinates: on Gaussian paths velocity &harr; score by an affine map, and adding <code>(&sigma;&sup2;/2)&nabla;log p</code> Langevin churn gives an SDE sampler with identical marginals. FM's practical edge: straight paths, fewer steps.</li>
+<li>Voicebox = this recipe on speech: FM on masked mel infilling conditioned on phonemes + context, a duration model, CFG, midpoint ODE solve, HiFi-GAN &mdash; non-autoregressive, so ~20&times; faster than VALL-E at better quality.</li>
+</ol>
+</div>
+<p><em>Interview notes on flow matching. Framing follows Chen et al. 2018 (Neural ODEs), Lipman et al. 2023 / the 2024 FM Guide &amp; Code, Holderrieth &amp; Erives' MIT course notes, and Le et al. 2023 (Voicebox); re-check Voicebox numbers against the paper before quoting them.</em></p>
+</div></section></main>
+<script>(function () {
+  var tabs = [].slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function select(i, focus) {
+    tabs.forEach(function (t, j) {
+      var on = j === i;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      panels[j].hidden = !on;
+      panels[j].classList.toggle('is-active', on);
+    });
+    if (focus) tabs[i].focus();
+    tabs[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () {
+      select(i);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + panels[i].id);
+    });
+    t.addEventListener('keydown', function (e) {
+      var n = null;
+      if (e.key === 'ArrowRight') n = (i + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') n = (i - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') n = 0;
+      if (e.key === 'End') n = tabs.length - 1;
+      if (n !== null) { e.preventDefault(); select(n, true); }
+    });
+  });
+
+  // Any in-page link (the markdown's own table of contents included) resolves
+  // across tabs: switch to the panel that owns the target, then scroll to it.
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var pan = el.closest('.panel');
+    if (pan) {
+      var idx = panels.indexOf(pan);
+      if (idx > -1) select(idx);
+    }
+    requestAnimationFrame(function () {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return true;
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (!id) return;
+    if (goTo(id)) { e.preventDefault(); history.replaceState(null, '', '#' + id); }
+  });
+
+  var hash = decodeURIComponent(location.hash.replace('#', ''));
+  if (hash) goTo(hash);
+
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied';
+        btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      });
+    });
+  });
+})();
+</script>
+
+<script>(function () {
+  // shared helpers ---------------------------------------------------------
+  var CS = getComputedStyle(document.documentElement);
+  function v(n){ return CS.getPropertyValue(n).trim(); }
+  var COL = { out:v('--out'), inn:v('--in'), ink:v('--ink'), muted:v('--muted'),
+              rule:v('--rule'), teal:v('--teal') };
+  function gauss(){ var u=1-Math.random(), w=Math.random();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*w); }
+
+  // ── Demo A: ODE playground (tab 1) ──────────────────────────────────────
+  (function(){
+    var cv=document.getElementById('cvA'); if(!cv) return;
+    var ctx=cv.getContext('2d'), W=cv.width, H=cv.height, U=H/2.4;
+    var FIELDS={
+      contract:function(p){ return [-p[0],-p[1]]; },
+      spiral:  function(p){ return [-0.4*p[0]-1.1*p[1], 1.1*p[0]-0.4*p[1]]; },
+      attract: function(p){
+        var A=[-1.6,0], B=[1.6,0];
+        var da=(p[0]-A[0])*(p[0]-A[0])+p[1]*p[1], db=(p[0]-B[0])*(p[0]-B[0])+p[1]*p[1];
+        var z=da<db?A:B; return [z[0]-p[0], z[1]-p[1]]; }
+    };
+    var cur='contract', parts=[], playing=false, raf=null;
+    function px(p){ return [W/2+p[0]*U, H/2-p[1]*U]; }
+    function spawn(){ return {p:[gauss()*0.9, gauss()*0.7], age:0}; }
+    function seed(){ parts=[]; for(var i=0;i<130;i++) parts.push(spawn()); }
+    function clearAll(){ ctx.fillStyle='#FBFCFD'; ctx.fillRect(0,0,W,H); }
+    function arrows(){
+      var f=FIELDS[cur]; ctx.strokeStyle=COL.rule; ctx.fillStyle=COL.rule; ctx.lineWidth=1;
+      for(var gx=30; gx<W; gx+=46) for(var gy=26; gy<H; gy+=46){
+        var p=[(gx-W/2)/U,(H/2-gy)/U], u=f(p), n=Math.hypot(u[0],u[1])||1;
+        var s=13, dx=u[0]/n*s, dy=-u[1]/n*s;
+        ctx.beginPath(); ctx.moveTo(gx-dx*0.5,gy-dy*0.5); ctx.lineTo(gx+dx*0.5,gy+dy*0.5); ctx.stroke();
+        var a=Math.atan2(dy,dx);
+        ctx.beginPath(); ctx.moveTo(gx+dx*0.5,gy+dy*0.5);
+        ctx.lineTo(gx+dx*0.5-4.5*Math.cos(a-0.45), gy+dy*0.5-4.5*Math.sin(a-0.45));
+        ctx.lineTo(gx+dx*0.5-4.5*Math.cos(a+0.45), gy+dy*0.5-4.5*Math.sin(a+0.45));
+        ctx.closePath(); ctx.fill();
+      }
+      if(cur==='attract'){ ctx.fillStyle=COL.ink;
+        [[-1.6,0],[1.6,0]].forEach(function(z){ var q=px(z);
+          ctx.beginPath(); ctx.arc(q[0],q[1],4.5,0,7); ctx.fill(); }); }
+    }
+    function frame(){
+      ctx.fillStyle='rgba(251,252,253,0.16)'; ctx.fillRect(0,0,W,H); // fading trails
+      arrows();
+      var f=FIELDS[cur], dt=0.02;
+      ctx.fillStyle=COL.out;
+      for(var i=0;i<parts.length;i++){
+        var pt=parts[i], u=f(pt.p);
+        pt.p[0]+=dt*u[0]; pt.p[1]+=dt*u[1]; pt.age++;
+        var sp=Math.hypot(u[0],u[1]);
+        if(pt.age>420 || sp<0.02 || Math.abs(pt.p[0])>3.6 || Math.abs(pt.p[1])>2.4) parts[i]=spawn();
+        var q=px(pt.p);
+        ctx.beginPath(); ctx.arc(q[0],q[1],2.3,0,7); ctx.fill();
+      }
+      if(playing) raf=requestAnimationFrame(frame);
+    }
+    function still(){ clearAll(); arrows(); ctx.fillStyle=COL.out;
+      parts.forEach(function(pt){ var q=px(pt.p);
+        ctx.beginPath(); ctx.arc(q[0],q[1],2.3,0,7); ctx.fill(); }); }
+    var play=document.getElementById('playA'), reset=document.getElementById('resetA'),
+        sel=document.getElementById('fieldSel');
+    play.addEventListener('click', function(){
+      playing=!playing; play.textContent=playing?'pause':'play';
+      if(playing) raf=requestAnimationFrame(frame); else cancelAnimationFrame(raf);
+    });
+    reset.addEventListener('click', function(){ seed(); still(); });
+    sel.addEventListener('change', function(){ cur=sel.value; seed(); still(); });
+    seed(); still();
+  })();
+
+  // ── Demo B: CondOT path, conditional vs exact marginal field (tab 3) ────
+  (function(){
+    var cv=document.getElementById('cvB'); if(!cv) return;
+    var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+    var padL=64, padR=42, padT=22, padB=34, RANGE=3;
+    var zs=[1.5,1.25,1.05,1.7,1.35,-1.2,-1.45,-0.95,-1.6];
+    var N=12, eps=[-0.42,0.31,1.10,-1.35,0.05,0.88,-0.77,1.62,-0.15,0.49,-1.02,0.22],
+        pair=[0,5,2,7,4,6,1,8,3,5,0,7], HL=0;      // highlighted pair index
+    var mode='cond', margPaths=[], STEPS=600;
+    function X(t){ return padL + t*(W-padL-padR); }
+    function Y(x){ return padT + (1-(x+RANGE)/(2*RANGE))*(H-padT-padB); }
+    function uMarg(x,t){                     // exact marginal field, point-mass data
+      var s2=(1-t)*(1-t)+1e-4, e=[], m=-1e9, i;
+      for(i=0;i<zs.length;i++){ var d=x-t*zs[i]; e.push(-d*d/(2*s2)); if(e[i]>m)m=e[i]; }
+      var sw=0, su=0;
+      for(i=0;i<zs.length;i++){ var w=Math.exp(e[i]-m); sw+=w; su+=w*(zs[i]-x)/(1-t); }
+      return su/sw;
+    }
+    function computeMarg(){
+      margPaths=[];
+      for(var i=0;i<N;i++){
+        var x=eps[i], path=[x], dt=0.995/STEPS;
+        for(var k=1;k<=STEPS;k++){ var t=(k-1)*dt; x+=dt*uMarg(x,t); path.push(x); }
+        margPaths.push(path);
+      }
+    }
+    function margAt(i,t){ var k=Math.min(STEPS, Math.round(t/0.995*STEPS));
+      return margPaths[i][k]; }
+    function axes(){
+      ctx.fillStyle='#FBFCFD'; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle=COL.rule; ctx.lineWidth=1;
+      ctx.font='10.5px IBM Plex Mono, monospace'; ctx.fillStyle=COL.muted;
+      for(var g=0; g<=4; g++){ var t=g/4, x=X(t);
+        ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
+        ctx.fillText('t='+t.toFixed(2), x-14, H-padB+16); }
+      ctx.fillText('\u03b5 ~ N(0,1)', padL-58, padT+2);
+      ctx.fillText('z (data)', W-padR-8, padT+2);
+      ctx.fillStyle=COL.ink;
+      zs.forEach(function(z){ ctx.fillRect(W-padR+3, Y(z)-1.5, 8, 3); });
+      ctx.fillStyle=COL.muted;
+      eps.forEach(function(e){ ctx.fillRect(padL-11, Y(e)-1.5, 8, 3); });
+    }
+    function draw(){
+      var t=parseFloat(sl.value); axes();
+      var showC=(mode!=='marg'), showM=(mode!=='cond'), i;
+      if(showC){
+        for(i=0;i<N;i++){
+          var hl=(i===HL), z=zs[pair[i]];
+          ctx.strokeStyle=COL.out; ctx.globalAlpha=hl?0.95:0.38; ctx.lineWidth=hl?2.4:1.3;
+          ctx.beginPath(); ctx.moveTo(X(0),Y(eps[i])); ctx.lineTo(X(1),Y(z)); ctx.stroke();
+        }
+        ctx.globalAlpha=1;
+        for(i=0;i<N;i++){
+          var z2=zs[pair[i]], xt=t*z2+(1-t)*eps[i];
+          ctx.fillStyle=COL.out;
+          ctx.beginPath(); ctx.arc(X(t),Y(xt), i===HL?5:3, 0,7); ctx.fill();
+        }
+      }
+      if(showM){
+        for(i=0;i<N;i++){
+          var hl2=(i===HL);
+          ctx.strokeStyle=COL.inn; ctx.globalAlpha=hl2?0.95:0.42; ctx.lineWidth=hl2?2.4:1.3;
+          ctx.beginPath(); ctx.moveTo(X(0),Y(margPaths[i][0]));
+          for(var k=6;k<=STEPS;k+=6){ ctx.lineTo(X(k/STEPS*0.995), Y(margPaths[i][k])); }
+          ctx.stroke();
+        }
+        ctx.globalAlpha=1;
+        for(i=0;i<N;i++){
+          ctx.fillStyle=COL.inn;
+          ctx.beginPath(); ctx.arc(X(t),Y(margAt(i,t)), i===HL?5:3, 0,7); ctx.fill();
+        }
+      }
+      // equation readout for the highlighted pair
+      var z=zs[pair[HL]], e=eps[HL], xt=t*z+(1-t)*e, f2=function(a){return (a<0?'':'+')+a.toFixed(2);};
+      var s='x_t = t\u00b7z + (1\u2212t)\u00b7\u03b5 = '+t.toFixed(2)+'\u00b7('+f2(z)+') + '
+            +(1-t).toFixed(2)+'\u00b7('+f2(e)+') = '+xt.toFixed(2)
+            +'      conditional target  z \u2212 \u03b5 = '+(z-e).toFixed(2);
+      if(showM){ var xm=margAt(HL,t);
+        s+='\nmarginal field at the \u25cf magenta dot:  u_t('+xm.toFixed(2)+') = '
+           +uMarg(xm,Math.min(t,0.985)).toFixed(2)
+           +'   (posterior-weighted average \u2192 pulled toward the likelier cluster)'; }
+      eq.textContent=s;
+    }
+    var sl=document.getElementById('tSlider'), eq=document.getElementById('eqB'),
+        bC=document.getElementById('mCond'), bM=document.getElementById('mMarg'),
+        bB=document.getElementById('mBoth'), rs=document.getElementById('resampleB');
+    function setMode(m,btn){ mode=m; [bC,bM,bB].forEach(function(b){b.classList.remove('on');});
+      btn.classList.add('on'); draw(); }
+    bC.addEventListener('click', function(){ setMode('cond',bC); });
+    bM.addEventListener('click', function(){ setMode('marg',bM); });
+    bB.addEventListener('click', function(){ setMode('both',bB); });
+    sl.addEventListener('input', draw);
+    rs.addEventListener('click', function(){
+      eps=[]; pair=[];
+      for(var i=0;i<N;i++){ eps.push(Math.max(-2.8,Math.min(2.8,gauss())));
+        pair.push(Math.floor(Math.random()*zs.length)); }
+      computeMarg(); draw();
+    });
+    computeMarg(); draw();
+  })();
+})();
+</script>
+</body>
+</html>

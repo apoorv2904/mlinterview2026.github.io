@@ -126,7 +126,7 @@ footer a{color:var(--ink-2)}
   <h1>Interview notes</h1>
   <p class="standfirst">Notes on ML systems and research topics, written for recall under time pressure rather than for completeness. Every claim that can be a number is a number.</p>
   <div class="meta">
-    <span><b>7</b> published</span>
+    <span><b>8</b> published</span>
     <span><b>1</b> planned</span>
     <span>Updated <b>August 2026</b></span>
   </div>
@@ -273,10 +273,28 @@ footer a{color:var(--ink-2)}
   <span class="arrow" aria-hidden="true">&rarr;</span>
 </a>
 
+<p class="group-label">Generative models</p>
+
+<a class="entry" href="flow_matching_review.html">
+  <span class="idx">08</span>
+  <div>
+    <h2>Flow matching, from CNFs to Voicebox</h2>
+    <p class="dek">One model, two training signals: CNFs simulate the ODE and a trace integral inside every step; flow matching regresses onto the straight line <code>x_t = tz + (1&minus;t)&epsilon;</code> with target <code>z &minus; &epsilon;</code>. The CFM theorem, a whiteboard-ready PyTorch loop, the score&harr;velocity bridge to diffusion, and Voicebox. Two interactive demos, including the exact marginal field live.</p>
+    <div class="tags">
+      <span class="tag key">flow matching</span>
+      <span class="tag">CNF / neural ODE</span>
+      <span class="tag">diffusion</span>
+      <span class="tag">Voicebox</span>
+      <span class="tag">~35 min</span>
+    </div>
+  </div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+</a>
+
 <p class="group-label">Numerics</p>
 
 <div class="entry planned">
-  <span class="idx">08</span>
+  <span class="idx">09</span>
   <div>
     <h2>Mixed precision, and what actually overflows</h2>
     <p class="dek">fp16 against bf16 against fp8, where the dynamic range runs out, and which accumulations have to stay in fp32.</p>
