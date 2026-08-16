@@ -279,7 +279,7 @@ td code{font-size:.85em}
 <main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="contents">Table of contents</h2></div><div class="body">
 <ol start="0">
 <li><a href="#prim">Field &amp; ODE primitives &mdash; scalar vs vector vs time-dependent, and solving an ODE by hand and by Euler</a></li>
-<li><a href="#basics">Flows &amp; ODEs &mdash; the four words you must own</a></li>
+<li><a href="#basics">Flows &amp; ODEs &mdash; semantics first (field speaks velocities, flow speaks positions), then the formal four words</a></li>
 <li><a href="#cnf">Continuous normalizing flows &mdash; the right model, trained the wrong way</a></li>
 <li><a href="#fm">Flow matching &mdash; delete the simulation</a></li>
 <li><a href="#code">PyTorch &mdash; forward pass, backward pass, sampler</a></li>
@@ -291,7 +291,7 @@ td code{font-size:.85em}
 <p>A generative model can be an ODE: start at noise, integrate a learned velocity field, land on data. CNFs (2018) trained this by maximum likelihood, which forces you to <em>simulate the ODE and a Jacobian-trace integral inside every training step</em> &mdash; that is why they never scaled. Flow matching (2023) notices you can <strong>choose the path yourself</strong>: draw noise &epsilon; and data z, put the model on the straight line between them, and regress its output onto the line's known velocity <code>z &minus; &epsilon;</code>. Training becomes one network eval and an MSE &mdash; simulation-free &mdash; and simulation is only paid once, at sampling time.</p>
 </div>
 </div></section><section class="panel" id="pan-prim" role="tabpanel" aria-labelledby="t-prim" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 0 of 8</p><h2 id="prim">0. Field &amp; ODE primitives &mdash; the vocabulary before the story</h2></div><div class="body">
-<div class="subnav"><a href="#pr-scalar">Scalar field</a><a href="#pr-vector">Vector field</a><a href="#pr-tdep">Time-dependent</a><a href="#pr-demo">Interactive: query a field</a><a href="#pr-ode">What an ODE is</a><a href="#pr-hand">Solving one by hand</a><a href="#pr-euler">A 10-line solver</a><a href="#pr-table">Pocket glossary</a></div>
+<div class="subnav"><a href="#pr-scalar">Scalar field</a><a href="#pr-vector">Vector field</a><a href="#pr-tdep">Time-dependent</a><a href="#pr-demo">Interactive: query a field</a><a href="#pr-ode">What an ODE is</a><a href="#pr-hand">Solving one by hand</a><a href="#pr-euler">A 10-line solver</a><a href="#pr-eulerdemo">Interactive: watch Euler</a><a href="#pr-table">Pocket glossary</a></div>
 
 <h3 id="pr-scalar">Scalar field: one number per point</h3>
 <p>A <strong>scalar field</strong> assigns one plain number to every point in space: <code>f : &#8477;^d &rarr; &#8477;</code>. Temperature on a weather map; altitude on a hiking map; a loss surface <code>f(&theta;)</code> over parameters. A number has a size but <em>no direction</em>.</p>
@@ -335,6 +335,11 @@ td code{font-size:.85em}
 <p>Unpack it: the unknown is the whole trajectory X (a function of t, not a number); the equation demands that <em>at every instant, the trajectory&rsquo;s velocity equals the field&rsquo;s arrow at its current position</em> (derivative = instantaneous velocity is the entire dictionary between calculus and motion); and the initial condition selects <em>which</em> of the many solutions you mean. "Solving" = exhibiting a function that satisfies both.</p>
 <div class="note"><span class="tag">Note &mdash; existence &amp; uniqueness, and why we care</span>
 <p>If u is continuously differentiable with bounded derivatives (a neural network qualifies), then through every starting point there passes <strong>exactly one</strong> trajectory. Two consequences get used later: trajectories can never cross (the reason tab 3&rsquo;s marginal curves bend around each other instead of intersecting), and the flow can be run backwards uniquely &mdash; it is invertible, which is what tab 2&rsquo;s CNFs cash in for likelihoods.</p>
+<div class="ascii-card"><pre>   what goes wrong without the conditions:   dx/dt = x² ,  x(0) = x₀ > 0
+   separate and integrate:   x(t) = x₀ / (1 − x₀·t)
+   → BLOWS UP to ∞ at the finite time t = 1/x₀
+   (superlinear growth lets a particle reach infinity before the clock runs out)</pre></div>
+<p>So the checklist a field must satisfy for the theory in this document to hold: <strong>(i)</strong> defined on the whole domain, at every t; <strong>(ii)</strong> continuous; <strong>(iii)</strong> Lipschitz in x &mdash; <code>|u(x)&minus;u(y)| &le; L|x&minus;y|</code> &mdash; or C&sup1; with bounded derivatives, the condition doing the real work (existence <em>and</em> uniqueness); <strong>(iv)</strong> at-most-linear growth, so no finite-time blow-up; <strong>(v)</strong> differentiable wherever the trace tr(&part;u/&part;x) is needed (tab 2). One FM-specific footnote: CondOT&rsquo;s <code>(z&minus;x)/(1&minus;t)</code> passes all of these for each fixed t &lt; 1, but its Lipschitz constant is exactly <code>1/(1&minus;t)</code>, which diverges at the endpoint &mdash; the concrete reason samplers integrate to t = 1&minus;&epsilon; (tab 3&rsquo;s demo stops at 0.995) and the original FM paper keeps a &sigma;_min floor.</p>
 </div>
 
 <h3 id="pr-hand">Solving one by hand (the only hand-solve you&rsquo;ll ever need here)</h3>
@@ -362,6 +367,14 @@ print(euler(lambda x, t: -x, 2.0, steps=100))    # 0.7321
 print(euler(lambda x, t: -x, 2.0, steps=1000))   # 0.7354   converging ~ O(h)</pre></div>
 <p>Three remarks that cover most solver questions: the error of Euler shrinks like O(h) (halve the step, halve the error); <strong>midpoint</strong> spends a second field evaluation per step to probe the direction halfway and gets O(h&sup2;) (this is what Voicebox uses); and every fancier solver &mdash; Runge&ndash;Kutta, adaptive &mdash; is still just "evaluate u, take a step" with cleverer bookkeeping. For a neural field each evaluation is a forward pass, which is why solver cost is counted in <strong>NFE</strong>, the number of function evaluations. Tab 1&rsquo;s Euler section shows the same arithmetic with numbers you can do in your head.</p>
 
+<h3 id="pr-eulerdemo">Interactive &mdash; watch Euler work: pick h, press play</h3>
+<div class="demo">
+<div class="demo-bar"><span>Euler on dX/dt = u_t(X), &nbsp;X&#8320; = 2, &nbsp;t: 0 &rarr; 3</span><span class="demo-ctl"><select id="odeSelD" aria-label="ODE"><option value="decay">u = &minus;x&nbsp; (exact 2e^{&minus;t})</option><option value="tdecay">u_t = &minus;t&middot;x&nbsp; (exact 2e^{&minus;t&sup2;/2})</option></select><select id="hSelD" aria-label="step size"><option value="1.5">h = 1.5 (unstable)</option><option value="0.75">h = 0.75</option><option value="0.3" selected>h = 0.3</option><option value="0.1">h = 0.1</option><option value="0.05">h = 0.05</option></select><button id="stepD" type="button">step</button><button id="playD" type="button">play</button><button id="resetD" type="button">reset</button></span></div>
+<canvas id="cvD" width="920" height="300" role="img" aria-label="Euler polyline approaching the exact solution curve"></canvas>
+<div class="demo-eq" id="eqD"></div>
+<p class="demo-cap">Teal: the exact solution. Ultramarine polyline: Euler &mdash; each segment follows the field&rsquo;s arrow (the tangent, in space&ndash;time) for a full h before re-evaluating, so big h visibly cuts corners. At h = 1.5 the decay problem goes <em>qualitatively</em> wrong: the polyline overshoots through zero and oscillates &mdash; numerical instability, a property of the solver, not of the true solution. Halve h and watch the |error| column roughly halve with it: that is O(h) convergence, live. Every step = one evaluation of u = one network forward pass in the generative setting &mdash; this select box is the NFE dial.</p>
+</div>
+
 <h3 id="pr-table">Pocket glossary</h3>
 <div class="tablewrap"><table>
 <thead><tr><th>Term</th><th>Type</th><th>Everyday picture</th><th>Role in this document</th></tr></thead>
@@ -372,14 +385,74 @@ print(euler(lambda x, t: -x, 2.0, steps=1000))   # 0.7354   converging ~ O(h)</p
 <tr><td>ODE / IVP</td><td>constraint on a function + start</td><td>"follow the arrows from here"</td><td>the generative sampler</td></tr>
 <tr><td>Solution / trajectory</td><td><code>[0,1] &rarr; &#8477;^d</code></td><td>the leaf&rsquo;s path on the river</td><td>one sample&rsquo;s journey noise &rarr; data</td></tr>
 <tr><td>Numerical solver (Euler, midpoint)</td><td>algorithm</td><td>small steps along the arrows</td><td>inference; cost = NFE</td></tr>
-<tr><td>Flow &psi;_t</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td>the whole river&rsquo;s motion at once</td><td><strong>next tab</strong> &mdash; the star of the show</td></tr>
+<tr><td>Flow &psi;_t</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code> &mdash; same type as a t-dependent field, but the output is a <em>position</em>, not a velocity</td><td>the whole river&rsquo;s motion at once</td><td><strong>next tab</strong> &mdash; the star of the show</td></tr>
 </tbody>
 </table></div>
-</div></section><section class="panel" id="pan-basics" role="tabpanel" aria-labelledby="t-basics" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 8</p><h2 id="basics">1. Flows &amp; ODEs &mdash; the four words you must own</h2></div><div class="body">
-<div class="subnav"><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
+</div></section><section class="panel" id="pan-basics" role="tabpanel" aria-labelledby="t-basics" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 8</p><h2 id="basics">1. Flows &amp; ODEs &mdash; semantics first, then the four words</h2></div><div class="body">
+<div class="subnav"><a href="#b-sem">Semantics first</a><a href="#b-slices">One function, three slices</a><a href="#b-link">The linking equation</a><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
 
-<h3 id="b-words">The four words</h3>
-<p>Primitives &mdash; scalar vs vector vs time-dependent fields, ODE mechanics, the Euler solver &mdash; live in tab 0. The genuinely new word in this tab is the <strong>flow</strong>: in everyday terms, what a fluid does. Drop a leaf anywhere on a river and the water’s velocity field carries it downstream. The flow &psi;_t is that idea made precise &mdash; the map <em>"starting point &#8614; position after time t"</em>, defined for every possible starting point at once. Now the four words, with types and the running example:</p>
+<h3 id="b-sem">Semantics first: one motion, two languages</h3>
+<p>(Primitives &mdash; field types, ODE mechanics, Euler &mdash; are tab 0.) The sentence to build everything from: <strong>the flow takes a time t and a starting position x_0 and outputs a destination point &mdash; but that destination is reached with some dynamics: the particle moves with a certain velocity at every instant along the way, and that velocity is exactly what the vector field defines.</strong> Same motion, two languages &mdash; the field speaks <em>velocities</em>, the flow speaks <em>positions</em>. Their type signatures are identical (<code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code>); only the semantics separates them:</p>
+<div class="ascii-card"><pre>                        u_t(x)  — the field           ψ_t(x₀)  — the flow
+   output means         a VELOCITY (arrow at x)       a POSITION (a new point)
+   units                distance / time               distance
+   question answered    "which way, how fast,         "where has the particle
+                         right now, here?"             from x₀ ended up by t?"
+   role                 derivative · local ·          integral · global ·
+                        instantaneous instruction     accumulated result
+   check at t = 0       u₀(2) = −2 — just an arrow      ψ₀(2) = 2 — nobody has moved yet
+   on the example       u(2) = −2   (a rate)          ψ₁(2) = 2e⁻¹ = 0.736  (a place)
+   from the other       differentiate the flow        integrate the field (solve ODE)</pre></div>
+<h3 id="b-slices">One function, three slices</h3>
+<ul>
+<li><strong>fix nothing</strong> &rarr; the flow &mdash; everything at once: it defines the trajectories for all starting positions x_0 and all times t.</li>
+<li><strong>fix t</strong> &rarr; <code>&psi;_t(&middot;) : &#8477;^d &rarr; &#8477;^d</code>, a map of space &mdash; every point moved simultaneously, a warp. (The displacement arrows <code>x_0 &#8614; &psi;_t(x_0)&minus;x_0</code> <em>are</em> a vector field &mdash; but the accumulated one, not the instantaneous u_t.)</li>
+<li><strong>fix x_0</strong> &rarr; <code>&psi;_&middot;(x_0) : [0,1] &rarr; &#8477;^d</code>, the trajectory of the particle defined by its starting position x_0 &mdash; one curve; input is <em>time</em>, so not a field. The trajectory is pinned by the start: one start = one trajectory, so two particles cannot share a starting position.</li>
+<li><strong>differentiate the trajectory in t</strong> &rarr; velocities, but only along that one curve &mdash; do it for <em>every</em> x_0 and you recover the full field u_t everywhere.</li>
+</ul>
+<div class="ascii-card"><pre>   the slices, on  ψ_t(x₀) = e⁻ᵗ·x₀ :
+   fix t = 0.5     ψ₀.₅(·) : x₀ ↦ 0.607·x₀     a warp — every point moved at once
+   fix x₀ = 2      ψ_·(2)  : t ↦ 2e⁻ᵗ          a trajectory — input is TIME
+   d/dt of it                t ↦ −2e⁻ᵗ          velocities along that one curve
+   … for every x₀           u_t(x) = −x           the field, recovered everywhere</pre></div>
+<p><strong>Can two particles collide later</strong> &mdash; <code>&psi;_{t′}(x_0) = &psi;_{t′}(x_1)</code> with x_0 &ne; x_1? <strong>No.</strong> The note below does it in equations; headline: the gap between two trajectories shrinks at most exponentially and can never reach zero in finite time. Hence each &psi;_{t′} is a bijection of space (the invertibility tab 2&rsquo;s CNFs cash in). What <em>is</em> allowed: the same place at <em>different</em> times &mdash; under <code>e^{&minus;t}x_0</code>, position 1 is visited by bib 2 at t = ln 2 and by bib 4 at t = ln 4. Same place, different clock readings, no collision. (In tab 3&rsquo;s space&ndash;time picture, a collision would be two curves crossing at a point &mdash; exactly what never happens.)</p>
+<div class="note"><span class="tag">Note &mdash; no collisions, in equations (three steps)</span>
+<div class="ascii-card"><pre>   step 1 — reverse time; the field flips sign:
+     Y_s := X_{t′−s}   ⇒   dY_s/ds = −Ẋ_{t′−s} = −u_{t′−s}(Y_s) ,   Y₀ = X_{t′}
+     again a first-order IVP, field just as Lipschitz ⇒ uniqueness applies backwards:
+     a point at time t′ has exactly ONE past — two particles sharing it would share
+     that past, forcing x₀ = x₁.
+
+   step 2 — the gap  Δ_t := ψ_t(x₀) − ψ_t(x₁)  obeys a two-sided bound:
+     d/dt ‖Δ_t‖ ≤ ‖u_t(ψ_t(x₀)) − u_t(ψ_t(x₁))‖ ≤ L·‖Δ_t‖      (Lipschitz, tab 0)
+     Grönwall, forward and (via step 1) backward:
+          e^{−Lt}‖Δ₀‖  ≤  ‖Δ_t‖  ≤  e^{+Lt}‖Δ₀‖
+     lower bound ⇒ ‖Δ_{t′}‖ ≥ e^{−Lt′}·‖x₀−x₁‖ > 0 :   gaps shrink at most
+     exponentially and NEVER reach zero in finite time — ψ_{t′} is injective.
+     (exact on the example: u = −x has L = 1 and Δ_t = e⁻ᵗΔ₀ — the contraction
+      approaches 0 forever without arriving.)
+
+   step 3 — the inverse is the backward flow:
+     ψ_{t′}⁻¹(y) = solve dY/ds = −u_{t′−s}(Y) from Y₀ = y, for time t′
+     example u(x) = −x:  backward field = +Y  ⇒  ψ₀.₇⁻¹(0.993) = 0.993·e^{0.7} = 2 ✓
+     — bib 2 recovered, uniquely. This backward solve is exactly what a CNF runs
+     to find a data point’s noise preimage (tab 2).</pre></div>
+</div>
+
+<h3 id="b-link">The linking equation &mdash; read the field at the destination</h3>
+<div class="formula">d/dt &psi;_t(x_0) = u_t( &psi;_t(x_0) )&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;equivalently&nbsp;&nbsp;&nbsp;d/dt &psi;_t = u_t &#8728; &psi;_t</div>
+<p>Read: <code>d/dt &psi;_t(x_0)</code> is the velocity of the particle <em>when it is at its destination</em> &psi;_t(x_0) &mdash; so the field is read there. The composition symbol says only that: <em>first</em> find where the particle is, <em>then</em> read the arrow posted there.</p>
+<p>Why not <code>u_t(x_0)</code>? Not a type error &mdash; x_0 is also a position. It is the <strong>wrong-time</strong> position: the particle&rsquo;s spot at t = 0, stale by time t, surviving only as the particle&rsquo;s permanent <em>name</em> (a bib number, assigned by the starting line; by uniqueness one start = one trajectory = one particle, forever). Arrows are posted at <em>places</em>, and at time t the arrow at location x_0 is obeyed by whoever stands there <em>now</em> &mdash; a different particle:</p>
+<div class="ascii-card"><pre>   ψ_t(x₀) = e⁻ᵗx₀ ,  u(x) = −x ,  t = 0.7 :
+   ours (bib 2):   now at ψ₀.₇(2) = 0.993;   d/dt ψ_t(2) = −2e⁻⁰·⁷ = −0.993 = u(0.993) ✓
+   u(x₀) = u(2) = −2   ✗ — the arrow at the OLD spot, now obeyed by bib 4.03 (= 2e⁺⁰·⁷):
+   the correct velocity of the WRONG particle.      (only exception: t = 0, ψ₀ = id)</pre></div>
+<div class="note"><span class="tag">Note &mdash; places vs particles (Eulerian vs Lagrangian), in four lines</span>
+<p><code>v_t(x_0) := d/dt &psi;_t(x_0)</code> &mdash; velocity by bib number &mdash; is a legitimate object (the <strong>Lagrangian</strong> description); the place-indexed u_t is the <strong>Eulerian</strong> one; the dictionary between them is exactly <code>v_t = u_t &#8728; &psi;_t</code>. The theory builds on u because: <strong>(1)</strong> <code>dX/dt = u_t(X_t)</code> can be written before any trajectory exists &mdash; per-particle velocities presuppose the flow, which is circular; <strong>(2)</strong> by uniqueness, two particles at the same place and time move identically, so given the current position the bib adds nothing; <strong>(3)</strong> <code>u^&theta;(x,t)</code> is evaluable anywhere in space &mdash; a per-particle velocity lives on one curve. Inverting instead of relabeling: <code>x_0 = &psi;_t&#8315;&sup1;(x) &rArr; u_t(x) = &part;_t &psi;_t(&psi;_t&#8315;&sup1;(x))</code> &mdash; and tab 3&rsquo;s CondOT derivation is exactly this substitution.</p>
+</div>
+
+<h3 id="b-words">The four words, now formal</h3>
+<p>With the semantics fixed, the table is bookkeeping &mdash; types plus the running example:</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Word</th><th>What it is</th><th>Type</th><th>Running example: <code>u_t(x) = &minus;x</code> (same at every t)</th></tr></thead>
 <tbody>
@@ -1173,6 +1246,82 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
     sel.addEventListener('change', function(){ cur=sel.value;
       wrap.style.display=(cur==='tdep')?'flex':'none'; draw(); });
     sl.addEventListener('input', function(){ T=parseFloat(sl.value); draw(); });
+    draw();
+  })();
+
+  // ── Demo D: Euler stepper with selectable h (tab 0) ────────────────────
+  (function(){
+    var cv=document.getElementById('cvD'); if(!cv) return;
+    var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+    var padL=56,padR=22,padT=18,padB=30, T1=3, YMIN=-2.0, YMAX=2.4;
+    var ODES={
+      decay: { u:function(x,t){return -x;},   exact:function(t){return 2*Math.exp(-t);} },
+      tdecay:{ u:function(x,t){return -t*x;}, exact:function(t){return 2*Math.exp(-t*t/2);} }
+    };
+    var cur='decay', hh=0.3, xs=[2], ts=[0], playing=false, raf=null, lastMs=0, accMs=0;
+    var eq=document.getElementById('eqD'),
+        selO=document.getElementById('odeSelD'), selH=document.getElementById('hSelD'),
+        bStep=document.getElementById('stepD'), bPlay=document.getElementById('playD'),
+        bReset=document.getElementById('resetD');
+    function Xp(t){return padL+(t/T1)*(W-padL-padR);}
+    function Yp(x){return padT+(1-(x-YMIN)/(YMAX-YMIN))*(H-padT-padB);}
+    function clampY(x){return Math.max(YMIN,Math.min(YMAX,x));}
+    function atEnd(){return ts[ts.length-1]>=T1-1e-9;}
+    function stepOnce(){
+      if(atEnd()) return false;
+      var i=xs.length-1, h=Math.min(hh, T1-ts[i]);
+      xs.push(xs[i]+h*ODES[cur].u(xs[i],ts[i])); ts.push(ts[i]+h);
+      return true;
+    }
+    function readout(){
+      var i=xs.length-1, t=ts[i], x=xs[i], ex=ODES[cur].exact(t);
+      eq.textContent='step '+i+' / '+Math.round(T1/hh)+':   t = '+t.toFixed(2)
+        +'    X_euler = '+x.toFixed(4)+'    exact = '+ex.toFixed(4)
+        +'    |error| = '+Math.abs(x-ex).toFixed(4)
+        +(atEnd()?'      done — now halve h and compare':'');
+    }
+    function draw(){
+      ctx.fillStyle='#FBFCFD'; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle=COL.rule; ctx.lineWidth=1;
+      ctx.font='10.5px IBM Plex Mono, monospace'; ctx.fillStyle=COL.muted;
+      for(var g=0; g<=6; g++){ var tg=g*T1/6;
+        ctx.beginPath(); ctx.moveTo(Xp(tg),padT); ctx.lineTo(Xp(tg),H-padB); ctx.stroke();
+        ctx.fillText('t='+tg.toFixed(1), Xp(tg)-14, H-padB+16); }
+      ctx.beginPath(); ctx.moveTo(padL,Yp(0)); ctx.lineTo(W-padR,Yp(0)); ctx.stroke();
+      ctx.fillText('x=0', padL-40, Yp(0)+3); ctx.fillText('x₀=2', padL-44, Yp(2)+3);
+      var E=ODES[cur].exact;                            // exact curve
+      ctx.strokeStyle=COL.teal; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(Xp(0),Yp(E(0)));
+      for(var k=1;k<=180;k++){ var t2=k*T1/180; ctx.lineTo(Xp(t2),Yp(E(t2))); }
+      ctx.stroke();
+      ctx.strokeStyle=COL.out; ctx.lineWidth=2;         // euler polyline
+      ctx.beginPath(); ctx.moveTo(Xp(ts[0]),Yp(clampY(xs[0])));
+      for(var i=1;i<xs.length;i++) ctx.lineTo(Xp(ts[i]),Yp(clampY(xs[i])));
+      ctx.stroke();
+      ctx.fillStyle=COL.out;
+      for(i=0;i<xs.length;i++){ ctx.beginPath(); ctx.arc(Xp(ts[i]),Yp(clampY(xs[i])),3,0,7); ctx.fill(); }
+      var j=xs.length-1;                                // current point, emphasized
+      ctx.beginPath(); ctx.arc(Xp(ts[j]),Yp(clampY(xs[j])),5,0,7); ctx.fill();
+      readout();
+    }
+    function stopPlay(){ playing=false; bPlay.textContent='play'; if(raf)cancelAnimationFrame(raf); }
+    function reset(){ stopPlay(); xs=[2]; ts=[0]; draw(); }
+    function frame(ms){
+      if(!playing) return;
+      if(!lastMs) lastMs=ms;
+      accMs+=ms-lastMs; lastMs=ms;
+      if(accMs>340){ accMs=0; if(!stepOnce()){ stopPlay(); } draw(); }
+      raf=requestAnimationFrame(frame);
+    }
+    bStep.addEventListener('click', function(){ stopPlay(); stepOnce(); draw(); });
+    bPlay.addEventListener('click', function(){
+      if(playing){ stopPlay(); return; }
+      if(atEnd()){ xs=[2]; ts=[0]; }
+      playing=true; bPlay.textContent='pause'; lastMs=0; accMs=400;
+      raf=requestAnimationFrame(frame);
+    });
+    bReset.addEventListener('click', reset);
+    selO.addEventListener('change', function(){ cur=selO.value; reset(); });
+    selH.addEventListener('change', function(){ hh=parseFloat(selH.value); reset(); });
     draw();
   })();
 })();
