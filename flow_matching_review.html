@@ -294,15 +294,15 @@ td code{font-size:.85em}
 
 <h3 id="b-words">The four words</h3>
 <div class="tablewrap"><table>
-<thead><tr><th>Word</th><th>What it is</th><th>Type</th></tr></thead>
+<thead><tr><th>Word</th><th>What it is</th><th>Type</th><th>Running example: <code>u(x) = &minus;x</code></th></tr></thead>
 <tbody>
-<tr><td><strong>Vector field</strong> <code>u_t(x)</code></td><td>a velocity assigned to every point in space at every time: "if you are at x at time t, move this way"</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td></tr>
-<tr><td><strong>ODE</strong></td><td>the rule "follow the arrows": <code>dX_t/dt = u_t(X_t)</code>, starting at <code>X_0 = x_0</code></td><td>a condition on a trajectory</td></tr>
-<tr><td><strong>Trajectory</strong> <code>X_t</code></td><td>one particle's path through space obeying the ODE</td><td><code>[0,1] &rarr; &#8477;^d</code></td></tr>
-<tr><td><strong>Flow</strong> <code>&psi;_t(x_0)</code></td><td>the solution map: where does a particle starting at x_0 sit at time t? All trajectories at once.</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td></tr>
+<tr><td><strong>Vector field</strong> <code>u_t(x)</code></td><td>a velocity assigned to every point in space at every time: "if you are at x at time t, move this way"</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td><code>u(x) = &minus;x</code> &mdash; at x = 2 the arrow says "toward 0 at speed 2"</td></tr>
+<tr><td><strong>ODE</strong></td><td>the rule "follow the arrows": <code>dX_t/dt = u_t(X_t)</code>, starting at <code>X_0 = x_0</code></td><td>a condition on a trajectory</td><td><code>dX_t/dt = &minus;X_t</code>, &nbsp;<code>X_0 = 2</code></td></tr>
+<tr><td><strong>Trajectory</strong> <code>X_t</code></td><td>one particle's path through space obeying the ODE</td><td><code>[0,1] &rarr; &#8477;^d</code></td><td><code>X_t = 2e^{&minus;t}</code> &mdash; the one curve through x_0 = 2</td></tr>
+<tr><td><strong>Flow</strong> <code>&psi;_t(x_0)</code></td><td>the solution map: where does a particle starting at x_0 sit at time t? All trajectories at once.</td><td><code>&psi;_t(x_0) = e^{&minus;t} x_0</code> &mdash; one formula, every start at once</td></tr>
 </tbody>
 </table></div>
-<p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another.</p>
+<p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another. Run the example along the row: pick x_0 = 2, the flow hands you the trajectory <code>2e^{&minus;t}</code>, and differentiating it returns the field: <code>d/dt (2e^{&minus;t}) = &minus;2e^{&minus;t} = u(X_t)</code>. If you can reproduce that chain, you own all four words.</p>
 
 <div class="ascii-card"><pre>   t = 0                        t = 0.5                       t = 1
    p_init = N(0, I)   ──────▶   half-transported    ──────▶   p_data
@@ -330,6 +330,12 @@ td code{font-size:.85em}
 <li><strong>Lagrangian (ride a particle):</strong> follow one trajectory X_t. This is what the ODE and the sampler talk about.</li>
 <li><strong>Eulerian (stand at a point):</strong> watch the density value p_t(x) at a fixed x rise and fall as mass flows past. This is what "the model transports N(0,I) to p_data" talks about.</li>
 </ul>
+<div class="ascii-card"><pre>   the running example, now with a RANDOM start:
+   X₀ ~ N(0, 1),   ψ_t(x₀) = e^{−t}·x₀   ⇒   X_t = e^{−t}·X₀  ~  N(0, e^{−2t})
+
+   Lagrangian view: every particle slides toward 0.
+   Eulerian view:   the Gaussian narrows,  p_t = N(0, e^{−2t}).
+   (a LINEAR flow maps Gaussians to Gaussians — the same fact the FM path lives on)</pre></div>
 <p>The bookkeeping that ties the two views together is conservation of probability mass &mdash; none is created or destroyed, only carried by the field:</p>
 <div class="formula">&part;_t p_t(x) = &minus;div( p_t u_t )(x)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(continuity equation)</div>
 <p>Read it as a fluid statement: the density at x changes exactly by the net inflow of mass that the velocity field carries through x (<code>div</code> = net outflow rate, hence the minus sign). A field u <em>generates</em> a density path p_t if and only if the pair satisfies this PDE &mdash; it is the certificate we will cash in twice: tab 2's likelihood formula is it evaluated along a trajectory, and tab 3's marginalization trick is a three-line computation with it.</p>
@@ -344,6 +350,13 @@ td code{font-size:.85em}
 
 <h3 id="b-euler">Simulating: Euler is enough to say</h3>
 <div class="ascii-card"><pre>   X_{t+h} = X_t + h · u_t(X_t)          h = 1/n,   t = 0, h, 2h, …, 1−h</pre></div>
+<div class="ascii-card"><pre>   with numbers — u(x) = −x,  X₀ = 2,  h = 0.5:
+   X₀.₅ = 2   + 0.5·(−2)   = 1
+   X₁   = 1   + 0.5·(−1)   = 0.5
+   X₁.₅ = 0.5 + 0.5·(−0.5) = 0.25        exact: 2e^{−1.5} = 0.446
+
+   coarse steps visibly overshoot — Euler's error is O(h) per unit time;
+   halve h (or spend a 2nd eval on midpoint) and the gap shrinks. NFE buys accuracy.</pre></div>
 <p>"Take a small step in the direction the field points, repeat n times." Fancier solvers (midpoint, Heun) evaluate <code>u</code> more than once per step to correct the direction &mdash; Voicebox uses midpoint. Each evaluation of <code>u</code> is a full network forward pass, so <strong>NFE (number of function evaluations) is the unit of sampling cost</strong>.</p>
 
 <h3 id="b-model">A flow model</h3>
@@ -378,6 +391,10 @@ td code{font-size:.85em}
    the full flow = composition of 1/h such steps; log-dets ADD:
    log|det J_ψ|  =  Σ h·tr(∂u/∂x)  ──h→0──▶  ∫₀¹ tr(∂u/∂x) dt</pre></div>
 <p>So the determinant of a product of nearly-identity Jacobians melts into an <em>integral of traces</em>. And <code>tr(&part;u/&part;x) = div(u)</code> is the field's local volume-growth rate (tab 1's continuity equation, evaluated along a trajectory): positive divergence spreads nearby particles apart, volume grows, density drops &mdash; that's the minus sign in the formula above.</p>
+<div class="ascii-card"><pre>   sanity-check on the running example u(x) = −x  (1-D, so tr = the derivative):
+   tr(∂u/∂x) = −1     ⇒  formula says: log-density along a trajectory GROWS at rate 1
+   directly:  p_t = N(0, e^{−2t})   ⇒   p_t(0) = e^{t}/√(2π)   ⇒   d/dt log p_t(0) = 1  ✓
+   (the field compresses everything toward 0, so density there rises — signs agree)</pre></div>
 </div>
 
 <p>Interview line: <em>"in continuous time the log-det of a composition of infinitely many infinitesimal steps collapses to an integral of the trace &mdash; and a trace is much cheaper than a determinant, and puts no architectural constraint on <code>u</code>."</em> That was the promise: free-form architectures with exact likelihoods.</p>
@@ -436,6 +453,11 @@ td code{font-size:.85em}
 <div class="rulebox"><span class="tag">The two lines the whole method compresses to</span>
 <p><code>x_t = t&middot;z + (1&minus;t)&middot;&epsilon;</code> &nbsp;&nbsp;&nbsp;&nbsp; <code>target = z &minus; &epsilon;</code></p>
 </div>
+<div class="ascii-card"><pre>   plug in numbers:   z = 2,   ε = −1,   t = 0.25
+   x_t    = 0.25·2 + 0.75·(−1) = −0.25
+   target = z − ε              =  3
+   cross-check the other form:  (z − x_t)/(1−t) = (2 − (−0.25))/0.75 = 3  ✓
+   one pair, one point, one arrow — that is a single training example, in full.</pre></div>
 
 <h3 id="f-marg">Step 3 &mdash; marginalize: why regressing on per-point targets works at all</h3>
 <p>Different (z, &epsilon;) pairs put mass on the <em>same</em> point x_t with <em>different</em> targets. The network gets x_t and t only &mdash; it cannot know which z it came from. So what does MSE regression converge to? Its minimizer: the <strong>conditional expectation of the target given the input</strong>. That is exactly the marginal vector field:</p>
@@ -447,6 +469,7 @@ td code{font-size:.85em}
         ε₂ ●──────╱   target z₁−ε₂                = posterior-weighted AVERAGE
        (z₁, z₂ on the other side)                 of the arrows = marginal u_t(x)</pre></div>
 <p>And the <strong>marginalization trick</strong> (proved via the continuity equation) says this averaged field is precisely the one whose ODE transports N(0,I) to p_data. Intuition: at x, average over "which z might I be flowing toward, given I'm at x now" &mdash; a posterior-weighted mean of arrows &mdash; and following that mean field moves the whole <em>density</em> correctly even though no individual particle targets a specific z anymore.</p>
+<p>Smallest numeric case of the average: two data points <code>z = &plusmn;1</code>, equally likely, and you sit exactly at <code>x = 0</code>. By symmetry the posterior weights are &frac12; each, so the marginal field averages the two arrows <code>(+1 &minus; 0)/(1&minus;t)</code> and <code>(&minus;1 &minus; 0)/(1&minus;t)</code> to exactly <strong>0</strong>: at the ambiguous midpoint the field stalls, and it only commits once x drifts off-centre and one weight wins. The demo's magenta curves do precisely this near t = 0 &mdash; flat first, then a decisive bend.</p>
 <div class="note"><span class="tag">Note &mdash; the continuity equation is the proof tool</span>
 <p>Tab 1's mass-conservation PDE, <code>&part;_t p_t = &minus;div(p_t u_t)</code>, is what makes the marginalization trick a <em>theorem</em> rather than a hope. The check is three lines: differentiate <code>p_t(x) = &int; p_t(x|z) p_data(z) dz</code> under the integral; each conditional pair (p_t(&middot;|z), u_t(&middot;|z)) satisfies continuity by construction, so substitute; pull the divergence out by linearity &mdash; and the posterior-averaged field pops out as the thing paired with the marginal density. Averaged field + marginal path satisfy continuity &rArr; the averaged field transports N(0,I) to p_data. No simulation appears anywhere in the argument, which is the entire point.</p>
 </div>
