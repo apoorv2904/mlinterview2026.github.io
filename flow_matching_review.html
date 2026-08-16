@@ -364,15 +364,55 @@ td code{font-size:.85em}
 # check on dx/dt = -x, x0 = 2.   exact answer: 2·e^{-1} = 0.7358
 print(euler(lambda x, t: -x, 2.0, steps=10))     # 0.6974   coarse
 print(euler(lambda x, t: -x, 2.0, steps=100))    # 0.7321
-print(euler(lambda x, t: -x, 2.0, steps=1000))   # 0.7354   converging ~ O(h)</pre></div>
+print(euler(lambda x, t: -x, 2.0, steps=1000))   # 0.7354   converging ~ O(h)
+
+def midpoint(u, x0, t0=0.0, t1=1.0, steps=100):      # what Voicebox uses
+    x, t = x0, t0
+    h = (t1 - t0) / steps
+    for _ in range(steps):
+        k1 = u(x, t)                                 # arrow at the start
+        k2 = u(x + 0.5 * h * k1, t + 0.5 * h)        # arrow at the midpoint
+        x, t = x + h * k2, t + h                     # full step with THAT slope
+    return x                                         # 2 evals/step, error O(h^2)
+
+print(midpoint(lambda x, t: -x, 2.0, steps=10))  # 0.7371 — 10 steps beat
+print(euler(lambda x, t: -x, 2.0, steps=20))     # 0.7169    Euler's 20 (same NFE!)</pre></div>
 <p>Three remarks that cover most solver questions: the error of Euler shrinks like O(h) (halve the step, halve the error); <strong>midpoint</strong> spends a second field evaluation per step to probe the direction halfway and gets O(h&sup2;) (this is what Voicebox uses); and every fancier solver &mdash; Runge&ndash;Kutta, adaptive &mdash; is still just "evaluate u, take a step" with cleverer bookkeeping. For a neural field each evaluation is a forward pass, which is why solver cost is counted in <strong>NFE</strong>, the number of function evaluations. Tab 1&rsquo;s Euler section shows the same arithmetic with numbers you can do in your head.</p>
 
+<p>How the initial condition enters Euler: it is the recursion&rsquo;s <strong>base case</strong> &mdash; the seed everything unrolls from, and the point where the very first arrow is read:</p>
+<div class="ascii-card"><pre>   X⁽⁰⁾ = X₀ = 2                          ← the seed; the FIRST field evaluation
+   X⁽ᵏ⁺¹⁾ = X⁽ᵏ⁾ + h·u_{t_k}(X⁽ᵏ⁾),  t_k = k·h      happens AT the initial condition
+
+   unrolled on u = −x (each step multiplies by 1−h) — X₀ factors out:
+   X⁽ᵏ⁾ = (1−h)ᵏ · X₀          vs exact          ψ_{t_k}(X₀) = e^{−t_k} · X₀
+   and (1−h)^{t/h} → e^{−t} as h → 0.
+
+   in general:  X⁽ⁿ⁾ = (I + h·u_{t_{n−1}}) ∘ … ∘ (I + h·u_{t_0}) (X₀)
+   — the composed step maps ARE a discrete flow map; X₀ is its input.
+   demo settings h = 0.3, t = 3:  (0.7)¹⁰·2 = 0.0565  vs  2e⁻³ = 0.0996
+   — the 0.043 gap is exactly the |error| in the readout below.</pre></div>
+<p>The step up from Euler, and the solver Voicebox actually ships &mdash; <strong>explicit midpoint (RK2)</strong>. Euler&rsquo;s flaw is systematic: it reads the slope at the <em>start</em> of the interval and pretends it holds for all of h. Midpoint spends a second evaluation to probe half a step ahead and uses the arrow <em>there</em> &mdash; a centered slope that cancels the first-order error term:</p>
+<div class="ascii-card"><pre>   k₁ = u_{t_k}(X⁽ᵏ⁾)                        ← probe: arrow at the start
+   X_mid = X⁽ᵏ⁾ + (h/2)·k₁                   ← walk HALF a step
+   k₂ = u_{t_k + h/2}(X_mid)                  ← read the arrow at the midpoint
+   X⁽ᵏ⁺¹⁾ = X⁽ᵏ⁾ + h·k₂                     ← take the FULL step with that slope
+
+   2 evals/step · global error O(h²): halve h ⇒ QUARTER the error (Euler: halve)
+
+   unrolled on u = −x — the per-step multiplier is a Taylor series of e⁻ʰ:
+   Euler:    1 − h              = e⁻ʰ to 1st order
+   midpoint: 1 − h + h²/2       = e⁻ʰ to 2nd order
+
+   fair comparison at EQUAL NFE = 20 evals, t: 0 → 1, x₀ = 2 (exact 0.7358):
+   Euler,   20 steps:  0.7169   |error| = 0.019
+   midpoint, 10 steps: 0.7371   |error| = 0.0013     ≈ 14× better, same compute</pre></div>
+<p>That equal-NFE column is the whole argument for higher-order solvers on smooth fields &mdash; and the reason Voicebox uses fixed-step midpoint (via torchdiffeq). One accounting caveat from tab 6: under classifier-free guidance each "evaluation of u" is itself two network passes.</p>
 <h3 id="pr-eulerdemo">Interactive &mdash; watch Euler work: pick h, press play</h3>
 <div class="demo">
-<div class="demo-bar"><span>Euler on dX/dt = u_t(X), &nbsp;X&#8320; = 2, &nbsp;t: 0 &rarr; 3</span><span class="demo-ctl"><select id="odeSelD" aria-label="ODE"><option value="decay">u = &minus;x&nbsp; (exact 2e^{&minus;t})</option><option value="tdecay">u_t = &minus;t&middot;x&nbsp; (exact 2e^{&minus;t&sup2;/2})</option></select><select id="hSelD" aria-label="step size"><option value="1.5">h = 1.5 (unstable)</option><option value="0.75">h = 0.75</option><option value="0.3" selected>h = 0.3</option><option value="0.1">h = 0.1</option><option value="0.05">h = 0.05</option></select><button id="stepD" type="button">step</button><button id="playD" type="button">play</button><button id="resetD" type="button">reset</button></span></div>
+<div class="demo-bar"><span>Euler on dX/dt = u_t(X), &nbsp;X&#8320; = 2, &nbsp;t: 0 &rarr; 3</span><span class="demo-ctl"><select id="odeSelD" aria-label="ODE"><option value="decay">u = &minus;x&nbsp; (exact 2e^{&minus;t})</option><option value="tdecay">u_t = &minus;t&middot;x&nbsp; (exact 2e^{&minus;t&sup2;/2})</option></select><select id="hSelD" aria-label="step size"><option value="1.5">h = 1.5 (unstable)</option><option value="0.75">h = 0.75</option><option value="0.3" selected>h = 0.3</option><option value="0.1">h = 0.1</option><option value="0.05">h = 0.05</option></select><select id="mSelD" aria-label="solver"><option value="euler">Euler (1 eval/step)</option><option value="midpoint">midpoint (2 evals/step)</option></select><button id="stepD" type="button">step</button><button id="playD" type="button">play</button><button id="resetD" type="button">reset</button></span></div>
 <canvas id="cvD" width="920" height="300" role="img" aria-label="Euler polyline approaching the exact solution curve"></canvas>
 <div class="demo-eq" id="eqD"></div>
-<p class="demo-cap">Teal: the exact solution. Ultramarine polyline: Euler &mdash; each segment follows the field&rsquo;s arrow (the tangent, in space&ndash;time) for a full h before re-evaluating, so big h visibly cuts corners. At h = 1.5 the decay problem goes <em>qualitatively</em> wrong: the polyline overshoots through zero and oscillates &mdash; numerical instability, a property of the solver, not of the true solution. Halve h and watch the |error| column roughly halve with it: that is O(h) convergence, live. Every step = one evaluation of u = one network forward pass in the generative setting &mdash; this select box is the NFE dial.</p>
+<p class="demo-cap">X₀ = 2 means X(t=0) = 2, the initial condition: the ODE alone has a whole family of solutions (here A·e⁻ᵗ, one per A), and X₀ picks one — it is the shared left-edge anchor of both curves, and the generative sampler’s only change is making it random, X₀ ~ N(0,I). Equivalently: the demo draws the flow’s fix-x₀ slice, X_t = ψ_t(2) — the teal curve is t ↦ 2e⁻ᵗ in space–time, and Euler approximates that slice. Teal: the exact solution. Ultramarine polyline: Euler &mdash; each segment follows the field&rsquo;s arrow (the tangent, in space&ndash;time) for a full h before re-evaluating, so big h visibly cuts corners. At h = 1.5 the decay problem goes <em>qualitatively</em> wrong: the polyline overshoots through zero and oscillates &mdash; numerical instability, a property of the solver, not of the true solution. Halve h and watch the |error| column roughly halve with it: that is O(h) convergence, live. Every step = one evaluation of u = one network forward pass in the generative setting &mdash; this select box is the NFE dial, and the readout now counts NFE for you. Switch the solver to <strong>midpoint</strong> at the same h and watch the polyline hug the curve &mdash; then compare |error| at equal NFE, not equal steps: that is the honest comparison, and midpoint wins it.</p>
 </div>
 
 <h3 id="pr-table">Pocket glossary</h3>
@@ -1258,9 +1298,10 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
       decay: { u:function(x,t){return -x;},   exact:function(t){return 2*Math.exp(-t);} },
       tdecay:{ u:function(x,t){return -t*x;}, exact:function(t){return 2*Math.exp(-t*t/2);} }
     };
-    var cur='decay', hh=0.3, xs=[2], ts=[0], playing=false, raf=null, lastMs=0, accMs=0;
+    var cur='decay', hh=0.3, meth='euler', nfe=0, xs=[2], ts=[0], playing=false, raf=null, lastMs=0, accMs=0;
     var eq=document.getElementById('eqD'),
         selO=document.getElementById('odeSelD'), selH=document.getElementById('hSelD'),
+        selM=document.getElementById('mSelD'),
         bStep=document.getElementById('stepD'), bPlay=document.getElementById('playD'),
         bReset=document.getElementById('resetD');
     function Xp(t){return padL+(t/T1)*(W-padL-padR);}
@@ -1269,13 +1310,17 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
     function atEnd(){return ts[ts.length-1]>=T1-1e-9;}
     function stepOnce(){
       if(atEnd()) return false;
-      var i=xs.length-1, h=Math.min(hh, T1-ts[i]);
-      xs.push(xs[i]+h*ODES[cur].u(xs[i],ts[i])); ts.push(ts[i]+h);
+      var i=xs.length-1, h=Math.min(hh, T1-ts[i]), U=ODES[cur].u, x=xs[i], t=ts[i];
+      if(meth==='midpoint'){
+        var k1=U(x,t), k2=U(x+0.5*h*k1, t+0.5*h);
+        xs.push(x+h*k2); nfe+=2;
+      } else { xs.push(x+h*U(x,t)); nfe+=1; }
+      ts.push(t+h);
       return true;
     }
     function readout(){
       var i=xs.length-1, t=ts[i], x=xs[i], ex=ODES[cur].exact(t);
-      eq.textContent='step '+i+' / '+Math.round(T1/hh)+':   t = '+t.toFixed(2)
+      eq.textContent='step '+i+' / '+Math.round(T1/hh)+'  (NFE '+nfe+'):   t = '+t.toFixed(2)
         +'    X_euler = '+x.toFixed(4)+'    exact = '+ex.toFixed(4)
         +'    |error| = '+Math.abs(x-ex).toFixed(4)
         +(atEnd()?'      done — now halve h and compare':'');
@@ -1304,7 +1349,7 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
       readout();
     }
     function stopPlay(){ playing=false; bPlay.textContent='play'; if(raf)cancelAnimationFrame(raf); }
-    function reset(){ stopPlay(); xs=[2]; ts=[0]; draw(); }
+    function reset(){ stopPlay(); xs=[2]; ts=[0]; nfe=0; draw(); }
     function frame(ms){
       if(!playing) return;
       if(!lastMs) lastMs=ms;
@@ -1315,13 +1360,14 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
     bStep.addEventListener('click', function(){ stopPlay(); stepOnce(); draw(); });
     bPlay.addEventListener('click', function(){
       if(playing){ stopPlay(); return; }
-      if(atEnd()){ xs=[2]; ts=[0]; }
+      if(atEnd()){ xs=[2]; ts=[0]; nfe=0; }
       playing=true; bPlay.textContent='pause'; lastMs=0; accMs=400;
       raf=requestAnimationFrame(frame);
     });
     bReset.addEventListener('click', reset);
     selO.addEventListener('change', function(){ cur=selO.value; reset(); });
     selH.addEventListener('change', function(){ hh=parseFloat(selH.value); reset(); });
+    selM.addEventListener('change', function(){ meth=selM.value; reset(); });
     draw();
   })();
 })();
