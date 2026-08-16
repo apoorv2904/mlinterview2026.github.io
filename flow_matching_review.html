@@ -267,17 +267,18 @@ td code{font-size:.85em}
 <ul>
 <li>The storyline: a <strong>CNF</strong> is the right model (an ODE that carries noise to data) trained the wrong way (simulate the ODE inside the training loop). <strong>Flow matching</strong> keeps the model and replaces the training with a one-line regression.</li>
 <li>Tabs 1&ndash;3 are the concepts, tab 4 is the code you'd write on a whiteboard, tab 5 connects to diffusion, tab 6 is Voicebox (our paper).</li>
-<li>Tabs 1 and 3 contain small <strong>interactive demos</strong> (pure in-page JS, nothing to install): an ODE playground, and the CondOT path with a draggable t &mdash; the marginal-field curves it draws are the exact closed-form field, not an illustration.</li>
+<li>Tabs 0, 1 and 3 contain small <strong>interactive demos</strong> (pure in-page JS, nothing to install): an ODE playground, and the CondOT path with a draggable t &mdash; the marginal-field curves it draws are the exact closed-form field, not an illustration.</li>
 <li>If you are short on time: read <strong>3 &middot; Flow matching</strong> and <strong>7 &middot; Remember</strong>, and be able to write tab 4's <code>fm_loss</code> from memory.</li>
 </ul></div></div>
 </header>
 
 <div class="tabbar-outer">
-  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-contents" aria-controls="pan-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-basics" aria-controls="pan-basics" aria-selected="false" tabindex="-1"><span class="num">02</span>1 &middot; Flows &amp; ODEs</button><button class="tab" role="tab" id="t-cnf" aria-controls="pan-cnf" aria-selected="false" tabindex="-1"><span class="num">03</span>2 &middot; CNFs: the problem</button><button class="tab" role="tab" id="t-fm" aria-controls="pan-fm" aria-selected="false" tabindex="-1"><span class="num">04</span>3 &middot; Flow matching</button><button class="tab" role="tab" id="t-code" aria-controls="pan-code" aria-selected="false" tabindex="-1"><span class="num">05</span>4 &middot; PyTorch</button><button class="tab" role="tab" id="t-diff" aria-controls="pan-diff" aria-selected="false" tabindex="-1"><span class="num">06</span>5 &middot; Diffusion &harr; FM</button><button class="tab" role="tab" id="t-vb" aria-controls="pan-vb" aria-selected="false" tabindex="-1"><span class="num">07</span>6 &middot; Voicebox</button><button class="tab" role="tab" id="t-remember" aria-controls="pan-remember" aria-selected="false" tabindex="-1"><span class="num">08</span>7 &middot; Remember</button></div>
+  <div class="tabbar" role="tablist" aria-label="Sections"><button class="tab" role="tab" id="t-contents" aria-controls="pan-contents" aria-selected="true"><span class="num">01</span>Contents</button><button class="tab" role="tab" id="t-prim" aria-controls="pan-prim" aria-selected="false" tabindex="-1"><span class="num">02</span>0 &middot; Field &amp; ODE basics</button><button class="tab" role="tab" id="t-basics" aria-controls="pan-basics" aria-selected="false" tabindex="-1"><span class="num">03</span>1 &middot; Flows &amp; ODEs</button><button class="tab" role="tab" id="t-cnf" aria-controls="pan-cnf" aria-selected="false" tabindex="-1"><span class="num">04</span>2 &middot; CNFs: the problem</button><button class="tab" role="tab" id="t-fm" aria-controls="pan-fm" aria-selected="false" tabindex="-1"><span class="num">05</span>3 &middot; Flow matching</button><button class="tab" role="tab" id="t-code" aria-controls="pan-code" aria-selected="false" tabindex="-1"><span class="num">06</span>4 &middot; PyTorch</button><button class="tab" role="tab" id="t-diff" aria-controls="pan-diff" aria-selected="false" tabindex="-1"><span class="num">07</span>5 &middot; Diffusion &harr; FM</button><button class="tab" role="tab" id="t-vb" aria-controls="pan-vb" aria-selected="false" tabindex="-1"><span class="num">08</span>6 &middot; Voicebox</button><button class="tab" role="tab" id="t-remember" aria-controls="pan-remember" aria-selected="false" tabindex="-1"><span class="num">09</span>7 &middot; Remember</button></div>
 </div>
 
 <main><section class="panel is-active" id="pan-contents" role="tabpanel" aria-labelledby="t-contents" tabindex="0"><div class="panel-head"><p class="kicker">Contents</p><h2 id="contents">Table of contents</h2></div><div class="body">
-<ol>
+<ol start="0">
+<li><a href="#prim">Field &amp; ODE primitives &mdash; scalar vs vector vs time-dependent, and solving an ODE by hand and by Euler</a></li>
 <li><a href="#basics">Flows &amp; ODEs &mdash; the four words you must own</a></li>
 <li><a href="#cnf">Continuous normalizing flows &mdash; the right model, trained the wrong way</a></li>
 <li><a href="#fm">Flow matching &mdash; delete the simulation</a></li>
@@ -289,17 +290,96 @@ td code{font-size:.85em}
 <div class="note"><span class="tag">The whole document in four sentences</span>
 <p>A generative model can be an ODE: start at noise, integrate a learned velocity field, land on data. CNFs (2018) trained this by maximum likelihood, which forces you to <em>simulate the ODE and a Jacobian-trace integral inside every training step</em> &mdash; that is why they never scaled. Flow matching (2023) notices you can <strong>choose the path yourself</strong>: draw noise &epsilon; and data z, put the model on the straight line between them, and regress its output onto the line's known velocity <code>z &minus; &epsilon;</code>. Training becomes one network eval and an MSE &mdash; simulation-free &mdash; and simulation is only paid once, at sampling time.</p>
 </div>
-</div></section><section class="panel" id="pan-basics" role="tabpanel" aria-labelledby="t-basics" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 7</p><h2 id="basics">1. Flows &amp; ODEs &mdash; the four words you must own</h2></div><div class="body">
-<div class="subnav"><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
+</div></section><section class="panel" id="pan-prim" role="tabpanel" aria-labelledby="t-prim" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 0 of 8</p><h2 id="prim">0. Field &amp; ODE primitives &mdash; the vocabulary before the story</h2></div><div class="body">
+<div class="subnav"><a href="#pr-scalar">Scalar field</a><a href="#pr-vector">Vector field</a><a href="#pr-tdep">Time-dependent</a><a href="#pr-demo">Interactive: query a field</a><a href="#pr-ode">What an ODE is</a><a href="#pr-hand">Solving one by hand</a><a href="#pr-euler">A 10-line solver</a><a href="#pr-table">Pocket glossary</a></div>
 
-<h3 id="b-words">The four words</h3>
-<p>Dictionary level first. A <strong>scalar field</strong> assigns one plain number to every point in space &mdash; temperature on a weather map. A <strong>vector field</strong> assigns a <em>vector</em> &mdash; an arrow &mdash; to every point, and an arrow carries two pieces of information: a <strong>direction</strong> (which way) and a <strong>magnitude</strong> (how strongly). Wind on a weather map is the canonical picture. Here the arrow is a <em>velocity</em>: direction = where a particle sitting at x should head, magnitude = how fast. So yes, vector fields have directions &mdash; that is precisely what distinguishes them from scalar fields.</p>
+<h3 id="pr-scalar">Scalar field: one number per point</h3>
+<p>A <strong>scalar field</strong> assigns one plain number to every point in space: <code>f : &#8477;^d &rarr; &#8477;</code>. Temperature on a weather map; altitude on a hiking map; a loss surface <code>f(&theta;)</code> over parameters. A number has a size but <em>no direction</em>.</p>
+
+<h3 id="pr-vector">Vector field: one arrow per point</h3>
+<p>A <strong>vector field</strong> assigns a <em>vector</em> to every point: <code>u : &#8477;^d &rarr; &#8477;^d</code>. A vector is an arrow, and an arrow carries two pieces of information: a <strong>direction</strong> (which way) and a <strong>magnitude</strong> (how strongly). Wind on a weather map is the canonical picture. So yes &mdash; vector fields have directions; that is precisely what separates them from scalar fields:</p>
+<div class="ascii-card"><pre>   scalar field  f(x,y) = x² + y²             vector field  u(x,y) = [x, y]
+   (one NUMBER per point)                     (one ARROW per point)
+
+        8   5   4   5   8                          ↖    ↑    ↗
+        5   2   1   2   5                          ←    ·    →
+        4   1   0   1   4                          ↙    ↓    ↘
+
+   size only, no direction                    direction AND magnitude —
+                                              arrows point AWAY from the origin,
+                                              longer the farther out you are</pre></div>
+<p>The two are related: every scalar field induces a vector field through its <strong>gradient</strong> &mdash; <code>[x, y]</code> above is literally <code>&nabla;(&frac12;(x&sup2;+y&sup2;))</code>, the steepest-ascent arrows of the bowl on the left. (Gradient descent follows <code>&minus;&nabla;f</code>; diffusion&rsquo;s score <code>&nabla;log p</code> in tab 5 is another gradient field.) In this document the arrow is always a <strong>velocity</strong>: direction = where a particle sitting at x should head, magnitude = how fast. The running example of tabs 1&ndash;2 is the inward version of the picture above:</p>
 <div class="ascii-card"><pre>   u_t(x) = −x drawn on the 1-D line — every point gets an arrow toward 0:
 
    x:     −3      −2      −1       0       +1      +2      +3
    u:    ───▶    ──▶     ─▶       ·       ◀─      ◀──     ◀───
    direction: toward the origin         magnitude: |x| — stronger far away</pre></div>
-<p>And a <strong>flow</strong>, in everyday terms, is what a fluid does: drop a leaf anywhere on a river and the water’s velocity field carries it downstream. The flow &psi;_t is that idea made precise &mdash; the map <em>"starting point &#8614; position after time t"</em>, defined for every possible starting point at once. Now the four words, with types and the running example:</p>
+
+<h3 id="pr-tdep">Time-dependent vector field: a movie of arrow pictures</h3>
+<p>Add time as an input: <code>u : &#8477;^d &times; [0,1] &rarr; &#8477;^d</code>, written <code>u_t(x)</code>. Equivalently, a whole <em>family</em> of static vector fields, one per instant &mdash; a movie whose every frame is an arrow picture. A time-<em>in</em>dependent (autonomous) field is the movie whose frames are all identical; <code>u_t(x) = &minus;x</code> is one. A genuinely time-dependent example: <code>u_t(x) = &minus;t&middot;x</code> &mdash; at t = 0 the field is zero everywhere (nothing moves), and the inward pull strengthens as t grows. The one that matters later, CondOT&rsquo;s <code>u_t(x|z) = (z&minus;x)/(1&minus;t)</code>, is time-dependent in the same sense: the <em>same point</em> x gets a faster arrow as the deadline t = 1 approaches.</p>
+<div class="note"><span class="tag">Note &mdash; how do you draw a field that depends on t?</span>
+<p>A single arrow plot freezes one instant, so a genuinely time-dependent field needs one of three devices. <strong>(1) Filmstrip:</strong> side-by-side snapshots of the arrows at t = 0, 0.5, 1. <strong>(2) Animation:</strong> redraw the arrows every frame as t advances &mdash; tab 1&rsquo;s ODE playground has a <em>deadline</em> field <code>u_t(x) = (z*&minus;x)/(1&minus;t)</code> drawn exactly this way: the arrow grid itself grows as t &rarr; 1, then the run resets. <strong>(3) Space&ndash;time plot</strong> (for 1-D state, and the most useful picture in this document): put t on the horizontal axis and x on the vertical. Then u_t(x) is a <em>slope</em> attached to every point (t, x) of the plane, and trajectories are curves that follow the slopes. Tab 3&rsquo;s interactive is precisely this picture &mdash; its straight lines and magenta curves are trajectories drawn in space&ndash;time, and dragging the t slider sweeps a vertical "now" line across it.</p>
+</div>
+
+<h3 id="pr-demo">Interactive &mdash; a field is a function you can query</h3>
+<div class="demo">
+<div class="demo-bar"><span>hover / tap the plane &mdash; the bold arrow is u at your cursor</span><span class="demo-ctl"><select id="fieldSelC" aria-label="field"><option value="out">outward u(x,y) = [x, y]</option><option value="contract">contraction u = [&minus;x, &minus;y]</option><option value="tdep">time-dependent u_t = &minus;t&middot;[x, y]</option></select><label id="tWrapC" style="display:none">t <input type="range" id="tSliderC" min="0" max="1" step="0.01" value="0.5" aria-label="time t"></label></span></div>
+<canvas id="cvC" width="920" height="300" role="img" aria-label="vector field arrows sampled on a grid, queryable with the cursor"></canvas>
+<div class="demo-eq" id="eqC">hover the plane &mdash; the readout evaluates the field at your cursor</div>
+<p class="demo-cap">Grey arrows only <em>sample</em> the field on a grid &mdash; the field itself is defined at every point, which is what your cursor demonstrates: the readout is u evaluated at that exact position (direction = which way the bold arrow points, magnitude = its length). Switch to the <strong>time-dependent</strong> field and drag t: the SAME point returns a different arrow at different times &mdash; zero everywhere at t = 0, strengthening toward t = 1. That slider-indexed family of pictures is all that "time-dependent" means.</p>
+</div>
+
+<h3 id="pr-ode">What an ODE actually is</h3>
+<p>An <strong>ordinary differential equation</strong> is an equation whose unknown is a <em>function</em>, and which constrains that function through its derivative. ("Ordinary" = derivatives in one variable only &mdash; time, for us; the continuity equation, with its &part;/&part;x&rsquo;s, is a <em>partial</em> DE.) Everything in this document is the first-order case with a starting point pinned down &mdash; an <strong>initial value problem</strong>:</p>
+<div class="formula">dX_t/dt = u_t(X_t),&nbsp;&nbsp;&nbsp;&nbsp;X_0 = x_0</div>
+<p>Unpack it: the unknown is the whole trajectory X (a function of t, not a number); the equation demands that <em>at every instant, the trajectory&rsquo;s velocity equals the field&rsquo;s arrow at its current position</em> (derivative = instantaneous velocity is the entire dictionary between calculus and motion); and the initial condition selects <em>which</em> of the many solutions you mean. "Solving" = exhibiting a function that satisfies both.</p>
+<div class="note"><span class="tag">Note &mdash; existence &amp; uniqueness, and why we care</span>
+<p>If u is continuously differentiable with bounded derivatives (a neural network qualifies), then through every starting point there passes <strong>exactly one</strong> trajectory. Two consequences get used later: trajectories can never cross (the reason tab 3&rsquo;s marginal curves bend around each other instead of intersecting), and the flow can be run backwards uniquely &mdash; it is invertible, which is what tab 2&rsquo;s CNFs cash in for likelihoods.</p>
+</div>
+
+<h3 id="pr-hand">Solving one by hand (the only hand-solve you&rsquo;ll ever need here)</h3>
+<div class="ascii-card"><pre>   dx/dt = −x ,  x(0) = 2                       (separable — put x left, t right)
+
+   dx / x   = −dt
+   ∫ both:    ln|x| = −t + C
+   exponentiate:  x(t) = A·e^{−t}         initial condition:  x(0) = 2  ⇒  A = 2
+   ALWAYS verify:  d/dt [2e^{−t}] = −2e^{−t} = −x(t)  ✓   and  x(0) = 2  ✓</pre></div>
+<p>General linear case, worth one neuron: <code>dx/dt = a&middot;x &rArr; x(t) = x_0 e^{at}</code> &mdash; decay for a &lt; 0, growth for a &gt; 0. And that is roughly where hand-solving ends: the fields we care about are neural networks, which have no closed-form flow. Hence:</p>
+
+<h3 id="pr-euler">When there is no formula: a 10-line solver</h3>
+<p>Go back to the definition of the derivative: for small h, <code>x(t+h) &asymp; x(t) + h&middot;x&#39;(t)</code>. The ODE tells you what x&#39;(t) is &mdash; the field&rsquo;s arrow. Substituting it in <em>is</em> Euler&rsquo;s method:</p>
+<div class="code"><div class="code-bar"><span>generic Euler solver + convergence check</span><button class="copy" type="button">copy</button></div><pre>def euler(u, x0, t0=0.0, t1=1.0, steps=100):
+    x, t = x0, t0
+    h = (t1 - t0) / steps
+    for _ in range(steps):
+        x = x + h * u(x, t)      # the one line that matters
+        t = t + h
+    return x
+
+# check on dx/dt = -x, x0 = 2.   exact answer: 2·e^{-1} = 0.7358
+print(euler(lambda x, t: -x, 2.0, steps=10))     # 0.6974   coarse
+print(euler(lambda x, t: -x, 2.0, steps=100))    # 0.7321
+print(euler(lambda x, t: -x, 2.0, steps=1000))   # 0.7354   converging ~ O(h)</pre></div>
+<p>Three remarks that cover most solver questions: the error of Euler shrinks like O(h) (halve the step, halve the error); <strong>midpoint</strong> spends a second field evaluation per step to probe the direction halfway and gets O(h&sup2;) (this is what Voicebox uses); and every fancier solver &mdash; Runge&ndash;Kutta, adaptive &mdash; is still just "evaluate u, take a step" with cleverer bookkeeping. For a neural field each evaluation is a forward pass, which is why solver cost is counted in <strong>NFE</strong>, the number of function evaluations. Tab 1&rsquo;s Euler section shows the same arithmetic with numbers you can do in your head.</p>
+
+<h3 id="pr-table">Pocket glossary</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Term</th><th>Type</th><th>Everyday picture</th><th>Role in this document</th></tr></thead>
+<tbody>
+<tr><td>Scalar field</td><td><code>&#8477;^d &rarr; &#8477;</code></td><td>temperature map</td><td>log-density log p_t(x); the loss</td></tr>
+<tr><td>Vector field</td><td><code>&#8477;^d &rarr; &#8477;^d</code></td><td>wind map (arrows: direction + magnitude)</td><td>the object the network parameterizes</td></tr>
+<tr><td>Time-dependent vector field</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td>a movie of wind maps</td><td><code>u_t^&theta;(x)</code>; CondOT&rsquo;s (z&minus;x)/(1&minus;t)</td></tr>
+<tr><td>ODE / IVP</td><td>constraint on a function + start</td><td>"follow the arrows from here"</td><td>the generative sampler</td></tr>
+<tr><td>Solution / trajectory</td><td><code>[0,1] &rarr; &#8477;^d</code></td><td>the leaf&rsquo;s path on the river</td><td>one sample&rsquo;s journey noise &rarr; data</td></tr>
+<tr><td>Numerical solver (Euler, midpoint)</td><td>algorithm</td><td>small steps along the arrows</td><td>inference; cost = NFE</td></tr>
+<tr><td>Flow &psi;_t</td><td><code>&#8477;^d &times; [0,1] &rarr; &#8477;^d</code></td><td>the whole river&rsquo;s motion at once</td><td><strong>next tab</strong> &mdash; the star of the show</td></tr>
+</tbody>
+</table></div>
+</div></section><section class="panel" id="pan-basics" role="tabpanel" aria-labelledby="t-basics" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 1 of 8</p><h2 id="basics">1. Flows &amp; ODEs &mdash; the four words you must own</h2></div><div class="body">
+<div class="subnav"><a href="#b-words">The four words</a><a href="#b-example">A worked example</a><a href="#b-push">Flows move distributions</a><a href="#b-demo">Interactive: follow the arrows</a><a href="#b-euler">Simulating: Euler</a><a href="#b-model">A flow model</a></div>
+
+<h3 id="b-words">The four words</h3>
+<p>Primitives &mdash; scalar vs vector vs time-dependent fields, ODE mechanics, the Euler solver &mdash; live in tab 0. The genuinely new word in this tab is the <strong>flow</strong>: in everyday terms, what a fluid does. Drop a leaf anywhere on a river and the water’s velocity field carries it downstream. The flow &psi;_t is that idea made precise &mdash; the map <em>"starting point &#8614; position after time t"</em>, defined for every possible starting point at once. Now the four words, with types and the running example:</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Word</th><th>What it is</th><th>Type</th><th>Running example: <code>u_t(x) = &minus;x</code> (same at every t)</th></tr></thead>
 <tbody>
@@ -310,9 +390,7 @@ td code{font-size:.85em}
 </tbody>
 </table></div>
 <p>These are three views of one object: <strong>a vector field defines an ODE whose solution is a flow</strong>. If <code>u</code> is nice (e.g. a neural net &mdash; continuously differentiable, bounded derivative), the flow exists, is unique, and is a diffeomorphism: it smoothly <em>warps space</em> without tearing it. That warping is what lets it reshape one probability distribution into another. Run the example along the row: pick x_0 = 2, the flow hands you the trajectory <code>2e^{&minus;t}</code>, and differentiating it returns the field: <code>d/dt (2e^{&minus;t}) = &minus;2e^{&minus;t} = u(X_t)</code>. If you can reproduce that chain, you own all four words. One notational point worth pre-empting: this example is <strong>time-independent</strong> (autonomous) &mdash; <code>u_t(x) = &minus;x</code> ignores its t subscript, so the arrows never change and only the particles move. That is the special case. Fields in this document are time-dependent in general, and the one that matters, CondOT’s <code>u_t(x|z) = (z&minus;x)/(1&minus;t)</code>, genuinely needs its subscript: the same point x gets a faster arrow as the deadline t = 1 approaches.</p>
-<div class="note"><span class="tag">Note &mdash; how do you draw a field that depends on t?</span>
-<p>A single arrow plot freezes one instant, so a genuinely time-dependent field needs one of three devices. <strong>(1) Filmstrip:</strong> side-by-side snapshots of the arrows at t = 0, 0.5, 1. <strong>(2) Animation:</strong> redraw the arrows every frame as t advances &mdash; the demo below now has a <em>deadline</em> field <code>u_t(x) = (z*&minus;x)/(1&minus;t)</code> that does exactly this: the arrow grid itself changes, growing as t &rarr; 1, then the run resets. <strong>(3) Space&ndash;time plot</strong> (for 1-D state, and the most useful picture in this document): put t on the horizontal axis and x on the vertical. Then u_t(x) is a <em>slope</em> attached to every point (t, x) of the plane, and trajectories are curves that follow the slopes. Tab 3’s interactive is precisely this picture &mdash; its straight lines and magenta curves are trajectories drawn in space&ndash;time, and dragging the t slider sweeps a vertical "now" line across it. When you see that plot, you are looking at a time-dependent vector field.</p>
-</div>
+<p>(Three ways to <em>draw</em> a field that changes with t &mdash; filmstrip, animation, space&ndash;time &mdash; are in tab 0; the playground below animates one, the <em>deadline</em> field.)</p>
 
 <div class="ascii-card"><pre>   t = 0                        t = 0.5                       t = 1
    p_init = N(0, I)   ──────▶   half-transported    ──────▶   p_data
@@ -367,7 +445,7 @@ td code{font-size:.85em}
 
    coarse steps visibly overshoot — Euler's error is O(h) per unit time;
    halve h (or spend a 2nd eval on midpoint) and the gap shrinks. NFE buys accuracy.</pre></div>
-<p>"Take a small step in the direction the field points, repeat n times." Fancier solvers (midpoint, Heun) evaluate <code>u</code> more than once per step to correct the direction &mdash; Voicebox uses midpoint. Each evaluation of <code>u</code> is a full network forward pass, so <strong>NFE (number of function evaluations) is the unit of sampling cost</strong>.</p>
+<p>"Take a small step in the direction the field points, repeat n times." Fancier solvers (midpoint, Heun) evaluate <code>u</code> more than once per step to correct the direction &mdash; Voicebox uses midpoint. Each evaluation of <code>u</code> is a full network forward pass, so <strong>NFE (number of function evaluations) is the unit of sampling cost</strong>. (Generic solver code, with a convergence check: tab 0.)</p>
 
 <h3 id="b-model">A flow model</h3>
 <p>Make the vector field a neural network <code>u_t^&theta;(x)</code> that takes <code>(x, t)</code> and returns a velocity. Then:</p>
@@ -377,7 +455,7 @@ td code{font-size:.85em}
 <div class="warn"><span class="tag">Trap &mdash; the network is the velocity, not the flow</span>
 <p>Despite the name "flow model", <code>u^&theta;</code> parameterizes the <em>vector field</em>. To get the flow (i.e. actual samples) you must integrate the ODE. Everything in this document is about the question: <strong>how do you train <code>u^&theta;</code> so that X_1 lands on the data distribution?</strong></p>
 </div>
-</div></section><section class="panel" id="pan-cnf" role="tabpanel" aria-labelledby="t-cnf" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 7</p><h2 id="cnf">2. Continuous normalizing flows &mdash; the right model, trained the wrong way</h2></div><div class="body">
+</div></section><section class="panel" id="pan-cnf" role="tabpanel" aria-labelledby="t-cnf" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 2 of 8</p><h2 id="cnf">2. Continuous normalizing flows &mdash; the right model, trained the wrong way</h2></div><div class="body">
 <div class="subnav"><a href="#c-nf">One paragraph of normalizing flows</a><a href="#c-icv">det &rarr; trace</a><a href="#c-loop">The CNF training loop</a><a href="#c-cost">The three costs</a></div>
 
 <h3 id="c-nf">One paragraph of (discrete) normalizing flows</h3>
@@ -431,7 +509,7 @@ td code{font-size:.85em}
 <p>CNFs picked the right <em>model</em> (a learned ODE from noise to data) and the wrong <em>training signal</em> (likelihood, which is only computable by simulating). Flow matching keeps the model and changes the signal to something available in closed form <strong>before</strong> any simulation happens.</p>
 </div>
 </div></section>
-<section class="panel" id="pan-fm" role="tabpanel" aria-labelledby="t-fm" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 7</p><h2 id="fm">3. Flow matching &mdash; delete the simulation</h2></div><div class="body">
+<section class="panel" id="pan-fm" role="tabpanel" aria-labelledby="t-fm" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 3 of 8</p><h2 id="fm">3. Flow matching &mdash; delete the simulation</h2></div><div class="body">
 <div class="subnav"><a href="#f-flip">The flip</a><a href="#f-path">Step 1: pick a path</a><a href="#f-cvf">Step 2: its velocity, in closed form</a><a href="#f-marg">Step 3: marginalize</a><a href="#f-demo">Interactive demo</a><a href="#f-cfm">Step 4: the CFM theorem</a><a href="#f-algo">The algorithm</a><a href="#f-vbconv">Voicebox's convention</a></div>
 
 <h3 id="f-flip">The flip</h3>
@@ -489,7 +567,7 @@ td code{font-size:.85em}
 <div class="demo-bar"><span>x_t = t&middot;z + (1&minus;t)&middot;&epsilon; &mdash; drag t</span><span class="demo-ctl"><button id="mCond" type="button" class="on">conditional lines</button><button id="mMarg" type="button">marginal field</button><button id="mBoth" type="button">both</button><label>t <input type="range" id="tSlider" min="0" max="0.99" step="0.005" value="0.35" aria-label="time t"></label><button id="resampleB" type="button">resample &epsilon;</button></span></div>
 <canvas id="cvB" width="920" height="360" role="img" aria-label="conditional straight paths versus marginal field trajectories from noise to data"></canvas>
 <div class="demo-eq" id="eqB" aria-live="polite"></div>
-<p class="demo-cap">Left edge: noise samples &epsilon; ~ N(0,1) at t=0. Right edge: data points z (two clusters) at t=1. <strong>Ultramarine straight lines</strong> = conditional paths, one per (&epsilon;, z) pair, moving with constant velocity z&minus;&epsilon; &mdash; they cross freely. <strong>Magenta curves</strong> = trajectories of the exact marginal field <code>u_t(x) = &Sigma;_i w_i(x,t)&middot;(z_i&minus;x)/(1&minus;t)</code> with posterior weights <code>w_i &prop; N(x; t&middot;z_i, (1&minus;t)&sup2;)</code> &mdash; the average that MSE training converges to. An ODE's trajectories can never cross (uniqueness of solutions), so where conditional lines intersect, the marginal field <em>bends</em> instead: straight conditional paths, curved marginal ones. The bold pair drives the equation readout; the readout's last line evaluates the marginal field at that dot. Reading tip: this whole plot IS the time-dependent field u_t(x), drawn as space–time — t horizontal, x vertical, velocity = slope — per tab 1's note on drawing t-dependent fields.</p>
+<p class="demo-cap">Left edge: noise samples &epsilon; ~ N(0,1) at t=0. Right edge: data points z (two clusters) at t=1. <strong>Ultramarine straight lines</strong> = conditional paths, one per (&epsilon;, z) pair, moving with constant velocity z&minus;&epsilon; &mdash; they cross freely. <strong>Magenta curves</strong> = trajectories of the exact marginal field <code>u_t(x) = &Sigma;_i w_i(x,t)&middot;(z_i&minus;x)/(1&minus;t)</code> with posterior weights <code>w_i &prop; N(x; t&middot;z_i, (1&minus;t)&sup2;)</code> &mdash; the average that MSE training converges to. An ODE's trajectories can never cross (uniqueness of solutions), so where conditional lines intersect, the marginal field <em>bends</em> instead: straight conditional paths, curved marginal ones. The bold pair drives the equation readout; the readout's last line evaluates the marginal field at that dot. Reading tip: this whole plot IS the time-dependent field u_t(x), drawn as space–time — t horizontal, x vertical, velocity = slope — per tab 0's note on drawing t-dependent fields.</p>
 </div>
 
 
@@ -518,7 +596,7 @@ td code{font-size:.85em}
 <div class="warn"><span class="tag">Trap &mdash; the loss does not go to zero</span>
 <p>At a crossing point x_t the best possible output is the <em>average</em> of several different targets, so residual variance stays in the loss forever. A flow-matching loss that plateaus well above zero is <strong>converged, not broken</strong>. (Corollary: the loss value is a poor model-quality metric; monitor samples.)</p>
 </div>
-</div></section><section class="panel" id="pan-code" role="tabpanel" aria-labelledby="t-code" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 7</p><h2 id="code">4. PyTorch &mdash; what you'd write in the interview</h2></div><div class="body">
+</div></section><section class="panel" id="pan-code" role="tabpanel" aria-labelledby="t-code" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 4 of 8</p><h2 id="code">4. PyTorch &mdash; what you'd write in the interview</h2></div><div class="body">
 <div class="subnav"><a href="#p-model">Model</a><a href="#p-fwd">Forward + backward pass</a><a href="#p-sample">Sampler</a><a href="#p-full">Runnable toy</a><a href="#p-cond">Conditional + CFG</a><a href="#p-traps">Traps</a></div>
 
 <h3 id="p-model">The model: any net that maps (x, t) &rarr; velocity</h3>
@@ -640,7 +718,7 @@ def sample_guided(model, y, dim, w=2.0, steps=64):
 </tbody>
 </table></div>
 </div></section>
-<section class="panel" id="pan-diff" role="tabpanel" aria-labelledby="t-diff" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 7</p><h2 id="diff">5. Diffusion &harr; flow matching &mdash; one family, two parameterizations</h2></div><div class="body">
+<section class="panel" id="pan-diff" role="tabpanel" aria-labelledby="t-diff" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 5 of 8</p><h2 id="diff">5. Diffusion &harr; flow matching &mdash; one family, two parameterizations</h2></div><div class="body">
 <div class="subnav"><a href="#d-score">The score</a><a href="#d-convert">The conversion formula</a><a href="#d-sde">Same marginals, ODE or SDE</a><a href="#d-cfg">CFG derivation</a><a href="#d-table">The differences that actually matter</a></div>
 
 <h3 id="d-score">The score function</h3>
@@ -698,7 +776,7 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
 <div class="rulebox"><span class="tag">The one-sentence answer to "is flow matching just diffusion?"</span>
 <p><strong>Same family, different coordinates.</strong> Gaussian-path flow matching and diffusion are inter-convertible &mdash; velocity &harr; score by an affine formula, ODE &harr; SDE with identical marginals. What FM changes in practice is the default path (straight, so fewer sampling steps) and the training frame (velocity regression), which is why SD3, Movie Gen and Voicebox train with FM.</p>
 </div>
-</div></section><section class="panel" id="pan-vb" role="tabpanel" aria-labelledby="t-vb" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 7</p><h2 id="vb">6. Voicebox &mdash; flow matching for speech</h2></div><div class="body">
+</div></section><section class="panel" id="pan-vb" role="tabpanel" aria-labelledby="t-vb" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 6 of 8</p><h2 id="vb">6. Voicebox &mdash; flow matching for speech</h2></div><div class="body">
 <div class="subnav"><a href="#v-what">What it is</a><a href="#v-task">The training task</a><a href="#v-stack">The stack</a><a href="#v-cfg">CFG + inference</a><a href="#v-why">Why FM fits speech</a></div>
 
 <h3 id="v-what">What it is, in one line</h3>
@@ -735,7 +813,7 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
 <li><strong>Stable, scalable training:</strong> one MSE, no adversarial game, no simulation &mdash; safe to scale to 60K hours.</li>
 <li><strong>Controllable inference:</strong> quality&harr;speed via NFE and adherence via CFG are post-training knobs, per tab 5.</li>
 </ul>
-</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 7</p><h2 id="remember">7. Things to remember</h2></div><div class="body">
+</div></section><section class="panel" id="pan-remember" role="tabpanel" aria-labelledby="t-remember" tabindex="0" hidden><div class="panel-head"><p class="kicker">Section 7 of 8</p><h2 id="remember">7. Things to remember</h2></div><div class="body">
 <div class="subnav"><a href="#r-formulas">Five formulas</a><a href="#r-traps">Traps</a><a href="#r-qa">Rapid-fire Q&amp;A</a><a href="#r-drill">The 60-second drill</a></div>
 
 <h3 id="r-formulas">The five formulas</h3>
@@ -1040,6 +1118,62 @@ target = da[:, None] * z + db[:, None] * eps          # general rule: ẋ_t = α
       computeMarg(); draw();
     });
     computeMarg(); draw();
+  })();
+
+  // ── Demo C: query a field (tab 0) ────────────────────────────────────
+  (function(){
+    var cv=document.getElementById('cvC'); if(!cv) return;
+    var ctx=cv.getContext('2d'), W=cv.width, H=cv.height, U=H/2.4;
+    var F={
+      out:      function(x,y,t){ return [x, y]; },
+      contract: function(x,y,t){ return [-x, -y]; },
+      tdep:     function(x,y,t){ return [-t*x, -t*y]; }
+    };
+    var cur='out', T=0.5, mouse=null;
+    var sel=document.getElementById('fieldSelC'), sl=document.getElementById('tSliderC'),
+        wrap=document.getElementById('tWrapC'), eq=document.getElementById('eqC');
+    function toPlane(px,py){ return [(px-W/2)/U, (H/2-py)/U]; }
+    function arrow(px,py,ux,uy,scale,color,width){
+      var n=Math.hypot(ux,uy);
+      if(n<1e-6){ ctx.fillStyle=color; ctx.beginPath(); ctx.arc(px,py,2,0,7); ctx.fill(); return; }
+      var L=Math.min(34, 5+scale*n), dx=ux/n*L, dy=-uy/n*L;
+      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=width;
+      ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px+dx,py+dy); ctx.stroke();
+      var a=Math.atan2(dy,dx), hs=3.5+width*1.6;
+      ctx.beginPath(); ctx.moveTo(px+dx,py+dy);
+      ctx.lineTo(px+dx-hs*Math.cos(a-0.5), py+dy-hs*Math.sin(a-0.5));
+      ctx.lineTo(px+dx-hs*Math.cos(a+0.5), py+dy-hs*Math.sin(a+0.5));
+      ctx.closePath(); ctx.fill();
+    }
+    function draw(){
+      ctx.fillStyle='#FBFCFD'; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle=COL.rule; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke();
+      var f=F[cur];
+      for(var gx=34; gx<W; gx+=52) for(var gy=24; gy<H; gy+=52){
+        var pl=toPlane(gx,gy), u=f(pl[0],pl[1],T);
+        arrow(gx,gy,u[0],u[1],5,COL.rule,1);
+      }
+      if(mouse){
+        var q=toPlane(mouse[0],mouse[1]), u2=f(q[0],q[1],T), mag=Math.hypot(u2[0],u2[1]);
+        arrow(mouse[0],mouse[1],u2[0],u2[1],11,COL.out,2.4);
+        ctx.fillStyle=COL.out; ctx.beginPath(); ctx.arc(mouse[0],mouse[1],3,0,7); ctx.fill();
+        eq.textContent='u'+(cur==='tdep'?('_{t='+T.toFixed(2)+'}'):'')
+          +'('+q[0].toFixed(2)+', '+q[1].toFixed(2)+') = ['+u2[0].toFixed(2)+', '+u2[1].toFixed(2)+']'
+          +'      direction: where the bold arrow points      magnitude |u| = '+mag.toFixed(2);
+      }
+    }
+    cv.addEventListener('pointermove', function(ev){
+      var r=cv.getBoundingClientRect();
+      mouse=[(ev.clientX-r.left)*(W/r.width), (ev.clientY-r.top)*(H/r.height)];
+      draw();
+    });
+    cv.addEventListener('pointerleave', function(){ mouse=null; draw(); });
+    sel.addEventListener('change', function(){ cur=sel.value;
+      wrap.style.display=(cur==='tdep')?'flex':'none'; draw(); });
+    sl.addEventListener('input', function(){ T=parseFloat(sl.value); draw(); });
+    draw();
   })();
 })();
 </script>
